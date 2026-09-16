@@ -1,0 +1,13 @@
+.DS_Store
+.claude/
+/bin/
+/dist/
+/web/node_modules/
+/web/dist/
+*.db
+*.db-shm
+*.db-wal
+.batuta/runs/
+.batuta/worktrees/
+.batuta/handoff.md
+coverage.out
