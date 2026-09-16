@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 
 	"github.com/batuta-ai/console/internal/client"
 	"github.com/batuta-ai/console/internal/runtime"
@@ -14,7 +13,7 @@ import (
 )
 
 func main() {
-	webOnly := flag.Bool("web", false, "print the local web URL and exit")
+	webOnly := flag.Bool("web", false, "open the local web UI and print its URL")
 	home := flag.String("home", "", "data directory")
 	listen := flag.String("listen", "", "loopback address")
 	flag.Parse()
@@ -30,25 +29,17 @@ func main() {
 	}
 	base := "http://" + paths.Listen
 	api := client.New(base, token)
-	if !api.Alive() {
-		if err := startDaemon(paths); err != nil {
+	if err := ensureDaemon(api, paths); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if *webOnly {
+		url := fmt.Sprintf("%s/?token=%s", base, token)
+		fmt.Println(url)
+		if err := openBrowser(url); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if api.Alive() {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		if !api.Alive() {
-			fmt.Fprintln(os.Stderr, "consoled did not become ready")
-			os.Exit(1)
-		}
-	}
-	if *webOnly {
-		fmt.Printf("%s/?token=%s\n", base, token)
 		return
 	}
 	if err := tui.Run(api); err != nil {

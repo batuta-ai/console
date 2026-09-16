@@ -250,7 +250,7 @@ export function App() {
           <div className="content">
             {err ? (
               <div className="err">
-                {err} — passe ?token= a partir de <code>console --web</code>
+                {err}
               </div>
             ) : null}
             {screen === "home" && (

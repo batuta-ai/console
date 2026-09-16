@@ -16,13 +16,17 @@ the host plugin package.
 ## Commands
 
 ```
-consoled                         start the local daemon
+consoled                         start the local daemon (does not open a browser)
 console                          start the daemon if needed, then the TUI
-console --web                    print the local web URL
+console --web                    start the daemon if needed, open the web UI, print the URL
 ```
 
 Listen address defaults to `127.0.0.1:9477`. State lives under
-`$BATUTA_CONSOLE_HOME` or `~/.local/state/batuta/console`.
+`$BATUTA_CONSOLE_HOME` or `~/.local/state/batuta/console`. `console --web`
+opens the browser with `?token=` from that home. If the port is already
+bound by a different home, the client exits with an error instead of
+opening a page that cannot authenticate. Pass `-home` to match the
+running daemon, or stop it. `consoled` itself never opens a browser.
 
 ## Develop
 

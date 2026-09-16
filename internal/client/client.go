@@ -60,6 +60,37 @@ func (c *Client) Post(path string, body, out any) error {
 }
 
 func (c *Client) Alive() bool {
-	var v map[string]any
-	return c.Get("/v0/capabilities", &v) == nil
+	return c.Probe() == StatusReady
+}
+
+type Status int
+
+const (
+	StatusDown Status = iota
+	StatusReady
+	StatusUnauthorized
+)
+
+// Probe reports whether consoled is down, ready for this token, or
+// listening with a different auth secret.
+func (c *Client) Probe() Status {
+	req, err := http.NewRequest(http.MethodGet, c.Base+"/v0/capabilities", nil)
+	if err != nil {
+		return StatusDown
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return StatusDown
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, res.Body)
+	switch res.StatusCode {
+	case http.StatusOK:
+		return StatusReady
+	case http.StatusUnauthorized:
+		return StatusUnauthorized
+	default:
+		return StatusDown
+	}
 }

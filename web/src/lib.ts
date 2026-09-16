@@ -117,7 +117,17 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers || {}),
     },
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    if (res.status === 401) {
+      try {
+        localStorage.removeItem("bt-token");
+      } catch {
+        /* ignore */
+      }
+      throw new Error("token inválido. Rode console --web para abrir com o token deste home");
+    }
+    throw new Error(await res.text());
+  }
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
 }
