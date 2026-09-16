@@ -114,3 +114,92 @@ func TestStartSessionDefaultInject(t *testing.T) {
 		t.Fatalf("explicit false must skip inject: %+v", generic)
 	}
 }
+
+func TestConnectBindsVacantBatutaMembers(t *testing.T) {
+	svc := testSvc(t)
+	if err := svc.EnsureBatutaCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	ciclo, err := svc.Store.GetSquad("sq_batuta_ciclo")
+	if err != nil || !ciclo.Draft {
+		t.Fatalf("seeded ciclo should be draft: %+v %v", ciclo, err)
+	}
+	codex, err := svc.CreateAccount("Codex", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectAccount(codex.ID); err != nil {
+		t.Fatal(err)
+	}
+	backend, err := svc.Store.GetSquad("sq_batuta_backend")
+	if err != nil || backend.Draft {
+		t.Fatalf("backend should leave draft after unique Codex: %+v %v", backend, err)
+	}
+	ciclo, err = svc.Store.GetSquad("sq_batuta_ciclo")
+	if err != nil || !ciclo.Draft {
+		t.Fatalf("ciclo still needs Claude: %+v %v", ciclo, err)
+	}
+	claude, err := svc.CreateAccount("Claude", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectAccount(claude.ID); err != nil {
+		t.Fatal(err)
+	}
+	ciclo, err = svc.Store.GetSquad("sq_batuta_ciclo")
+	if err != nil || ciclo.Draft {
+		t.Fatalf("ciclo should leave draft: %+v %v", ciclo, err)
+	}
+	v := svc.ValidateDraft(ciclo)
+	if !v.Ready || v.Tone != "warning" {
+		t.Fatalf("claude isolation should warn but stay ready: %+v", v)
+	}
+}
+
+func TestAmbiguousAccountsDoNotBind(t *testing.T) {
+	svc := testSvc(t)
+	a, err := svc.CreateAccount("one", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectAccount(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.CreateAccount("two", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectAccount(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureBatutaCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	q, err := svc.Store.GetSquad("sq_batuta_backend")
+	if err != nil || !q.Draft {
+		t.Fatalf("two Codex accounts must not auto-bind: %+v %v", q, err)
+	}
+	for _, m := range q.Members {
+		if m.AccountID != "" {
+			t.Fatalf("vacant member bound %q", m.AccountID)
+		}
+	}
+}
+
+func TestEnsureCatalogBindsExistingAccount(t *testing.T) {
+	svc := testSvc(t)
+	a, err := svc.CreateAccount("Codex", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectAccount(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureBatutaCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	q, err := svc.Store.GetSquad("sq_batuta_backend")
+	if err != nil || q.Draft || q.Members[0].AccountID != a.ID {
+		t.Fatalf("seed should bind unique Codex: %+v %v", q, err)
+	}
+}

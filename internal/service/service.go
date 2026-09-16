@@ -68,7 +68,7 @@ func (s *Service) EnsureBatutaCatalog() error {
 		}
 		_, _ = s.Store.AppendEvent("squad.seeded", map[string]any{"id": q.ID, "origin": q.Origin})
 	}
-	return nil
+	return s.BindVacantMembers()
 }
 
 func (s *Service) SaveSquad(q domain.Squad) (domain.Squad, error) {
@@ -120,6 +120,7 @@ func (s *Service) ValidateDraft(q domain.Squad) domain.Validation {
 	if !v.Ready {
 		return v
 	}
+	pendingIsolation := false
 	for _, m := range q.Members {
 		if m.CLI == "" {
 			continue
@@ -137,8 +138,13 @@ func (s *Service) ValidateDraft(q domain.Squad) domain.Validation {
 			return domain.Validation{Tone: "warning", Title: "Validation: unknown account", Text: "A member points at an account that is not in the catalog. No model was invoked.", Ready: false}
 		}
 		if a.Isolation == domain.IsolationNotYetQualified {
-			return domain.Validation{Tone: "warning", Title: "Validation: isolation pending", Text: "An account is not yet qualified for isolation. Validate probes capabilities; no paid task started.", Ready: false}
+			pendingIsolation = true
 		}
+	}
+	if pendingIsolation {
+		v.Tone = "warning"
+		v.Title = "Validation: isolation pending"
+		v.Text = "An account is not yet qualified for isolation. Validate probes capabilities; no paid task started."
 	}
 	return v
 }
@@ -197,7 +203,70 @@ func (s *Service) ConnectAccount(id string) (domain.Account, error) {
 		return a, err
 	}
 	_, _ = s.Store.AppendEvent("account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef})
+	if err := s.BindVacantMembers(); err != nil {
+		return a, err
+	}
 	return a, nil
+}
+
+// BindVacantMembers assigns a connected account to squad members that have a
+// CLI but no account, when exactly one connected account exists for that CLI.
+func (s *Service) BindVacantMembers() error {
+	accounts, err := s.Store.ListAccounts()
+	if err != nil {
+		return err
+	}
+	byCLI := uniqueConnected(accounts)
+	if len(byCLI) == 0 {
+		return nil
+	}
+	squads, err := s.Store.ListSquads()
+	if err != nil {
+		return err
+	}
+	for _, q := range squads {
+		next, changed := bindVacant(q, byCLI)
+		if !changed {
+			continue
+		}
+		if _, err := s.SaveSquad(next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func uniqueConnected(accounts []domain.Account) map[string]string {
+	ids := map[string][]string{}
+	for _, a := range accounts {
+		if !a.Connected || a.Adapter == "" {
+			continue
+		}
+		ids[a.Adapter] = append(ids[a.Adapter], a.ID)
+	}
+	out := map[string]string{}
+	for cli, list := range ids {
+		if len(list) == 1 {
+			out[cli] = list[0]
+		}
+	}
+	return out
+}
+
+func bindVacant(q domain.Squad, byCLI map[string]string) (domain.Squad, bool) {
+	changed := false
+	for i, m := range q.Members {
+		if m.AccountID != "" || m.CLI == "" {
+			continue
+		}
+		id, ok := byCLI[m.CLI]
+		if !ok {
+			continue
+		}
+		q.Members[i].AccountID = id
+		changed = true
+	}
+	return q, changed
 }
 
 type StartSessionIn struct {

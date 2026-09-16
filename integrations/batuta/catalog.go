@@ -105,8 +105,7 @@ func member(id, role, cli string, maestro bool, skills ...string) domain.Member 
 }
 
 // BuiltInSquads are the Batuta templates seeded into an empty-id catalog slot.
-// Account IDs stay empty so the operator binds local identities; they remain
-// drafts until every member has a role, CLI and account.
+// Account IDs stay empty until a unique connected account for that CLI exists.
 func BuiltInSquads() []domain.Squad {
 	return []domain.Squad{
 		{
