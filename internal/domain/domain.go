@@ -1,0 +1,214 @@
+package domain
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"time"
+)
+
+func NewID(prefix string) string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return prefix + hex.EncodeToString(b[:])
+}
+
+func Now() time.Time { return time.Now().UTC() }
+
+type Isolation string
+
+const (
+	IsolationSupported       Isolation = "supported"
+	IsolationUnsupported     Isolation = "unsupported"
+	IsolationNotYetQualified Isolation = "not_yet_qualified"
+)
+
+type SourceState string
+
+const (
+	SourceCurrent     SourceState = "current"
+	SourceStale       SourceState = "stale"
+	SourceUnavailable SourceState = "unavailable"
+	SourceUnsupported SourceState = "unsupported"
+	SourceUnknown     SourceState = "unknown"
+)
+
+type Workspace struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Root      string    `json:"root"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Member struct {
+	ID        string   `json:"id"`
+	Role      string   `json:"role"`
+	CLI       string   `json:"cli"`
+	Model     string   `json:"model,omitempty"`
+	Effort    string   `json:"effort,omitempty"`
+	AccountID string   `json:"account_id"`
+	Skills    []string `json:"skills,omitempty"`
+	Maestro   bool     `json:"maestro"`
+}
+
+const (
+	OriginBatuta = "batuta"
+	OriginCustom = "custom"
+)
+
+type Squad struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Purpose string   `json:"purpose"`
+	Version int      `json:"version"`
+	Draft   bool     `json:"draft"`
+	Origin  string   `json:"origin"`
+	Members []Member `json:"members"`
+}
+
+type Mission struct {
+	ID            string    `json:"id"`
+	WorkspaceID   string    `json:"workspace_id"`
+	Title         string    `json:"title"`
+	SquadID       string    `json:"squad_id"`
+	SquadSnapshot Squad     `json:"squad_snapshot"`
+	Status        string    `json:"status"`
+	Attention     string    `json:"attention,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type Account struct {
+	ID         string    `json:"id"`
+	Label      string    `json:"label"`
+	Provider   string    `json:"provider"`
+	Adapter    string    `json:"adapter"`
+	Isolation  Isolation `json:"isolation"`
+	Connected  bool      `json:"connected"`
+	SessionCap int       `json:"session_cap"`
+	AuthMethod string    `json:"auth_method"`
+	VaultRef   string    `json:"vault_ref,omitempty"`
+}
+
+type Session struct {
+	ID             string     `json:"id"`
+	MissionID      string     `json:"mission_id"`
+	WorkspaceID    string     `json:"workspace_id"`
+	MemberID       string     `json:"member_id,omitempty"`
+	AccountID      string     `json:"account_id,omitempty"`
+	Adapter        string     `json:"adapter"`
+	Argv           []string   `json:"argv"`
+	Process        string     `json:"process"` // running, exited, unknown
+	Work           string     `json:"work"`
+	Owner          string     `json:"owner"` // tui, web, none
+	OwnerClient    string     `json:"owner_client,omitempty"`
+	PID            int        `json:"pid,omitempty"`
+	Cols           int        `json:"cols"`
+	Rows           int        `json:"rows"`
+	BatutaInjected bool       `json:"batuta_injected"`
+	SkillsVersion  string     `json:"skills_version,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+}
+
+type Event struct {
+	Seq     int64          `json:"seq"`
+	At      time.Time      `json:"at"`
+	Kind    string         `json:"kind"`
+	Payload map[string]any `json:"payload"`
+}
+
+type LimitSnapshot struct {
+	AccountID   string      `json:"account_id"`
+	Label       string      `json:"label"`
+	Window      string      `json:"window"`
+	Scope       string      `json:"scope,omitempty"`
+	Percent     *float64    `json:"percent"`
+	ResetAt     *time.Time  `json:"reset_at,omitempty"`
+	ObservedAt  *time.Time  `json:"observed_at,omitempty"`
+	LastAttempt time.Time   `json:"last_attempt"`
+	Source      SourceState `json:"source"`
+	Origin      string      `json:"origin"`
+}
+
+type Validation struct {
+	Tone  string `json:"tone"`
+	Title string `json:"title"`
+	Text  string `json:"text"`
+	Ready bool   `json:"ready"`
+}
+
+type WatchView struct {
+	API       string           `json:"api"`
+	Workspace string           `json:"workspace"`
+	Delivery  string           `json:"delivery,omitempty"`
+	Header    map[string]any   `json:"header"`
+	Attention map[string]any   `json:"attention"`
+	Context   map[string]any   `json:"context"`
+	Progress  map[string]any   `json:"progress"`
+	Detail    map[string]any   `json:"detail"`
+	Waves     []map[string]any `json:"waves"`
+	Health    map[string]any   `json:"health"`
+	LogTitle  string           `json:"log_title,omitempty"`
+	LogLines  []string         `json:"log_lines,omitempty"`
+	Available bool             `json:"available"`
+	Message   string           `json:"message,omitempty"`
+}
+
+func ValidateSquad(s Squad) Validation {
+	if len(s.Members) == 0 {
+		return Validation{Tone: "danger", Title: "Validation: empty squad", Text: "Add at least one member and a maestro. No model was invoked.", Ready: false}
+	}
+	maestro := 0
+	incomplete := 0
+	unqualified := 0
+	for _, m := range s.Members {
+		if m.Maestro {
+			maestro++
+		}
+		if m.Role == "" || m.CLI == "" || m.AccountID == "" {
+			incomplete++
+		}
+	}
+	if maestro == 0 {
+		return Validation{Tone: "warning", Title: "Validation: no maestro", Text: "Name which member conducts the mission.", Ready: false}
+	}
+	if incomplete > 0 {
+		return Validation{Tone: "warning", Title: fmt.Sprintf("Validation: %d incomplete member(s)", incomplete), Text: "Role, CLI and account are required. Model may inherit from the squad.", Ready: false}
+	}
+	if unqualified > 0 {
+		return Validation{Tone: "warning", Title: "Validation: isolation pending", Text: "An account is not yet qualified for isolation. Validate probes capabilities; no paid task started.", Ready: false}
+	}
+	return Validation{Tone: "success", Title: "Validation: ready to save", Text: "Capabilities and accounts checked. Saving is a catalog write; it does not call a model.", Ready: true}
+}
+
+// ResolveBinding applies workspace > mission override > member > squad default.
+// Empty fields inherit from the next lower layer.
+func ResolveBinding(workspace, mission, member, squad Member) Member {
+	out := squad
+	overlay := func(src Member) {
+		if src.CLI != "" {
+			out.CLI = src.CLI
+		}
+		if src.Model != "" {
+			out.Model = src.Model
+		}
+		if src.Effort != "" {
+			out.Effort = src.Effort
+		}
+		if src.AccountID != "" {
+			out.AccountID = src.AccountID
+		}
+		if src.Role != "" {
+			out.Role = src.Role
+		}
+		if len(src.Skills) > 0 {
+			out.Skills = src.Skills
+		}
+	}
+	overlay(member)
+	overlay(mission)
+	overlay(workspace)
+	return out
+}
