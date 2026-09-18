@@ -180,6 +180,26 @@ func (s *Service) CreateAccount(label, adapter string) (domain.Account, error) {
 	return a, nil
 }
 
+func (s *Service) RenameAccount(id, label string) (domain.Account, error) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return domain.Account{}, fmt.Errorf("account label is required")
+	}
+	a, err := s.Store.GetAccount(id)
+	if err != nil {
+		return a, err
+	}
+	if a.Label == label {
+		return a, nil
+	}
+	a.Label = label
+	if err := s.Store.PutAccount(a); err != nil {
+		return a, err
+	}
+	_, _ = s.Store.AppendEvent("account.renamed", map[string]any{"id": a.ID, "label": a.Label})
+	return a, nil
+}
+
 func (s *Service) ConnectAccount(id string) (domain.Account, error) {
 	a, err := s.Store.GetAccount(id)
 	if err != nil {

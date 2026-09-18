@@ -156,6 +156,24 @@ func TestConnectBindsVacantBatutaMembers(t *testing.T) {
 	}
 }
 
+func TestRenameAccountKeepsAdapter(t *testing.T) {
+	svc := testSvc(t)
+	a, err := svc.CreateAccount("Codex Work", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RenameAccount(a.ID, "  trabalho  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "trabalho" || got.Adapter != "codex" || got.ID != a.ID {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := svc.RenameAccount(a.ID, " "); err == nil {
+		t.Fatal("empty label")
+	}
+}
+
 func TestAmbiguousAccountsDoNotBind(t *testing.T) {
 	svc := testSvc(t)
 	a, err := svc.CreateAccount("one", "codex")

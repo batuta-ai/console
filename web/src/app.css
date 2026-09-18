@@ -504,6 +504,9 @@ h1 {
   font: inherit;
   color: inherit;
 }
+button.acct-grid {
+  cursor: pointer;
+}
 .act-row {
   display: grid;
   grid-template-columns: 64px 88px minmax(0, 1fr);
@@ -694,18 +697,45 @@ h1 {
 }
 .skill-add__pop {
   position: absolute;
-  z-index: 6;
+  z-index: 8;
   right: 0;
   top: 120%;
   width: 280px;
+  max-height: min(320px, 50vh);
   padding: 10px;
   border: 1px solid var(--border-default);
   border-radius: 12px;
   background: var(--surface-card);
   box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.skill-add__list {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
+  min-height: 0;
+  max-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+.skill-add__list .skill-chip {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: flex-start;
+}
+.skill-add__list::-webkit-scrollbar {
+  width: 8px;
+}
+.skill-add__list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
 }
 .skill-add__label {
   width: 100%;
@@ -715,6 +745,9 @@ h1 {
   text-transform: uppercase;
   color: var(--text-muted);
   margin-top: 4px;
+}
+.skill-add__label:first-child {
+  margin-top: 0;
 }
 .skill-custom {
   width: 100%;

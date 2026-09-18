@@ -1339,6 +1339,7 @@ function Accounts({
   const latest = limits.map((l) => l.observed_at || l.last_attempt).filter(Boolean) as string[];
   const newest = latest.sort().at(-1);
   const pending = accounts.filter((a) => a.isolation !== "supported").length;
+  const [edit, setEdit] = useState<Account | null>(null);
   return (
     <div className="page">
       <div className="page-head">
@@ -1376,7 +1377,7 @@ function Accounts({
           const iso = isolationLabel(a.isolation);
           const used = live.filter((s) => s.account_id === a.id).length;
           return (
-            <div key={a.id} className="acct-grid">
+            <button key={a.id} type="button" className="acct-grid" onClick={() => setEdit(a)}>
               <span>
                 <span className="mono" style={{ fontWeight: 500 }}>
                   {a.connected ? "● " : "○ "}
@@ -1397,14 +1398,71 @@ function Accounts({
                 <Progress value={lim?.percent} unknown={lim?.percent == null} />
               </span>
               <span className="mono muted">{lim?.origin || lim?.source || "—"}</span>
-            </div>
+            </button>
           );
         })}
         {accounts.length === 0 ? <div className="empty">Nenhuma conta ainda.</div> : null}
       </section>
-      <p className="muted">Limite da conta ≠ tokens da sessão ≠ custo. Dado ausente permanece desconhecido — nunca 0%.</p>
+      <p className="muted">Limite da conta ≠ tokens da sessão ≠ custo. Dado ausente permanece desconhecido — nunca 0%. Clique numa linha para mudar o rótulo; o CLI não muda.</p>
       <AddAccount open={open} onClose={onClose} onSaved={onSaved} />
+      <RenameAccount account={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); onSaved(); }} />
     </div>
+  );
+}
+
+function RenameAccount({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: Account | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setLabel(account?.label || "");
+    setErr("");
+  }, [account]);
+  return (
+    <Dialog
+      open={!!account}
+      title="Renomear conta"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!label.trim() || !account || saving}
+            loading={saving}
+            onClick={async () => {
+              if (!account) return;
+              setSaving(true);
+              setErr("");
+              try {
+                await api<Account>(`/v0/accounts/${account.id}`, { method: "PATCH", body: JSON.stringify({ label }) });
+                onSaved();
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : String(e));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <Field label="Rótulo local" hint={`${account?.provider || ""} · ${account?.adapter || ""} — o CLI e o isolamento não mudam.`}>
+        <Input value={label} onChange={(e) => setLabel(e.target.value)} />
+      </Field>
+      {err ? <p className="err">{err}</p> : null}
+    </Dialog>
   );
 }
 
@@ -1785,34 +1843,36 @@ function SkillPicker({
       <details className="skill-add">
         <summary>+ skill</summary>
         <div className="skill-add__pop">
-          <div className="skill-add__label">Batuta</div>
-          {catalog
-            .filter((sk) => sk.origin === "batuta")
-            .map((sk) => (
-              <button
-                key={sk.id}
-                type="button"
-                title={sk.summary}
-                className={value.includes(sk.id) ? "skill-chip skill-chip--on" : "skill-chip skill-chip--off"}
-                onClick={() => toggle(sk.id)}
-              >
-                {sk.id}
-              </button>
-            ))}
-          {catalog.some((sk) => sk.origin !== "batuta") ? <div className="skill-add__label">No disco</div> : null}
-          {catalog
-            .filter((sk) => sk.origin !== "batuta")
-            .map((sk) => (
-              <button
-                key={sk.id}
-                type="button"
-                title={sk.summary}
-                className={value.includes(sk.id) ? "skill-chip skill-chip--on" : "skill-chip skill-chip--off"}
-                onClick={() => toggle(sk.id)}
-              >
-                {sk.id}
-              </button>
-            ))}
+          <div className="skill-add__list">
+            <div className="skill-add__label">Batuta</div>
+            {catalog
+              .filter((sk) => sk.origin === "batuta")
+              .map((sk) => (
+                <button
+                  key={sk.id}
+                  type="button"
+                  title={sk.summary}
+                  className={value.includes(sk.id) ? "skill-chip skill-chip--on" : "skill-chip skill-chip--off"}
+                  onClick={() => toggle(sk.id)}
+                >
+                  {sk.id}
+                </button>
+              ))}
+            {catalog.some((sk) => sk.origin !== "batuta") ? <div className="skill-add__label">No disco</div> : null}
+            {catalog
+              .filter((sk) => sk.origin !== "batuta")
+              .map((sk) => (
+                <button
+                  key={sk.id}
+                  type="button"
+                  title={sk.summary}
+                  className={value.includes(sk.id) ? "skill-chip skill-chip--on" : "skill-chip skill-chip--off"}
+                  onClick={() => toggle(sk.id)}
+                >
+                  {sk.id}
+                </button>
+              ))}
+          </div>
           <input
             className="skill-custom"
             value={extra}

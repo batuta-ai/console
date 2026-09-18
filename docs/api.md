@@ -44,6 +44,7 @@ Authorization header on the handshake. The server accepts origins
 | POST | `/v0/squads/{id}/save` | Catalog version bump |
 | GET | `/v0/skills` | Official Batuta skills plus extra `SKILL.md` trees under the skills root |
 | GET, POST | `/v0/accounts` | References only; no secrets |
+| PATCH | `/v0/accounts/{id}` | Renames the local label. Adapter, isolate dir, and login stay unchanged |
 | POST | `/v0/accounts/{id}/connect` | Creates the account isolate directory (`HOME` for later sessions) and marks the catalog connected. Official CLI login happens in the session PTY, not in this request |
 
 ## Sessions and terminal

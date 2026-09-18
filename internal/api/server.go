@@ -16,6 +16,7 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/hostfs"
 	"github.com/batuta-ai/console/internal/service"
+	"github.com/batuta-ai/console/internal/store"
 	"github.com/coder/websocket"
 )
 
@@ -43,6 +44,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/missions", s.auth(s.createMission))
 	mux.HandleFunc("GET /v0/accounts", s.auth(s.listAccounts))
 	mux.HandleFunc("POST /v0/accounts", s.auth(s.createAccount))
+	mux.HandleFunc("PATCH /v0/accounts/{id}", s.auth(s.renameAccount))
 	mux.HandleFunc("POST /v0/accounts/{id}/connect", s.auth(s.connectAccount))
 	mux.HandleFunc("GET /v0/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v0/sessions", s.auth(s.startSession))
@@ -246,6 +248,26 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.Svc.CreateAccount(in.Label, in.Adapter)
 	if err != nil {
+		writeErr(w, 400, "account", err.Error())
+		return
+	}
+	writeJSON(w, a)
+}
+
+func (s *Server) renameAccount(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, "json", err.Error())
+		return
+	}
+	a, err := s.Svc.RenameAccount(r.PathValue("id"), in.Label)
+	if err != nil {
+		if store.IsNotFound(err) {
+			writeErr(w, 404, "not_found", err.Error())
+			return
+		}
 		writeErr(w, 400, "account", err.Error())
 		return
 	}

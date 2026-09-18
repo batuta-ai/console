@@ -198,6 +198,44 @@ func TestAccountSessionCap(t *testing.T) {
 	}
 }
 
+func TestRenameAccountLabel(t *testing.T) {
+	h, _ := testServer(t)
+	a := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
+	body, _ := json.Marshal(map[string]string{"label": "trabalho"})
+	req := httptest.NewRequest(http.MethodPatch, "/v0/accounts/"+a["id"].(string), bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["label"] != "trabalho" || got["adapter"] != "codex" {
+		t.Fatalf("%v", got)
+	}
+	empty, _ := json.Marshal(map[string]string{"label": "  "})
+	bad := httptest.NewRequest(http.MethodPatch, "/v0/accounts/"+a["id"].(string), bytes.NewReader(empty))
+	bad.Header.Set("Authorization", "Bearer test-token")
+	bad.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, bad)
+	if rec.Code != 400 {
+		t.Fatalf("empty label %d", rec.Code)
+	}
+	missing := httptest.NewRequest(http.MethodPatch, "/v0/accounts/acct_missing", bytes.NewReader(body))
+	missing.Header.Set("Authorization", "Bearer test-token")
+	missing.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, missing)
+	if rec.Code != 404 {
+		t.Fatalf("missing %d", rec.Code)
+	}
+}
+
 func TestConnectCreatesIsolateDir(t *testing.T) {
 	h, svc := testServer(t)
 	a := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
