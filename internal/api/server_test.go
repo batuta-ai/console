@@ -20,6 +20,20 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestCapabilitiesLang(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "pt-BR")
+	h, _ := testServer(t)
+	got := get(t, h, "/v0/capabilities").(map[string]any)
+	if got["lang"] != "pt" {
+		t.Fatalf("lang %v", got["lang"])
+	}
+	t.Setenv("BATUTA_LANG", "en")
+	got = get(t, h, "/v0/capabilities").(map[string]any)
+	if got["lang"] != "en" {
+		t.Fatalf("lang %v", got["lang"])
+	}
+}
+
 func TestPickWorkspaceRoot(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {

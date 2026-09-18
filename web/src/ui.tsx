@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode } from "react";
+import { T } from "./i18n";
 import { Alert as LyraAlert } from "@lyra-ds/react/alert";
 import { Avatar as LyraAvatar } from "@lyra-ds/react/avatar";
 import { Badge } from "@lyra-ds/react/badge";
@@ -30,7 +31,7 @@ export function Avatar({ name, size = "sm" }: { name: string; size?: "xs" | "sm"
 }
 
 export function Progress({ value, unknown, tone }: { value?: number | null; unknown?: boolean; tone?: "success" | "danger" }) {
-  if (unknown || value == null) return <div className="lyra-progress lyra-progress--unknown" title="desconhecido" />;
+  if (unknown || value == null) return <div className="lyra-progress lyra-progress--unknown" title={T("unknown")} />;
   return <LyraProgress value={value} tone={tone} />;
 }
 
@@ -68,8 +69,8 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
   return <LyraStepper steps={steps} active={Math.max(0, current - 1)} />;
 }
 
-export function Dialog({ closeLabel = "Fechar", ...props }: DialogProps) {
-  return <LyraDialog closeLabel={closeLabel} {...props} />;
+export function Dialog({ closeLabel, ...props }: DialogProps) {
+  return <LyraDialog closeLabel={closeLabel ?? T("close")} {...props} />;
 }
 
 export function Drawer({
@@ -93,7 +94,7 @@ export function Drawer({
       title={title}
       onClose={onClose}
       footer={footer}
-      closeLabel="Fechar"
+      closeLabel={T("close")}
       className="lyra-drawer--accounts"
       style={width ? ({ maxWidth: width } as CSSProperties) : undefined}
     >
@@ -122,7 +123,7 @@ export function WorkspaceSwitcher({
       current={current?.id}
       onChange={onChange}
       onCreate={onCreate}
-      createLabel="Novo workspace"
+      createLabel={T("new_workspace")}
     />
   );
 }

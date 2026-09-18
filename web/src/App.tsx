@@ -35,16 +35,17 @@ import {
   type Workspace,
   plural,
 } from "./lib";
+import { T } from "./i18n";
 import { Alert, Avatar, Badge, Button, Dialog, Drawer, Field, IconButton, Input, Progress, Select, Stat, Stepper, Tabs, WorkspaceSwitcher } from "./ui";
 
 const webClient = webClientID();
 
-const NAV: { id: Screen; label: string; icon: typeof House }[] = [
-  { id: "home", label: "Início", icon: House },
-  { id: "missions", label: "Missões", icon: Target },
-  { id: "squads", label: "Squads", icon: Users },
-  { id: "accounts", label: "Contas e limites", icon: KeyRound },
-  { id: "activity", label: "Atividade", icon: Activity },
+const NAV: { id: Screen; label: () => string; icon: typeof House }[] = [
+  { id: "home", label: () => T("home"), icon: House },
+  { id: "missions", label: () => T("missions"), icon: Target },
+  { id: "squads", label: () => T("squads"), icon: Users },
+  { id: "accounts", label: () => T("nav_accounts"), icon: KeyRound },
+  { id: "activity", label: () => T("activity"), icon: Activity },
 ];
 
 function useMQ(query: string) {
@@ -60,14 +61,14 @@ function useMQ(query: string) {
 }
 
 function screenTitle(screen: Screen, mission: Mission | null, squad: Squad | null) {
-  if (screen === "home") return "Início";
-  if (screen === "missions") return "Missões";
-  if (screen === "room") return mission?.title || "Sala da missão";
-  if (screen === "squads") return "Squads";
-  if (screen === "editor") return squad?.name || "Editor de squad";
-  if (screen === "accounts") return "Contas e limites";
-  if (screen === "activity") return "Atividade";
-  return "Revisão da entrega";
+  if (screen === "home") return T("home");
+  if (screen === "missions") return T("missions");
+  if (screen === "room") return mission?.title || T("room_title");
+  if (screen === "squads") return T("squads");
+  if (screen === "editor") return squad?.name || T("squad_editor");
+  if (screen === "accounts") return T("nav_accounts");
+  if (screen === "activity") return T("activity");
+  return T("review_delivery");
 }
 
 export function App() {
@@ -205,7 +206,7 @@ export function App() {
                 <button key={item.id} type="button" className={active ? "nav-btn nav-btn--active" : "nav-btn"} onClick={() => go(item.id)}>
                   <Icon size={17} strokeWidth={2} />
                   <span className="label" style={{ flex: 1 }}>
-                    {item.label}
+                    {item.label()}
                   </span>
                   {item.id === "missions" && attentionCount && screen !== "home" ? <span className="nav-count">{attentionCount}</span> : null}
                 </button>
@@ -215,10 +216,10 @@ export function App() {
           <div className="side-foot">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span className="live-dot" />
-              <span className="foot-copy">consoled · ativo</span>
+              <span className="foot-copy">{T("consoled_active")}</span>
             </div>
             <span className="foot-copy">
-              API v0 · {sessions.filter((s) => s.process === "running").length} sessões · {liveClients} clientes
+              {T("api_foot", { sessions: sessions.filter((s) => s.process === "running").length, clients: liveClients })}
             </span>
           </div>
         </aside>
@@ -232,13 +233,13 @@ export function App() {
             {attention ? (
               <button type="button" className="need-you" onClick={() => go("room")}>
                 <span className="live-dot bt-pulse" style={{ background: "var(--warning)" }} />
-                1 precisa de você
+                {T("needs_you_n", { n: 1 })}
               </button>
             ) : null}
-            <IconButton label="Buscar" title="Busca ainda não está no daemon">
+            <IconButton label={T("search")} title={T("search_title")}>
               <Search size={17} />
             </IconButton>
-            <IconButton label="Alternar tema" onClick={toggleTheme}>
+            <IconButton label={T("toggle_theme")} onClick={toggleTheme}>
               {dark ? <Sun size={17} /> : <Moon size={17} />}
             </IconButton>
             <Avatar name="Batuta" size="sm" />
@@ -302,7 +303,7 @@ export function App() {
                 skills={skills}
                 skillsRoot={skillsRoot}
                 onCreate={async () => {
-                  const q = await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify({ name: "Novo squad", purpose: "", origin: "custom", members: [] }) });
+                  const q = await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify({ name: T("new_squad_name"), purpose: "", origin: "custom", members: [] }) });
                   setEditing(q);
                   setScreen("editor");
                   refresh();
@@ -314,7 +315,7 @@ export function App() {
                 onDuplicate={async (q) => {
                   await api("/v0/squads", {
                     method: "POST",
-                    body: JSON.stringify({ name: `${q.name} (cópia)`, purpose: q.purpose || "", origin: "custom", members: q.members || [] }),
+                    body: JSON.stringify({ name: `${q.name}${T("copy_suffix")}`, purpose: q.purpose || "", origin: "custom", members: q.members || [] }),
                   });
                   refresh();
                 }}
@@ -396,27 +397,31 @@ function Home({
 }) {
   const active = missions.filter((m) => !/done|complete|conclu/i.test(m.status));
   return (
-    <div className="page" data-screen-label="Início">
+    <div className="page" data-screen-label={T("home")}>
       <div className="page-head">
         <div>
           <h1>{greeting()}</h1>
           <p className="sub">
-            {active.length} entrega{active.length === 1 ? "" : "s"} ativa{active.length === 1 ? "" : "s"} em <span className="mono">{wsName}</span>
-            {attention ? " · 1 item pede sua atenção." : "."}
+            {T(attention ? "home_sub_attention" : "home_sub", {
+              n: active.length,
+              deliveries: T(active.length === 1 ? "delivery_one" : "delivery_many"),
+              plural: active.length === 1 ? "" : "s",
+              ws: wsName,
+            })}
           </p>
         </div>
         <Button variant="secondary" onClick={onNewWorkspace}>
-          Novo workspace
+          {T("new_workspace")}
         </Button>
       </div>
       {attention ? (
         <div className="banner">
           <span className="banner-dot bt-pulse" />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <strong style={{ color: "var(--warning-text)" }}>Precisa de você</strong> <span>· {attention}</span>
+            <strong style={{ color: "var(--warning-text)" }}>{T("needs_you")}</strong> <span>· {attention}</span>
           </div>
           <Button size="sm" onClick={onRoom}>
-            Abrir sala
+            {T("open_room")}
           </Button>
         </div>
       ) : null}
@@ -428,27 +433,27 @@ function Home({
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                 <span className="mono-name">{w.name}</span>
                 <Badge tone={n ? "accent" : "neutral"} dot>
-                  {n ? `${n} ativas` : "ociosa"}
+                  {n ? T("active_badge", { n }) : T("idle")}
                 </Badge>
               </div>
               <div className="path">{w.root}</div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                {n ? `${plural(n, "missão em andamento", "missões em andamento")}` : "Nenhuma missão ativa neste workspace."}
+                {n ? plural(n, "mission_progress_one", "mission_progress_many") : T("no_active_missions_ws")}
               </div>
             </button>
           );
         })}
-        {workspaces.length === 0 ? <div className="panel empty">Nenhum workspace ainda. Crie o primeiro para operar uma CLI.</div> : null}
+        {workspaces.length === 0 ? <div className="panel empty">{T("no_workspaces")}</div> : null}
       </div>
       <div className="cards-wide">
         <section className="panel">
           <div className="panel-h">
-            <span>Entregas ativas</span>
+            <span>{T("active_deliveries")}</span>
             <button type="button" className="linkish" onClick={onMissions}>
-              Ver missões
+              {T("view_missions")}
             </button>
           </div>
-          {active.length === 0 ? <div className="empty">Nenhuma entrega ativa neste workspace.</div> : null}
+          {active.length === 0 ? <div className="empty">{T("no_active_deliveries")}</div> : null}
           {active.map((m) => (
             <button key={m.id} type="button" className="panel-row" onClick={() => onOpenRoom(m)}>
               <span style={{ fontWeight: 500 }}>{m.title}</span>
@@ -456,7 +461,7 @@ function Home({
                 {m.id}
               </span>
               <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
-                {m.squad_snapshot?.name || "—"} · {m.attention || "acompanhar gates"}
+                {m.squad_snapshot?.name || "—"} · {m.attention || T("follow_gates")}
               </span>
               <span style={{ justifySelf: "end" }}>
                 <Badge tone={missionTone(m.status, m.attention)} dot>
@@ -467,7 +472,7 @@ function Home({
           ))}
         </section>
         <section className="panel">
-          <div className="panel-h">Contas e limites</div>
+          <div className="panel-h">{T("nav_accounts")}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "var(--cardpad)" }}>
             {accounts.slice(0, 3).map((a) => {
               const lim = limits.find((l) => l.account_id === a.id);
@@ -481,12 +486,12 @@ function Home({
                 </div>
               );
             })}
-            {accounts.length === 0 ? <span className="muted">Nenhuma conta cadastrada.</span> : null}
+            {accounts.length === 0 ? <span className="muted">{T("no_accounts")}</span> : null}
             <button type="button" className="linkish" onClick={onAccounts}>
-              Ver todas as contas
+              {T("view_all_accounts")}
             </button>
             <span className="muted" style={{ fontSize: 12 }}>
-              {sessions.filter((s) => s.process === "running").length} sessões vivas no daemon.
+              {T("sessions_live", { n: sessions.filter((s) => s.process === "running").length })}
             </span>
           </div>
         </section>
@@ -521,35 +526,35 @@ function Missions({
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Missões</h1>
+        <h1>{T("missions")}</h1>
         <Button
           onClick={async () => {
-            if (!workspace || !squads[0]) return alert("Crie um workspace e um squad primeiro");
-            await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspace.id, title: "Nova missão", squad_id: squads[0].id }) });
+            if (!workspace || !squads[0]) return alert(T("need_ws_squad"));
+            await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspace.id, title: T("new_mission_title"), squad_id: squads[0].id }) });
             onCreated();
           }}
         >
-          Nova missão
+          {T("new_mission")}
         </Button>
       </div>
       <Tabs
         active={filter}
         onChange={setFilter}
         items={[
-          { id: "all", label: "Todas", count: missions.length },
-          { id: "active", label: "Ativas", count: active.length },
-          { id: "done", label: "Concluídas", count: done.length },
+          { id: "all", label: T("filter_all"), count: missions.length },
+          { id: "active", label: T("filter_active"), count: active.length },
+          { id: "done", label: T("filter_done"), count: done.length },
         ]}
       />
       <section className="panel">
         <div className="mission-grid caps" style={{ cursor: "default" }}>
-          <span>Objetivo</span>
-          <span>Squad</span>
-          <span>Situação</span>
-          <span>Andamento verificado</span>
-          <span>Próxima ação</span>
+          <span>{T("col_objective")}</span>
+          <span>{T("col_squad")}</span>
+          <span>{T("col_status")}</span>
+          <span>{T("col_verified")}</span>
+          <span>{T("col_next")}</span>
         </div>
-        {shown.length === 0 ? <div className="empty">Nenhuma missão neste filtro.</div> : null}
+        {shown.length === 0 ? <div className="empty">{T("no_missions_filter")}</div> : null}
         {shown.map((m) => {
           const attn = Boolean(m.attention) || (attention && activeMissionMatch(m, watch));
           return (
@@ -568,12 +573,12 @@ function Missions({
               </span>
               <span style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                 <span className="mono" style={{ fontSize: 12 }}>
-                  {pct == null ? "sem journal" : `${pct}% critérios`}
+                  {pct == null ? T("no_journal") : T("criteria_pct", { pct })}
                 </span>
                 <Progress value={pct} unknown={pct == null} />
               </span>
               <span style={{ fontSize: 13, color: attn ? "var(--warning-text)" : undefined, fontWeight: attn ? 600 : 400 }}>
-                {attn ? attention || m.attention : "acompanhar gates"}
+                {attn ? attention || m.attention : T("follow_gates")}
               </span>
             </button>
           );
@@ -624,22 +629,22 @@ function Room({
     ? rows.map((r, i) => ({
         key: r.task || String(i),
         name: r.title,
-        role: members[i]?.role || "agente",
+        role: members[i]?.role || T("agent_default"),
         state: r.state,
         account: accounts.find((a) => a.id === members[i]?.account_id)?.label || members[i]?.account_id || "—",
         cli: members[i]?.cli || "",
-        model: members[i]?.model || "herdar",
+        model: members[i]?.model || T("inherit"),
         task: r.task,
         gates: r.gates,
       }))
     : members.map((mb, i) => ({
         key: mb.id || String(i),
-        name: mb.role || "membro",
-        role: mb.role || "agente",
+        name: mb.role || T("member_default"),
+        role: mb.role || T("agent_default"),
         state: "",
         account: accounts.find((a) => a.id === mb.account_id)?.label || mb.account_id || "—",
         cli: mb.cli,
-        model: mb.model || "herdar",
+        model: mb.model || T("inherit"),
         task: "",
         gates: ["—", "—", "—", "—"],
       }));
@@ -660,18 +665,23 @@ function Room({
       <div className="page-head">
         <div>
           <div className="inline-actions">
-            <h1>{mission?.title || "Sala da missão"}</h1>
-            {watch?.delivery ? <Badge tone="accent">{String(watch.delivery)}</Badge> : <Badge tone="neutral">sem journal Batuta</Badge>}
-            {live?.batuta_injected ? <Badge tone="success">Batuta injetado</Badge> : live ? <Badge tone="neutral">CLI genérica</Badge> : null}
+            <h1>{mission?.title || T("room_title")}</h1>
+            {watch?.delivery ? <Badge tone="accent">{String(watch.delivery)}</Badge> : <Badge tone="neutral">{T("no_batuta_journal")}</Badge>}
+            {live?.batuta_injected ? <Badge tone="success">{T("batuta_injected")}</Badge> : live ? <Badge tone="neutral">{T("generic_cli")}</Badge> : null}
             {attn ? (
               <Badge tone="warning" dot>
-                1 precisa de você
+                {T("needs_you_n", { n: 1 })}
               </Badge>
             ) : null}
           </div>
           <p className="sub">
-            <span className="mono">{mission?.id || "—"}</span> · {integrated}/{Math.max(tasks.length, 1)} tarefas no journal · {live ? "1 executando" : "nenhuma sessão viva"}
-            {shown?.process === "unknown" ? " · processo só no catálogo" : ""}
+            {T("room_sub", {
+              id: mission?.id || "—",
+              done: integrated,
+              total: Math.max(tasks.length, 1),
+              live: live ? T("running_one") : T("no_live_session"),
+            })}
+            {shown?.process === "unknown" ? T("catalog_only_process") : ""}
           </p>
         </div>
         <div className="inline-actions">
@@ -681,13 +691,13 @@ function Room({
             </span>
           ))}
           <Button variant="secondary" onClick={onReview}>
-            Revisar entrega
+            {T("review_delivery")}
           </Button>
           {mission && !live ? (
             <>
               <label className="inject-toggle">
                 <input type="checkbox" checked={inject} onChange={(e) => setInject(e.target.checked)} />
-                Injetar Batuta
+                {T("inject_batuta")}
               </label>
               <Button
                 onClick={async () => {
@@ -705,22 +715,22 @@ function Room({
                   onRefresh();
                 }}
               >
-                Iniciar sessão
+                {T("start_session")}
               </Button>
             </>
           ) : null}
         </div>
       </div>
       {inject && !skillsRoot && !live ? (
-        <Alert tone="warning" title="Skills Batuta não encontradas">
-          A sessão sobe mesmo assim, como CLI genérica. Instale as skills do Batuta ou defina BATUTA_SKILLS para injetar de verdade.
+        <Alert tone="warning" title={T("skills_missing_title")}>
+          {T("skills_missing_body")}
         </Alert>
       ) : null}
       {attn ? (
         <div className="banner">
           <span className="banner-dot bt-pulse" />
           <div style={{ flex: 1 }}>
-            <strong style={{ color: "var(--warning-text)" }}>Precisa de você</strong> · {attn} Responder não dispara trabalho pago.
+            <strong style={{ color: "var(--warning-text)" }}>{T("needs_you")}</strong> · {attn} {T("answer_no_paid")}
           </div>
           <Button
             size="sm"
@@ -730,18 +740,18 @@ function Room({
               setLogTab("log");
             }}
           >
-            Responder
+            {T("answer")}
           </Button>
         </div>
       ) : null}
-      {shown?.process === "unknown" ? <Alert tone="warning" title="Histórico recuperado">{processLife("unknown")}</Alert> : null}
+      {shown?.process === "unknown" ? <Alert tone="warning" title={T("recovered_history")}>{processLife("unknown")}</Alert> : null}
       <Tabs
         active={layout}
         onChange={(id) => setLayout(id as "list" | "grid" | "terminal")}
         items={[
-          { id: "list", label: "Lista" },
-          { id: "grid", label: "Grade" },
-          { id: "terminal", label: "Terminal" },
+          { id: "list", label: T("layout_list") },
+          { id: "grid", label: T("layout_grid") },
+          { id: "terminal", label: T("layout_terminal") },
         ]}
       />
       {layout === "list" && (
@@ -749,12 +759,12 @@ function Room({
           <section className="panel">
             <div className="task-grid caps" style={{ cursor: "default" }}>
               <span />
-              <span>Tarefa</span>
-              <span>Agente</span>
-              <span>Situação</span>
-              <span>Conta</span>
+              <span>{T("col_task")}</span>
+              <span>{T("col_agent")}</span>
+              <span>{T("col_status")}</span>
+              <span>{T("col_account")}</span>
             </div>
-            {tasks.length === 0 ? <div className="empty">Nenhuma tarefa no journal nem membro no snapshot do squad.</div> : null}
+            {tasks.length === 0 ? <div className="empty">{T("no_tasks")}</div> : null}
             {tasks.map((t, i) => {
               const mark = taskSym(t.state);
               return (
@@ -769,7 +779,7 @@ function Room({
                   </span>
                   <span>
                     <Badge tone={missionTone(t.state || "run", attn && i === sel ? "1" : "")} dot>
-                      {t.state || (live ? "executando" : "sem sessão")}
+                      {t.state || (live ? T("executing") : T("no_session"))}
                     </Badge>
                   </span>
                   <span className="mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
@@ -781,7 +791,7 @@ function Room({
           </section>
           <aside className="detail">
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span className="caps">Detalhe</span>
+              <span className="caps">{T("detail")}</span>
               {selected ? (
                 <Badge tone="neutral" dot>
                   {selected.state || "—"}
@@ -790,25 +800,25 @@ function Room({
             </div>
             <div style={{ fontSize: 17, fontWeight: 600 }}>{selected?.name || "—"}</div>
             <dl>
-              <dt>Agente</dt>
+              <dt>{T("agent")}</dt>
               <dd>{selected?.role || "—"}</dd>
-              <dt>CLI · modelo</dt>
+              <dt>{T("cli_model")}</dt>
               <dd className="mono" style={{ fontSize: 12.5 }}>
                 {selected?.cli || "—"} · {selected?.model}
               </dd>
-              <dt>Conta · política</dt>
+              <dt>{T("account_policy")}</dt>
               <dd className="mono" style={{ fontSize: 12.5 }}>
-                {selected?.account} · conta fixa
+                {selected?.account} · {T("fixed_account")}
               </dd>
-              <dt>Tentativa</dt>
-              <dd>{watch?.detail?.last ? "journal" : "—"}</dd>
-              <dt>Último evento</dt>
+              <dt>{T("attempt")}</dt>
+              <dd>{watch?.detail?.last ? T("journal") : "—"}</dd>
+              <dt>{T("last_event")}</dt>
               <dd>{watch?.detail?.last || "—"}</dd>
             </dl>
             {attn ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 10, background: "var(--surface-sunken)", border: "1px solid var(--border-default)" }}>
                 <div style={{ fontSize: 13 }}>{watch?.attention?.text || attn}</div>
-                <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Resposta para o journal" />
+                <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={T("answer_placeholder")} />
                 <div className="inline-actions">
                   <Button
                     size="sm"
@@ -822,12 +832,12 @@ function Room({
                       onRefresh();
                     }}
                   >
-                    Enviar resposta
+                    {T("send_answer")}
                   </Button>
                 </div>
               </div>
             ) : null}
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Contagem de tokens e volume de log não indicam conclusão. Andamento vem dos gates verificados.</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{T("tokens_not_done")}</div>
           </aside>
         </div>
       )}
@@ -839,7 +849,7 @@ function Room({
               <span className="muted">
                 {t.role} · {t.account}
               </span>
-              <div className="log-tail">{(watch?.log_lines || []).slice(-3).join("\n") || "sem cauda de log"}</div>
+              <div className="log-tail">{(watch?.log_lines || []).slice(-3).join("\n") || T("no_log_tail")}</div>
             </button>
           ))}
         </div>
@@ -860,27 +870,27 @@ function Room({
             active={logTab}
             onChange={setLogTab}
             items={[
-              { id: "log", label: "Log" },
-              { id: "criteria", label: "Critérios" },
+              { id: "log", label: T("log") },
+              { id: "criteria", label: T("criteria") },
               { id: "diff", label: "Diff" },
-              { id: "history", label: "Histórico" },
+              { id: "history", label: T("history") },
             ]}
           />
           <div className="inline-actions">
             {live ? (
               owns ? (
                 <>
-                  <span className="owner-accent">você controla a entrada</span>
+                  <span className="owner-accent">{T("you_control")}</span>
                   <Button variant="secondary" size="sm" onClick={async () => {
                     await api(`/v0/sessions/${live.id}/control`, { method: "POST", body: JSON.stringify({ surface: "tui", client }) });
                     onRefresh();
                   }}>
-                    Devolver controle
+                    {T("return_control")}
                   </Button>
                 </>
               ) : (
                 <>
-                  <span className="owner-muted">{live.owner === "tui" ? "TUI controla a entrada" : "outro cliente controla"}</span>
+                  <span className="owner-muted">{live.owner === "tui" ? T("tui_controls") : T("other_controls")}</span>
                   <Button
                     size="sm"
                     onClick={async () => {
@@ -888,25 +898,25 @@ function Room({
                       onRefresh();
                     }}
                   >
-                    Assumir controle
+                    {T("take_control")}
                   </Button>
                 </>
               )
             ) : (
-              <span className="owner-muted">sem sessão viva</span>
+              <span className="owner-muted">{T("no_live_session")}</span>
             )}
           </div>
         </div>
         {logTab === "log" && live && (layout === "terminal" || layout === "list") ? (
           <>
-            {!owns ? <div className="readonly-note">somente leitura — a TUI ou outro cliente controla a entrada</div> : null}
+            {!owns ? <div className="readonly-note">{T("readonly_note")}</div> : null}
             <XTerm sessionId={live.id} inputEnabled={!!owns} client={client} />
           </>
         ) : null}
-        {logTab === "log" && !live ? <div className="empty">Inicie uma sessão para o log ao vivo. Fechar este cliente não encerra o processo.</div> : null}
+        {logTab === "log" && !live ? <div className="empty">{T("start_session_for_log")}</div> : null}
         {logTab === "criteria" && (
           <div>
-            {crit.length === 0 ? <div className="empty">Sem critérios até existir um journal Batuta neste workspace.</div> : null}
+            {crit.length === 0 ? <div className="empty">{T("no_criteria")}</div> : null}
             {crit.map((c) => (
               <div key={c.index} className={c.state === "pending" ? "crit crit--pending" : "crit"}>
                 <span>{c.state === "pass" ? "✓" : c.state === "fail" ? "✗" : "?"}</span>
@@ -914,7 +924,7 @@ function Room({
                   <strong>
                     C{c.index} {c.title}
                   </strong>
-                  <div className="muted">{c.state === "pass" ? "prova" : c.state === "fail" ? "revisão" : "pendente"}</div>
+                  <div className="muted">{c.state === "pass" ? T("proof") : c.state === "fail" ? T("revision") : T("pending")}</div>
                 </div>
               </div>
             ))}
@@ -922,7 +932,7 @@ function Room({
         )}
         {logTab === "diff" && (
           <div className="empty">
-            Sem diff até a integração Batuta publicar uma revisão. O Console não inventa +/− a partir do log.
+            {T("no_diff")}
           </div>
         )}
         {logTab === "history" && (
@@ -937,7 +947,7 @@ function Room({
                 </div>
               );
             })}
-            {activity.length === 0 ? <div className="empty">Nenhum evento ainda.</div> : null}
+            {activity.length === 0 ? <div className="empty">{T("no_events")}</div> : null}
           </div>
         )}
       </section>
@@ -1019,23 +1029,23 @@ function Squads({
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Squads</h1>
-          <p className="sub">Salvar não executa nada. Os squads Batuta já vêm com papéis e skills; crie o seu quando o formato for outro.</p>
+          <h1>{T("squads")}</h1>
+          <p className="sub">{T("squads_sub")}</p>
         </div>
-        <Button onClick={onCreate}>Criar squad</Button>
+        <Button onClick={onCreate}>{T("create_squad")}</Button>
       </div>
       {!skillsRoot ? (
-        <Alert tone="warning" title="Catálogo sem disco">
-          Skills oficiais ainda aparecem aqui. A injeção só ativa BATUTA_SKILLS quando o diretório existir.
+        <Alert tone="warning" title={T("catalog_no_disk_title")}>
+          {T("catalog_no_disk_body")}
         </Alert>
       ) : null}
-      <SquadGroup title="Squads Batuta" hint="Catálogo oficial. Edite à vontade; duplicar cria um squad seu." squads={batuta} onEdit={onEdit} onDuplicate={onDuplicate} empty="O daemon ainda não semeou o catálogo." />
-      <SquadGroup title="Seus squads" hint="Crie do zero ou duplique um Batuta." squads={custom} onEdit={onEdit} onDuplicate={onDuplicate} empty="Nenhum squad próprio ainda. Use Criar squad." />
+      <SquadGroup title={T("batuta_squads")} hint={T("batuta_squads_hint")} squads={batuta} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("batuta_squads_empty")} />
+      <SquadGroup title={T("your_squads")} hint={T("your_squads_hint")} squads={custom} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("your_squads_empty")} />
       <section className="panel">
         <div className="panel-h">
-          <span>Skills Batuta</span>
+          <span>{T("skills_batuta")}</span>
           <span className="mono muted" style={{ fontSize: 12 }}>
-            {skillsRoot || "sem diretório"}
+            {skillsRoot || T("no_directory")}
           </span>
         </div>
         <div className="skill-catalog">
@@ -1045,10 +1055,10 @@ function Squads({
                 <span className="mono" style={{ fontWeight: 600 }}>
                   {sk.id}
                 </span>
-                <Badge tone={sk.origin === "batuta" ? "accent" : "neutral"}>{sk.origin === "batuta" ? "Batuta" : "própria"}</Badge>
+                <Badge tone={sk.origin === "batuta" ? "accent" : "neutral"}>{sk.origin === "batuta" ? "Batuta" : T("own_skill")}</Badge>
               </div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{sk.summary || "—"}</div>
-              <div className="path">{sk.installed ? "instalada neste host" : "listada · ainda não está no disco"}</div>
+              <div className="path">{sk.installed ? T("installed_host") : T("listed_not_disk")}</div>
             </div>
           ))}
         </div>
@@ -1083,23 +1093,23 @@ function SquadGroup({
         {squads.map((q) => (
           <button key={q.id} type="button" className="sq-card" onClick={() => onEdit(q)}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span style={{ fontSize: 16, fontWeight: 600 }}>{q.name || "Sem nome"}</span>
+              <span style={{ fontSize: 16, fontWeight: 600 }}>{q.name || T("unnamed")}</span>
               <span className="inline-actions">
-                {q.origin === "batuta" ? <Badge tone="accent">Batuta</Badge> : <Badge tone="neutral">seu</Badge>}
-                <Badge tone={q.draft ? "warning" : "success"}>{q.draft ? "rascunho" : `válido · v${q.version}`}</Badge>
+                {q.origin === "batuta" ? <Badge tone="accent">Batuta</Badge> : <Badge tone="neutral">{T("yours")}</Badge>}
+                <Badge tone={q.draft ? "warning" : "success"}>{q.draft ? T("draft") : T("valid_v", { v: q.version })}</Badge>
               </span>
             </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{q.purpose || "Sem propósito ainda."}</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{q.purpose || T("no_purpose_yet")}</div>
             <div className="inline-actions">
               {(q.members || []).map((m) => (
                 <span key={m.id || m.role} className="role-chip">
-                  {m.role || "papel"}
+                  {m.role || T("role")}
                 </span>
               ))}
             </div>
             <div className="path" style={{ display: "flex", justifyContent: "space-between" }}>
               <span>
-                v{q.version} · {plural(q.members?.length || 0, "membro", "membros")}
+                v{q.version} · {plural(q.members?.length || 0, "member_one", "member_many")}
               </span>
               <span
                 className="linkish"
@@ -1108,7 +1118,7 @@ function SquadGroup({
                   onDuplicate(q);
                 }}
               >
-                duplicar
+                {T("duplicate")}
               </span>
             </div>
           </button>
@@ -1155,42 +1165,42 @@ function SquadEditor({
       <div className="page-head">
         <div>
           <p className="muted mono" style={{ margin: 0 }}>
-            Squads / {name || "sem nome"}
+            {T("squads_crumb", { name: name || T("nameless") })}
           </p>
           <div className="inline-actions">
-            <h1>{name || "Editor de squad"}</h1>
-            {squad.origin === "batuta" ? <Badge tone="accent">Batuta</Badge> : <Badge tone="neutral">seu</Badge>}
-            <Badge tone="neutral">{squad.draft ? `Rascunho · v${squad.version}` : `v${squad.version}`}</Badge>
+            <h1>{name || T("squad_editor")}</h1>
+            {squad.origin === "batuta" ? <Badge tone="accent">Batuta</Badge> : <Badge tone="neutral">{T("yours")}</Badge>}
+            <Badge tone="neutral">{squad.draft ? T("draft_v", { v: squad.version }) : T("version_v", { v: squad.version })}</Badge>
           </div>
         </div>
         <div className="inline-actions">
           <Button variant="secondary" onClick={onClose}>
-            Voltar
+            {T("back")}
           </Button>
         </div>
       </div>
       <div className="cards-wide">
-        <Field label="Nome">
+        <Field label={T("field_name")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Propósito">
+        <Field label={T("field_purpose")}>
           <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} />
         </Field>
       </div>
-      {members.length === 0 ? <Alert tone="danger" title="squad vazio">Adicione um maestro antes de salvar.</Alert> : null}
-      {claudePending ? <Alert tone="warning" title="isolamento não qualificado">Uma conta Claude nesta linha ainda não foi qualificada.</Alert> : null}
+      {members.length === 0 ? <Alert tone="danger" title={T("empty_squad_title")}>{T("empty_squad_body")}</Alert> : null}
+      {claudePending ? <Alert tone="warning" title={T("iso_unqualified_title")}>{T("iso_unqualified_body")}</Alert> : null}
       {msg ? <Alert tone={tone || "info"} title={msg} /> : null}
-      {members.length === 0 ? <div className="panel empty">Nenhum membro ainda…</div> : null}
+      {members.length === 0 ? <div className="panel empty">{T("no_members_yet")}</div> : null}
       <section className="panel editor-panel">
         <table className="editor-table">
           <thead>
             <tr>
-              <th>Papel</th>
-              <th>CLI</th>
-              <th>Modelo</th>
-              <th>Esforço</th>
-              <th>Conta / política</th>
-              <th>Skills</th>
+              <th>{T("col_role")}</th>
+              <th>{T("col_cli")}</th>
+              <th>{T("col_model")}</th>
+              <th>{T("col_effort")}</th>
+              <th>{T("col_account_policy")}</th>
+              <th>{T("col_skills")}</th>
               <th />
             </tr>
           </thead>
@@ -1204,10 +1214,10 @@ function SquadEditor({
                   <td>
                     <Input value={mb.role} onChange={(e) => patch(i, { role: e.target.value })} />
                     {mb.maestro ? (
-                      <Badge tone="accent">maestro</Badge>
+                      <Badge tone="accent">{T("maestro")}</Badge>
                     ) : (
                       <button type="button" className="linkish" onClick={() => setMembers((ms) => ms.map((m, j) => ({ ...m, maestro: j === i })))}>
-                        definir como maestro
+                        {T("set_maestro")}
                       </button>
                     )}
                   </td>
@@ -1220,18 +1230,18 @@ function SquadEditor({
                     </Select>
                   </td>
                   <td>
-                    <Input value={mb.model || ""} onChange={(e) => patch(i, { model: e.target.value })} placeholder="herdar" />
+                    <Input value={mb.model || ""} onChange={(e) => patch(i, { model: e.target.value })} placeholder={T("inherit")} />
                   </td>
                   <td>
                     <Select value={mb.effort || "medium"} onChange={(e) => patch(i, { effort: e.target.value })}>
-                      <option value="low">baixo</option>
-                      <option value="medium">médio</option>
-                      <option value="high">alto</option>
+                      <option value="low">{T("effort_low")}</option>
+                      <option value="medium">{T("effort_medium")}</option>
+                      <option value="high">{T("effort_high")}</option>
                     </Select>
                   </td>
                   <td>
                     <Select value={mb.account_id} onChange={(e) => patch(i, { account_id: e.target.value })}>
-                      <option value="">sem conta</option>
+                      <option value="">{T("no_account")}</option>
                       {accounts.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.label}
@@ -1239,14 +1249,14 @@ function SquadEditor({
                       ))}
                     </Select>
                     <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
-                      {acc ? `conta fixa · ${iso?.text}` : "sem conta"}
+                      {acc ? T("fixed_account_iso", { iso: iso?.text || "" }) : T("no_account")}
                     </div>
                   </td>
                   <td>
                     <SkillPicker value={mb.skills || []} catalog={skills} onChange={(next) => patch(i, { skills: next })} />
                   </td>
                   <td>
-                    <IconButton label="Remover" onClick={() => setMembers((ms) => ms.filter((_, j) => j !== i))}>
+                    <IconButton label={T("remove")} onClick={() => setMembers((ms) => ms.filter((_, j) => j !== i))}>
                       ×
                     </IconButton>
                   </td>
@@ -1263,9 +1273,9 @@ function SquadEditor({
             setMembers((ms) => [...ms, { role: "", cli: "codex", account_id: accounts[0]?.id || "", maestro: ms.length === 0, effort: "medium" }])
           }
         >
-          Adicionar membro
+          {T("add_member")}
         </Button>
-        <span className="muted">{plural(members.length, "membro", "membros")}</span>
+        <span className="muted">{plural(members.length, "member_one", "member_many")}</span>
         <span style={{ flex: 1 }} />
         <Button
           variant="secondary"
@@ -1278,18 +1288,18 @@ function SquadEditor({
             setMsg(`${v.validation.title}. ${v.validation.text}`);
           }}
         >
-          Validar
+          {T("validate")}
         </Button>
         {workspaceId ? (
           <Button
             variant="secondary"
             onClick={async () => {
               const saved = await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify(draft) });
-              await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspaceId, title: name || "Nova missão", squad_id: saved.id }) });
+              await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspaceId, title: name || T("new_mission_title"), squad_id: saved.id }) });
               onSaved();
             }}
           >
-            Criar missão com este squad
+            {T("create_mission_squad")}
           </Button>
         ) : null}
         <Button
@@ -1298,19 +1308,17 @@ function SquadEditor({
             onSaved();
           }}
         >
-          Salvar versão
+          {T("save_version")}
         </Button>
       </div>
       <div className="info-cards">
         <div className="panel" style={{ padding: "var(--cardpad)" }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>Concorrência</h2>
-          <p className="sub">A capacidade é da conta, não do squad. Duas missões na mesma conta respeitam o teto configurado.</p>
+          <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>{T("concurrency")}</h2>
+          <p className="sub">{T("concurrency_body")}</p>
         </div>
         <div className="panel" style={{ padding: "var(--cardpad)" }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>Precedência</h2>
-          <p className="sub">
-            <span className="mono">workspace › missão › membro › squad</span>. Este editor grava o membro e o squad; overrides de workspace/missão ainda não são armazenados.
-          </p>
+          <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>{T("precedence")}</h2>
+          <p className="sub">{T("precedence_body")}</p>
         </div>
       </div>
     </div>
@@ -1344,33 +1352,33 @@ function Accounts({
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Contas e limites</h1>
-          <p className="sub">Credenciais ficam no cofre do sistema — nunca aqui.</p>
+          <h1>{T("nav_accounts")}</h1>
+          <p className="sub">{T("accounts_sub")}</p>
         </div>
-        <Button onClick={onOpen}>Adicionar conta</Button>
+        <Button onClick={onOpen}>{T("add_account")}</Button>
       </div>
       <div className="stats">
         <div className="stat-card">
-          <Stat label="Contas" value={accounts.length} />
+          <Stat label={T("stat_accounts")} value={accounts.length} />
         </div>
         <div className="stat-card">
-          <Stat label="Sessões ativas" value={`${live.length}${cap ? ` / ${cap}` : ""}`} />
+          <Stat label={T("stat_sessions")} value={`${live.length}${cap ? ` / ${cap}` : ""}`} />
         </div>
         <div className="stat-card">
-          <Stat label="Coleta de limites" value={newest ? relTime(newest) : "nunca"} />
+          <Stat label={T("stat_limits")} value={newest ? relTime(newest) : T("never")} />
         </div>
         <div className="stat-card">
-          <Stat label="Pendências" value={pending} />
+          <Stat label={T("stat_pending")} value={pending} />
         </div>
       </div>
       <section className="panel">
         <div className="acct-grid caps" style={{ cursor: "default" }}>
-          <span>Conta</span>
-          <span>Provedor · CLI</span>
-          <span>Isolamento</span>
-          <span>Sessões</span>
-          <span>Limite conhecido</span>
-          <span>Fonte</span>
+          <span>{T("accounts")}</span>
+          <span>{T("col_provider")}</span>
+          <span>{T("col_isolation")}</span>
+          <span>{T("col_sessions")}</span>
+          <span>{T("col_known_limit")}</span>
+          <span>{T("col_source")}</span>
         </div>
         {accounts.map((a) => {
           const lim = limits.find((l) => l.account_id === a.id);
@@ -1394,16 +1402,16 @@ function Accounts({
                 {used} / {a.session_cap || "—"}
               </span>
               <span>
-                <div className="muted">{lim?.percent == null ? "desconhecido" : `${Math.round(lim.percent)}% · ${lim.window || "janela"}`}</div>
+                <div className="muted">{lim?.percent == null ? T("unknown") : T("limit_pct", { pct: Math.round(lim.percent), window: lim.window || T("window") })}</div>
                 <Progress value={lim?.percent} unknown={lim?.percent == null} />
               </span>
               <span className="mono muted">{lim?.origin || lim?.source || "—"}</span>
             </button>
           );
         })}
-        {accounts.length === 0 ? <div className="empty">Nenhuma conta ainda.</div> : null}
+        {accounts.length === 0 ? <div className="empty">{T("no_accounts_yet")}</div> : null}
       </section>
-      <p className="muted">Limite da conta ≠ tokens da sessão ≠ custo. Dado ausente permanece desconhecido — nunca 0%. Clique numa linha para mudar o rótulo; o CLI não muda.</p>
+      <p className="muted">{T("limits_footnote")}</p>
       <AddAccount open={open} onClose={onClose} onSaved={onSaved} />
       <RenameAccount account={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); onSaved(); }} />
     </div>
@@ -1429,12 +1437,12 @@ function RenameAccount({
   return (
     <Dialog
       open={!!account}
-      title="Renomear conta"
+      title={T("rename_account")}
       onClose={onClose}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
-            Cancelar
+            {T("cancel")}
           </Button>
           <Button
             disabled={!label.trim() || !account || saving}
@@ -1453,12 +1461,12 @@ function RenameAccount({
               }
             }}
           >
-            Salvar
+            {T("save")}
           </Button>
         </>
       }
     >
-      <Field label="Rótulo local" hint={`${account?.provider || ""} · ${account?.adapter || ""} — o CLI e o isolamento não mudam.`}>
+      <Field label={T("local_label")} hint={T("label_hint", { provider: account?.provider || "", adapter: account?.adapter || "" })}>
         <Input value={label} onChange={(e) => setLabel(e.target.value)} />
       </Field>
       {err ? <p className="err">{err}</p> : null}
@@ -1476,30 +1484,30 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
     adapter === "codex" || adapter === "opencode" ? "supported" : adapter === "gemini" ? "unsupported" : "not_yet_qualified";
   const iso = isolationLabel(isolation);
   const providers = [
-    { id: "codex", title: "OpenAI · Codex", hint: "HOME isolado por conta; login oficial no PTY." },
-    { id: "claude", title: "Anthropic · Claude", hint: "Pasta isolada; login ainda não qualificado." },
-    { id: "opencode", title: "OpenCode · chave API", hint: "Isolamento suportado; a chave não passa por esta UI." },
-    { id: "gemini", title: "Google · Gemini", hint: "Isolamento sem suporte nesta versão." },
+    { id: "codex", title: T("provider_codex"), hint: T("provider_codex_hint") },
+    { id: "claude", title: T("provider_claude"), hint: T("provider_claude_hint") },
+    { id: "opencode", title: T("provider_opencode"), hint: T("provider_opencode_hint") },
+    { id: "gemini", title: T("provider_gemini"), hint: T("provider_gemini_hint") },
   ];
   return (
     <Drawer
       open={open}
-      title="Adicionar conta"
+      title={T("add_account")}
       onClose={onClose}
       footer={
         step === 1 ? (
           <>
             <Button variant="secondary" onClick={onClose}>
-              Cancelar
+              {T("cancel")}
             </Button>
             <Button disabled={!label} onClick={() => setStep(2)}>
-              Continuar
+              {T("continue")}
             </Button>
           </>
         ) : step === 2 ? (
           <>
             <Button variant="secondary" onClick={() => setStep(1)}>
-              Voltar
+              {T("back")}
             </Button>
             <Button
               loading={loading}
@@ -1516,15 +1524,15 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
                 }
               }}
             >
-              Conectar com o mecanismo oficial
+              {T("connect_official")}
             </Button>
           </>
         ) : (
-          <Button onClick={onSaved}>Salvar conta</Button>
+          <Button onClick={onSaved}>{T("save_account")}</Button>
         )
       }
     >
-      <Stepper steps={["Provedor", "Conectar", "Confirmar"]} current={step} />
+      <Stepper steps={[T("step_provider"), T("step_connect"), T("step_confirm")]} current={step} />
       {step === 1 && (
         <div className="radio-col" style={{ marginTop: 16 }}>
           {providers.map((p) => (
@@ -1538,8 +1546,8 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
               </span>
             </label>
           ))}
-          <Field label="Nome da conta" hint="Rótulo local — não é e-mail nem token.">
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="trabalho" />
+          <Field label={T("account_name")} hint={T("account_name_hint")}>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={T("account_placeholder")} />
           </Field>
           <Badge tone={iso.tone}>{iso.text}</Badge>
         </div>
@@ -1549,24 +1557,22 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
           <p>
             {label} · {adapter}
           </p>
-          <p className="muted">
-            Cria um HOME isolado para esta conta. O login oficial acontece no PTY da sessão, com esse HOME — credenciais nunca passam por esta API. Não desconecta nem substitui as existentes.
-          </p>
+          <p className="muted">{T("connect_body")}</p>
         </div>
       )}
       {step === 3 && draft && (
         <div style={{ marginTop: 16 }}>
-          <Alert tone="success" title="Conectada">
-            Isolamento {draft.isolation}. Inicie uma sessão para completar o login oficial no PTY.
+          <Alert tone="success" title={T("connected")}>
+            {T("isolation_login", { iso: draft.isolation })}
           </Alert>
           <dl className="detail" style={{ border: 0, padding: "12px 0" }}>
-            <dt>Conta</dt>
+            <dt>{T("col_account")}</dt>
             <dd>{draft.label}</dd>
-            <dt>Identidade</dt>
+            <dt>{T("identity")}</dt>
             <dd className="mono">{draft.vault_ref ? `${draft.vault_ref.slice(0, 18)}…` : "—"}</dd>
-            <dt>Isolamento</dt>
+            <dt>{T("col_isolation")}</dt>
             <dd>{draft.isolation}</dd>
-            <dt>Sessões</dt>
+            <dt>{T("col_sessions")}</dt>
             <dd>{draft.session_cap || "—"}</dd>
           </dl>
         </div>
@@ -1600,21 +1606,19 @@ function ActivityScreen({
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Atividade</h1>
-          <p className="sub">
-            ao vivo · cursor <span className="mono">{cursor}</span>
-          </p>
+          <h1>{T("activity")}</h1>
+          <p className="sub">{T("activity_sub", { cursor })}</p>
         </div>
       </div>
       <Tabs
         active={filter}
         onChange={setFilter}
         items={[
-          { id: "all", label: "Tudo" },
-          { id: "sessions", label: "Sessões" },
-          { id: "deliveries", label: "Entregas" },
-          { id: "limits", label: "Contas e limites" },
-          { id: "clients", label: "Clientes" },
+          { id: "all", label: T("filter_everything") },
+          { id: "sessions", label: T("filter_sessions") },
+          { id: "deliveries", label: T("filter_deliveries") },
+          { id: "limits", label: T("filter_limits") },
+          { id: "clients", label: T("filter_clients") },
         ]}
       />
       <div className="cards-wide">
@@ -1638,23 +1642,23 @@ function ActivityScreen({
                 </span>
                 <span>
                   <strong>{e.kind}</strong>
-                  {mission ? <div className="mono muted">missão: {mission.title}</div> : null}
+                  {mission ? <div className="mono muted">{T("mission_colon", { title: mission.title })}</div> : null}
                 </span>
               </button>
             );
           })}
-          {filtered.length === 0 ? <div className="empty">Nenhum evento neste filtro.</div> : null}
+          {filtered.length === 0 ? <div className="empty">{T("no_events_filter")}</div> : null}
         </section>
         <section className="panel">
-          <div className="panel-h">Sessões</div>
+          <div className="panel-h">{T("sessions")}</div>
           <p className="empty" style={{ paddingBottom: 0 }}>
-            Desconectar um cliente não encerra o processo.
+            {T("disconnect_note")}
           </p>
           <div className="acct-grid caps" style={{ gridTemplateColumns: "1.2fr 1fr 1fr 1fr" }}>
-            <span>Sessão</span>
-            <span>Processo</span>
-            <span>Cliente</span>
-            <span>Trabalho</span>
+            <span>{T("col_session")}</span>
+            <span>{T("col_process")}</span>
+            <span>{T("col_client")}</span>
+            <span>{T("col_work")}</span>
           </div>
           {sessions.map((s) => (
             <div key={s.id} className="acct-grid" style={{ gridTemplateColumns: "1.2fr 1fr 1fr 1fr" }}>
@@ -1681,34 +1685,34 @@ function Review({ watch, mission, onBack }: { watch: Watch | null; mission: Miss
       <div className="page-head">
         <div>
           <p className="muted mono" style={{ margin: 0 }}>
-            {mission?.title || "Missão"} / Estado da entrega
+            {mission?.title || T("mission")} / {T("delivery_state")}
           </p>
           <div className="inline-actions">
-            <h1>{watch?.delivery || mission?.title || "Revisão"}</h1>
+            <h1>{watch?.delivery || mission?.title || T("review")}</h1>
             <Badge tone={watch?.available ? "success" : "neutral"} dot>
-              {watch?.available ? "Com journal" : "Sem journal"}
+              {watch?.available ? T("with_journal") : T("without_journal")}
             </Badge>
           </div>
-          <p className="sub">Ações vêm da integração Batuta. O Console não edita o journal.</p>
+          <p className="sub">{T("review_sub")}</p>
         </div>
         <div className="inline-actions">
           <Button variant="secondary" onClick={onBack}>
-            Voltar à sala
+            {T("back_to_room")}
           </Button>
-          <Button variant="secondary" disabled title="Reabrir tarefa exige a integração Batuta">
-            Reabrir tarefa
+          <Button variant="secondary" disabled title={T("reopen_title")}>
+            {T("reopen_task")}
           </Button>
         </div>
       </div>
       <div className="cards-wide">
         <section className="panel">
           <div className="panel-h">Diff</div>
-          <div className="empty">Sem arquivos de revisão publicados. Nada de +/− fictício.</div>
+          <div className="empty">{T("no_review_files")}</div>
         </section>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--gap)" }}>
           <section className="panel">
-            <div className="panel-h">Critérios</div>
-            {crit.length === 0 ? <div className="empty">Sem critérios neste journal.</div> : null}
+            <div className="panel-h">{T("criteria")}</div>
+            {crit.length === 0 ? <div className="empty">{T("no_criteria_journal")}</div> : null}
             {crit.map((c) => (
               <div key={c.index} className={c.state === "pending" ? "crit crit--pending" : "crit"}>
                 <span>{c.state === "pass" ? "✓" : "?"}</span>
@@ -1720,8 +1724,8 @@ function Review({ watch, mission, onBack }: { watch: Watch | null; mission: Miss
             ))}
           </section>
           <section className="panel">
-            <div className="panel-h">Evidências</div>
-            {ev.length === 0 ? <div className="empty">Sem evidência até existir journal Batuta.</div> : null}
+            <div className="panel-h">{T("evidence")}</div>
+            {ev.length === 0 ? <div className="empty">{T("no_evidence")}</div> : null}
             {ev.map((e, i) => (
               <div key={i} className="hist-grid" style={{ gridTemplateColumns: "90px minmax(0,1fr) auto" }}>
                 <span className="caps">{e.kind}</span>
@@ -1772,12 +1776,12 @@ function CreateWorkspaceDialog({
   return (
     <Dialog
       open={open}
-      title="Novo workspace"
+      title={T("new_workspace")}
       onClose={onClose}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
-            Cancelar
+            {T("cancel")}
           </Button>
           <Button
             disabled={!name || !root}
@@ -1789,31 +1793,31 @@ function CreateWorkspaceDialog({
               onCreated(w);
             }}
           >
-            Criar
+            {T("create")}
           </Button>
         </>
       }
     >
       <div className="lyra-wscreate">
-        <Field label="Nome">
+        <Field label={T("field_name")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="acme" />
         </Field>
         <div>
-          <span className="lyra-label">Caminho</span>
+          <span className="lyra-label">{T("field_path")}</span>
           <div className="path-pick">
             <div className="lyra-wscreate__slug">
               <input
                 className="lyra-wscreate__slug-input"
                 value={root}
                 onChange={(e) => setRoot(e.target.value)}
-                placeholder={slug || "caminho absoluto"}
+                placeholder={slug || T("path_placeholder")}
               />
             </div>
             <Button variant="secondary" type="button" loading={picking} disabled={picking} onClick={pickFolder} iconLeft={<FolderOpen size={16} />}>
-              Escolher pasta
+              {T("pick_folder")}
             </Button>
           </div>
-          {pickErr ? <p className="lyra-hint lyra-hint--error">{pickErr}</p> : <p className="lyra-hint">Escolha a pasta do checkout ou cole o caminho absoluto.</p>}
+          {pickErr ? <p className="lyra-hint lyra-hint--error">{pickErr}</p> : <p className="lyra-hint">{T("path_hint")}</p>}
         </div>
       </div>
     </Dialog>
@@ -1836,12 +1840,12 @@ function SkillPicker({
   return (
     <div className="skill-picker">
       {value.map((id) => (
-        <button key={id} type="button" className="skill-chip skill-chip--on" onClick={() => toggle(id)} title="remover">
+        <button key={id} type="button" className="skill-chip skill-chip--on" onClick={() => toggle(id)} title={T("remove_skill")}>
           {id} ×
         </button>
       ))}
       <details className="skill-add">
-        <summary>+ skill</summary>
+        <summary>{T("add_skill")}</summary>
         <div className="skill-add__pop">
           <div className="skill-add__list">
             <div className="skill-add__label">Batuta</div>
@@ -1858,7 +1862,7 @@ function SkillPicker({
                   {sk.id}
                 </button>
               ))}
-            {catalog.some((sk) => sk.origin !== "batuta") ? <div className="skill-add__label">No disco</div> : null}
+            {catalog.some((sk) => sk.origin !== "batuta") ? <div className="skill-add__label">{T("on_disk")}</div> : null}
             {catalog
               .filter((sk) => sk.origin !== "batuta")
               .map((sk) => (
@@ -1876,7 +1880,7 @@ function SkillPicker({
           <input
             className="skill-custom"
             value={extra}
-            placeholder="nome da skill própria"
+            placeholder={T("custom_skill_name")}
             onChange={(e) => setExtra(e.target.value)}
             onBlur={() => {
               const id = extra.trim();

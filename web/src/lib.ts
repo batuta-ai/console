@@ -1,3 +1,5 @@
+import { T, localeTag, type Msg } from "./i18n";
+
 export type Screen = "home" | "missions" | "room" | "squads" | "editor" | "accounts" | "activity" | "review";
 
 export type Workspace = { id: string; name: string; root: string };
@@ -124,7 +126,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       } catch {
         /* ignore */
       }
-      throw new Error("token inválido. Rode console --web para abrir com o token deste home");
+      throw new Error(T("err_token"));
     }
     throw new Error(await res.text());
   }
@@ -156,9 +158,9 @@ export function attentionLine(watch: Watch | null) {
 }
 
 export function processLife(process?: string) {
-  if (process === "running") return "vivo";
-  if (process === "unknown") return "só no catálogo — o processo não está vivo";
-  if (process === "exited") return "encerrou";
+  if (process === "running") return T("alive");
+  if (process === "unknown") return T("catalog_dead");
+  if (process === "exited") return T("exited");
   return process || "—";
 }
 
@@ -167,14 +169,15 @@ export function relTime(when?: string) {
   const ms = Date.now() - new Date(when).getTime();
   if (Number.isNaN(ms)) return "—";
   const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `há ${s}s`;
+  const rtf = new Intl.RelativeTimeFormat(localeTag(), { numeric: "always" });
+  if (s < 60) return rtf.format(-s, "second");
   const m = Math.round(s / 60);
-  if (m < 60) return `há ${m} min`;
-  return `há ${Math.round(m / 60)} h`;
+  if (m < 60) return rtf.format(-m, "minute");
+  return rtf.format(-Math.round(m / 60), "hour");
 }
 
 export function limitLabel(lim?: Limit) {
-  if (!lim || lim.percent == null) return "desconhecido";
+  if (!lim || lim.percent == null) return T("unknown");
   return `${Math.round(lim.percent)}%`;
 }
 
@@ -208,7 +211,7 @@ export function criteria(watch: Watch | null) {
       if (state === "DONE") st = "pass";
       else if (state === "FAIL" || state === "FAILED") st = "fail";
     }
-    return { index: i, title: i === cur && title ? title : `critério ${i}`, state: st };
+    return { index: i, title: i === cur && title ? title : T("criterion_n", { n: i }), state: st };
   });
 }
 
@@ -226,9 +229,9 @@ export function evidence(watch: Watch | null) {
 
 export function greeting() {
   const h = new Date().getHours();
-  if (h < 12) return "Bom dia";
-  if (h < 18) return "Boa tarde";
-  return "Boa noite";
+  if (h < 12) return T("greet_morning");
+  if (h < 18) return T("greet_afternoon");
+  return T("greet_evening");
 }
 
 export function initials(name: string) {
@@ -248,32 +251,32 @@ export function missionTone(status: string, attention?: string): "accent" | "war
 }
 
 export function missionStatusLabel(status: string, attention?: string) {
-  if (attention) return "Aguardando";
+  if (attention) return T("status_waiting");
   const s = status.toLowerCase();
-  if (s.includes("done") || s.includes("complete") || s.includes("conclu")) return "Concluída";
-  if (s.includes("wait") || s.includes("block") || s.includes("paus")) return "Aguardando";
-  if (s.includes("run") || s.includes("active") || s.includes("exec") || s.includes("progress")) return "Executando";
-  if (!s || s === "open") return "Aberta";
+  if (s.includes("done") || s.includes("complete") || s.includes("conclu")) return T("status_done");
+  if (s.includes("wait") || s.includes("block") || s.includes("paus")) return T("status_waiting");
+  if (s.includes("run") || s.includes("active") || s.includes("exec") || s.includes("progress")) return T("status_running");
+  if (!s || s === "open") return T("status_open");
   return status || "—";
 }
 
-export function plural(n: number, one: string, many: string) {
-  return `${n} ${n === 1 ? one : many}`;
+export function plural(n: number, one: Msg, many: Msg) {
+  return T(n === 1 ? one : many, { n });
 }
 
 export function isolationLabel(iso: string) {
-  if (iso === "supported") return { text: "suportado", tone: "success" as const };
-  if (iso === "not_yet_qualified") return { text: "não qualificado", tone: "warning" as const };
-  if (iso === "unsupported") return { text: "sem suporte", tone: "danger" as const };
+  if (iso === "supported") return { text: T("iso_supported"), tone: "success" as const };
+  if (iso === "not_yet_qualified") return { text: T("iso_not_qualified"), tone: "warning" as const };
+  if (iso === "unsupported") return { text: T("iso_unsupported"), tone: "danger" as const };
   return { text: iso || "—", tone: "neutral" as const };
 }
 
 export function eventOrigin(kind: string): { label: string; tone: "warning" | "accent" | "success" | "neutral" } {
-  if (kind.startsWith("watch") || kind.includes("delivery")) return { label: "watch", tone: "warning" };
-  if (kind.startsWith("account") || kind.includes("limit")) return { label: "limites", tone: "neutral" };
-  if (kind.startsWith("session")) return { label: "daemon", tone: "accent" };
-  if (kind.includes("inject") || kind.includes("batuta")) return { label: "integração", tone: "success" };
-  return { label: "daemon", tone: "accent" };
+  if (kind.startsWith("watch") || kind.includes("delivery")) return { label: T("origin_watch"), tone: "warning" };
+  if (kind.startsWith("account") || kind.includes("limit")) return { label: T("origin_limits"), tone: "neutral" };
+  if (kind.startsWith("session")) return { label: T("origin_daemon"), tone: "accent" };
+  if (kind.includes("inject") || kind.includes("batuta")) return { label: T("origin_integration"), tone: "success" };
+  return { label: T("origin_daemon"), tone: "accent" };
 }
 
 export function slugify(name: string) {

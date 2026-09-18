@@ -58,5 +58,7 @@ never accepts a secret.
 - [Domain](docs/domain.md)
 - [HTTP and WebSocket API](docs/api.md)
 
-Repository documentation is English. Product UI strings ship in English
-with a Portuguese pack selected by `BATUTA_LANG` or `LANG`.
+Repository documentation is English. Product UI strings (TUI and web) ship
+in English with a Portuguese pack selected by `BATUTA_LANG`, then `LC_ALL`
+or `LANG`. The web client reads `lang` from `GET /v0/capabilities` so it
+matches the daemon, not the browser locale.

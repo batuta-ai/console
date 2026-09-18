@@ -17,6 +17,7 @@ Authorization header on the handshake. The server accepts origins
 {
   "api": "v0",
   "product": "batuta-console",
+  "lang": "en",
   "integrations": ["generic", "batuta"],
   "adapters": ["codex", "claude", "opencode", "gemini"],
   "features": {
@@ -31,6 +32,8 @@ Authorization header on the handshake. The server accepts origins
   }
 }
 ```
+
+`lang` is `en` or `pt`. The daemon uses the same rules as the TUI: `BATUTA_LANG`, then `LC_ALL` or `LANG`, default English. The web UI reads this field and does not use the browser locale.
 
 ## Catalog
 
