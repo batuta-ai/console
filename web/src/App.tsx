@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, House, KeyRound, Moon, Search, Sun, Target, Users } from "lucide-react";
+import { useTheme } from "@lyra-ds/react/theme-provider";
+import { Activity, FolderOpen, House, KeyRound, Moon, Search, Sun, Target, Users } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -71,7 +72,7 @@ function screenTitle(screen: Screen, mission: Mission | null, squad: Squad | nul
 
 export function App() {
   const narrow = useMQ("(max-width: 999px)");
-  const [theme, setTheme] = useState(() => localStorage.getItem("bt-theme") || "light");
+  const { dark, toggle: toggleTheme } = useTheme();
   const [screen, setScreen] = useState<Screen>("home");
   const [err, setErr] = useState("");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -89,11 +90,6 @@ export function App() {
   const [activeMission, setActiveMission] = useState<Mission | null>(null);
   const [wsId, setWsId] = useState(() => localStorage.getItem("bt-ws") || "");
   const [wsDialog, setWsDialog] = useState(false);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("bt-theme", theme);
-  }, [theme]);
 
   const currentWs = workspaces.find((w) => w.id === wsId) || workspaces[0];
   useEffect(() => {
@@ -183,11 +179,11 @@ export function App() {
   const liveClients = new Set(sessions.filter((s) => s.process === "running").map((s) => s.owner_client || s.owner)).size;
 
   return (
-    <div className="frame" data-theme={theme} data-density="comfortable">
+    <div className="frame" data-theme={dark ? "dark" : "light"} data-density="comfortable">
       <div className={narrow ? "web web--rail" : "web"}>
         <aside className="sidebar">
           <div className="brand">
-            <img src={theme === "dark" ? "/assets/batuta-symbol-white.svg" : "/assets/batuta-symbol.svg"} alt="" />
+            <img src={dark ? "/assets/batuta-symbol-white.svg" : "/assets/batuta-symbol.svg"} alt="" />
             <span>
               batuta <span className="brand-muted">/</span> console
             </span>
@@ -242,8 +238,8 @@ export function App() {
             <IconButton label="Buscar" title="Busca ainda não está no daemon">
               <Search size={17} />
             </IconButton>
-            <IconButton label="Alternar tema" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
-              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            <IconButton label="Alternar tema" onClick={toggleTheme}>
+              {dark ? <Sun size={17} /> : <Moon size={17} />}
             </IconButton>
             <Avatar name="Batuta" size="sm" />
           </header>
@@ -1693,7 +1689,28 @@ function CreateWorkspaceDialog({
 }) {
   const [name, setName] = useState("");
   const [root, setRoot] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [pickErr, setPickErr] = useState("");
   const slug = slugify(name);
+
+  async function pickFolder() {
+    setPicking(true);
+    setPickErr("");
+    try {
+      const got = await api<{ path?: string; canceled?: boolean }>("/v0/workspaces/pick-root", { method: "POST" });
+      if (got?.canceled || !got?.path) return;
+      setRoot(got.path);
+      if (!name.trim()) {
+        const base = got.path.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || "";
+        if (base) setName(base);
+      }
+    } catch (e) {
+      setPickErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPicking(false);
+    }
+  }
+
   return (
     <Dialog
       open={open}
@@ -1710,6 +1727,7 @@ function CreateWorkspaceDialog({
               const w = await api<Workspace>("/v0/workspaces", { method: "POST", body: JSON.stringify({ name, root }) });
               setName("");
               setRoot("");
+              setPickErr("");
               onCreated(w);
             }}
           >
@@ -1724,11 +1742,20 @@ function CreateWorkspaceDialog({
         </Field>
         <div>
           <span className="lyra-label">Caminho</span>
-          <div className="lyra-wscreate__slug" style={{ marginTop: 8 }}>
-            <span className="lyra-wscreate__slug-prefix">~/dev/</span>
-            <input className="lyra-wscreate__slug-input" value={root} onChange={(e) => setRoot(e.target.value)} placeholder={slug || "caminho absoluto"} />
+          <div className="path-pick">
+            <div className="lyra-wscreate__slug">
+              <input
+                className="lyra-wscreate__slug-input"
+                value={root}
+                onChange={(e) => setRoot(e.target.value)}
+                placeholder={slug || "caminho absoluto"}
+              />
+            </div>
+            <Button variant="secondary" type="button" loading={picking} disabled={picking} onClick={pickFolder} iconLeft={<FolderOpen size={16} />}>
+              Escolher pasta
+            </Button>
           </div>
-          <p className="lyra-hint">Use o caminho absoluto do checkout. O prefixo é só referência visual.</p>
+          {pickErr ? <p className="lyra-hint lyra-hint--error">{pickErr}</p> : <p className="lyra-hint">Escolha a pasta do checkout ou cole o caminho absoluto.</p>}
         </div>
       </div>
     </Dialog>

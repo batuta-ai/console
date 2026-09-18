@@ -36,7 +36,10 @@ go build -o bin/consoled ./cmd/consoled
 go build -o bin/console ./cmd/console
 ```
 
-The web UI lives in `web/` and is embedded from `internal/webui/dist`:
+The web UI lives in `web/` and is embedded from `internal/webui/dist`.
+It consumes [`@lyra-ds/react`](https://www.npmjs.com/package/@lyra-ds/react) and
+[`@lyra-ds/styles`](https://www.npmjs.com/package/@lyra-ds/styles); Batuta tokens
+overlay those packages in `web/src/batuta-theme.css`.
 
 ```bash
 cd web && npm install && npm run build

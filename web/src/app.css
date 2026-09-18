@@ -57,13 +57,14 @@ body {
   color: var(--text-muted);
 }
 .side-pad {
-  padding: 0 12px 10px;
+  padding: 0 18px 12px;
+  min-width: 0;
 }
 .side-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 12px;
+  padding: 4px 18px;
 }
 .nav-btn {
   display: flex;
@@ -594,14 +595,28 @@ h1 {
 .err {
   color: var(--danger-text);
 }
-.lyra-wssw summary {
-  list-style: none;
+.lyra-wssw {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
-.lyra-wssw summary::-webkit-details-marker {
+.lyra-wssw__trigger {
+  box-sizing: border-box;
+  min-width: 0;
+}
+.lyra-wssw__id {
+  min-width: 0;
+}
+.lyra-wssw--collapsed .lyra-wssw__id {
   display: none;
 }
-.lyra-wssw:not([open]) .lyra-wssw__pop {
-  display: none;
+.lyra-wssw--collapsed .lyra-wssw__trigger {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
 }
 .web--rail .brand span,
 .web--rail .side-foot span.foot-copy,
@@ -755,6 +770,21 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+.path-pick {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 8px;
+  min-width: 0;
+}
+.path-pick .lyra-wscreate__slug {
+  flex: 1;
+  min-width: 0;
+}
+.path-pick .lyra-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .lyra-stepper {
   flex-wrap: wrap;

@@ -20,6 +20,39 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestPickWorkspaceRoot(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	svc := service.New(st, session.New(t.TempDir()), limits.New(nil))
+	dir := t.TempDir()
+	h := (&Server{
+		Svc:   svc,
+		Token: "test-token",
+		PickDirectory: func(ctx context.Context) (string, bool, error) {
+			return dir, false, nil
+		},
+	}).Handler()
+	got := post(t, h, "/v0/workspaces/pick-root", map[string]any{}, 200)
+	if got["path"] != dir {
+		t.Fatalf("%v", got)
+	}
+
+	h = (&Server{
+		Svc:   svc,
+		Token: "test-token",
+		PickDirectory: func(ctx context.Context) (string, bool, error) {
+			return "", true, nil
+		},
+	}).Handler()
+	got = post(t, h, "/v0/workspaces/pick-root", map[string]any{}, 200)
+	if got["canceled"] != true {
+		t.Fatalf("cancel %v", got)
+	}
+}
+
 func TestCatalogDoesNotStartSession(t *testing.T) {
 	h, _ := testServer(t)
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)

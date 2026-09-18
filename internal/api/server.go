@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,15 +14,17 @@ import (
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/hostfs"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/coder/websocket"
 )
 
 type Server struct {
-	Svc    *service.Service
-	Token  string
-	Web    fs.FS
-	Origin string
+	Svc           *service.Service
+	Token         string
+	Web           fs.FS
+	Origin        string
+	PickDirectory func(ctx context.Context) (path string, canceled bool, err error)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -30,6 +33,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v0/capabilities", s.auth(s.capabilities))
 	mux.HandleFunc("GET /v0/workspaces", s.auth(s.listWorkspaces))
 	mux.HandleFunc("POST /v0/workspaces", s.auth(s.createWorkspace))
+	mux.HandleFunc("POST /v0/workspaces/pick-root", s.auth(s.pickWorkspaceRoot))
 	mux.HandleFunc("GET /v0/squads", s.auth(s.listSquads))
 	mux.HandleFunc("POST /v0/squads", s.auth(s.saveSquad))
 	mux.HandleFunc("GET /v0/skills", s.auth(s.listSkills))
@@ -84,7 +88,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		"api": "v0", "product": "batuta-console",
 		"integrations": []string{"generic", "batuta"},
 		"adapters":     []string{"codex", "claude", "opencode", "gemini"},
-		"features":     map[string]any{"pty": true, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false},
+		"features":     map[string]any{"pty": true, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
 	})
 }
 
@@ -95,6 +99,23 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, list)
+}
+
+func (s *Server) pickWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
+	pick := s.PickDirectory
+	if pick == nil {
+		pick = hostfs.PickDirectory
+	}
+	path, canceled, err := pick(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "picker", err.Error())
+		return
+	}
+	if canceled || path == "" {
+		writeJSON(w, map[string]any{"canceled": true})
+		return
+	}
+	writeJSON(w, map[string]any{"path": path})
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {

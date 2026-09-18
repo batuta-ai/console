@@ -1,4 +1,4 @@
-/* Batuta-first overlay on vendored Lyra CSS. Values match the design handoff. */
+/* Batuta-first overlay on @lyra-ds/styles. Values match the design handoff. */
 
 :root,
 [data-theme="light"] {

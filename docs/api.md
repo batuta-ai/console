@@ -26,7 +26,8 @@ Authorization header on the handshake. The server accepts origins
     "batuta_inject": true,
     "batuta_inject_default": true,
     "skills_catalog": true,
-    "account_fallback": false
+    "account_fallback": false,
+    "folder_picker": true
   }
 }
 ```
@@ -36,6 +37,7 @@ Authorization header on the handshake. The server accepts origins
 | Method | Path | Notes |
 |---|---|---|
 | GET, POST | `/v0/workspaces` | Create does not start sessions |
+| POST | `/v0/workspaces/pick-root` | Native folder dialog; `{ "path" }` or `{ "canceled": true }` |
 | GET, POST | `/v0/missions` | Create stores a resolved squad copy |
 | GET, POST | `/v0/squads` | Drafts allowed. Seeded Batuta squads have `origin: "batuta"`; operator-created squads are `custom` |
 | POST | `/v0/squads/{id}/validate` | No model call |
