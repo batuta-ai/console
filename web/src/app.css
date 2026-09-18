@@ -14,10 +14,10 @@ body {
 }
 
 .frame {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  height: 100vh;
-  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--surface-page);
 }
@@ -541,7 +541,7 @@ button.acct-grid {
 }
 .editor-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 720px;
   border-collapse: collapse;
 }
 .editor-table th {
@@ -862,4 +862,102 @@ button.acct-grid {
   font-style: italic;
   color: var(--text-muted);
   padding: 12px var(--cardpad);
+}
+.bt-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.bt-shell.lyra-shell--content {
+  height: auto;
+}
+.bt-shell .lyra-shell__sidebar {
+  padding: 0;
+  gap: 0;
+  background: var(--surface-card);
+  border-right: 1px solid var(--border-default);
+}
+.bt-shell .lyra-shell__content {
+  padding: var(--pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.bt-shell .lyra-shell__topbar .lyra-wssw {
+  width: auto;
+  flex: none;
+  min-width: 0;
+}
+.bt-shell .lyra-shell__topbar .lyra-wssw--collapsed {
+  width: 36px;
+  min-width: 36px;
+}
+.bt-shell .lyra-breadcrumb {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow: hidden;
+}
+.bt-shell .lyra-breadcrumb a,
+.bt-shell .lyra-breadcrumb__current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lyra-appsidebar--rail .lyra-appsidebar__footer {
+  display: none;
+}
+.bt-shell .lyra-pageheader__row {
+  flex-wrap: wrap;
+}
+.lyra-appsidebar--rail .lyra-brand__word,
+.lyra-appsidebar--rail .side-pad,
+.lyra-appsidebar--rail .side-foot .foot-copy {
+  display: none;
+}
+.lyra-card.ws-card,
+.lyra-card.sq-card {
+  width: 100%;
+}
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.frame--phone .lyra-bottomnav {
+  flex: none;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (max-width: 1099px) {
+  .cards-wide {
+    grid-template-columns: 1fr;
+  }
+  .bt-shell .lyra-shell__topbar {
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}
+@media (max-width: 720px) {
+  .mission-grid.caps,
+  .task-grid.caps,
+  .acct-grid.caps {
+    display: none;
+  }
+  .mission-grid,
+  .task-grid,
+  .acct-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    align-items: start;
+    padding-block: 14px;
+  }
+  .cards-wide {
+    grid-template-columns: 1fr;
+  }
+  .bt-shell .lyra-shell__topbar {
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
 }

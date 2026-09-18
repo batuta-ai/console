@@ -14,6 +14,23 @@ func TestGetCodex(t *testing.T) {
 	}
 }
 
+func TestGetCursorAgent(t *testing.T) {
+	a, err := Get("cursor-agent")
+	if err != nil || a.CLI != "cursor-agent" || a.Isolation != domain.IsolationNotYetQualified {
+		t.Fatalf("%+v %v", a, err)
+	}
+	ids := IDs()
+	found := false
+	for _, id := range ids {
+		if id == "cursor-agent" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("IDs %v", ids)
+	}
+}
+
 func TestUnknown(t *testing.T) {
 	if _, err := Get("nope"); err == nil {
 		t.Fatal("expected error")
@@ -34,5 +51,18 @@ func TestIsolateEnvDistinctHomes(t *testing.T) {
 	joined := strings.Join(e1, " ")
 	if !strings.Contains(joined, "HOME=") || !strings.Contains(joined, "CODEX_HOME=") || !strings.Contains(joined, "acct_one") {
 		t.Fatalf("%v", e1)
+	}
+}
+
+func TestIsolateEnvCursorAgent(t *testing.T) {
+	home := t.TempDir()
+	a, err := Get("cursor-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := a.IsolateEnv(home, domain.Account{ID: "acct_cur"})
+	joined := strings.Join(env, " ")
+	if !strings.Contains(joined, "CURSOR_CONFIG_DIR=") || !strings.Contains(joined, "acct_cur") {
+		t.Fatalf("%v", env)
 	}
 }

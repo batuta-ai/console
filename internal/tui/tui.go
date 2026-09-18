@@ -482,7 +482,7 @@ func (m model) viewSquads(b *strings.Builder) {
 func (m model) viewEditor(b *strings.Builder) {
 	fmt.Fprintf(b, "\nSQUAD EDITOR  %s  v%d\n", m.editor.Name, m.editor.Version)
 	fmt.Fprintf(b, "%s\n", m.editor.Purpose)
-	fmt.Fprintln(b, "ROLE                 CLI        ACCOUNT              MAESTRO")
+	fmt.Fprintln(b, "ROLE                 CLI          ACCOUNT              MAESTRO")
 	if len(m.editor.Members) == 0 {
 		fmt.Fprintln(b, "  no members yet")
 	}
@@ -495,7 +495,7 @@ func (m model) viewEditor(b *strings.Builder) {
 		if mb.Maestro {
 			ms = "yes"
 		}
-		fmt.Fprintf(b, "%s%-20s %-10s %-20s %s\n", mark, clip(mb.Role, 20), clip(mb.CLI, 10), clip(mb.AccountID, 20), ms)
+		fmt.Fprintf(b, "%s%-20s %-12s %-20s %s\n", mark, clip(mb.Role, 20), clip(mb.CLI, 12), clip(mb.AccountID, 20), ms)
 	}
 	if m.validMsg != "" {
 		fmt.Fprintf(b, "\n%s\n", m.validMsg)

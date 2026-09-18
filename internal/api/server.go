@@ -91,7 +91,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		"api": "v0", "product": "batuta-console",
 		"lang":         i18n.Lang(),
 		"integrations": []string{"generic", "batuta"},
-		"adapters":     []string{"codex", "claude", "opencode", "gemini"},
+		"adapters":     adapters.IDs(),
 		"features":     map[string]any{"pty": true, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
 	})
 }

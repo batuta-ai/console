@@ -58,6 +58,9 @@ the percentage when one exists. Account limit, session tokens, and monetary
 cost are distinct.
 
 Each connected account gets a directory under the Console home. Session
-PTYs set `HOME` (and `CODEX_HOME` / `CLAUDE_CONFIG_DIR` when relevant) so
-two Codex accounts do not share credentials. Limit collection for the same
-account set is cached for 15 seconds so clients do not double the probe.
+PTYs set `HOME` (and `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `CURSOR_CONFIG_DIR`
+when relevant) so two accounts of the same CLI do not share credentials.
+Limit collection reads `rate_limit.json` under the isolate `.codex` or
+`.claude` directory when present. Missing files stay unknown. Results for
+the same account set are cached for 15 seconds so clients do not double
+the probe.

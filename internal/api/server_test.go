@@ -32,6 +32,16 @@ func TestCapabilitiesLang(t *testing.T) {
 	if got["lang"] != "en" {
 		t.Fatalf("lang %v", got["lang"])
 	}
+	raw, _ := got["adapters"].([]any)
+	found := false
+	for _, a := range raw {
+		if a == "cursor-agent" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("adapters %v", raw)
+	}
 }
 
 func TestPickWorkspaceRoot(t *testing.T) {

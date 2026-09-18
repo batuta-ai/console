@@ -19,7 +19,7 @@ Authorization header on the handshake. The server accepts origins
   "product": "batuta-console",
   "lang": "en",
   "integrations": ["generic", "batuta"],
-  "adapters": ["codex", "claude", "opencode", "gemini"],
+  "adapters": ["codex", "claude", "cursor-agent", "opencode", "gemini"],
   "features": {
     "pty": true,
     "watch": true,

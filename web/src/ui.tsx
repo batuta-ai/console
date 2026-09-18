@@ -1,21 +1,29 @@
 import { type CSSProperties, type ReactNode } from "react";
 import { T } from "./i18n";
 import { Alert as LyraAlert } from "@lyra-ds/react/alert";
+import { AppSidebar } from "@lyra-ds/react/app-sidebar";
 import { Avatar as LyraAvatar } from "@lyra-ds/react/avatar";
 import { Badge } from "@lyra-ds/react/badge";
+import { BottomNav } from "@lyra-ds/react/bottom-nav";
+import { Brand } from "@lyra-ds/react/brand";
+import { Breadcrumb } from "@lyra-ds/react/breadcrumb";
 import { Button as LyraButton, type ButtonProps } from "@lyra-ds/react/button";
+import { Card } from "@lyra-ds/react/card";
 import { Dialog as LyraDialog, type DialogProps } from "@lyra-ds/react/dialog";
 import { Drawer as LyraDrawer } from "@lyra-ds/react/drawer";
+import { EmptyState } from "@lyra-ds/react/empty-state";
 import { IconButton as LyraIconButton, type IconButtonProps } from "@lyra-ds/react/icon-button";
 import { Input as LyraInput, type InputProps } from "@lyra-ds/react/input";
+import { PageHeader } from "@lyra-ds/react/page-header";
 import { Progress as LyraProgress } from "@lyra-ds/react/progress";
 import { Select as LyraSelect, type SelectProps } from "@lyra-ds/react/select";
+import { Shell } from "@lyra-ds/react/shell";
 import { Stat } from "@lyra-ds/react/stat";
 import { Stepper as LyraStepper } from "@lyra-ds/react/stepper";
 import { Tabs as LyraTabs, type TabsProps } from "@lyra-ds/react/tabs";
 import { WorkspaceSwitcher as LyraWorkspaceSwitcher } from "@lyra-ds/react/workspace-switcher";
 
-export { Badge, Stat };
+export { AppSidebar, Badge, BottomNav, Brand, Breadcrumb, Card, EmptyState, PageHeader, Shell, Stat };
 
 export function Button({ size = "sm", ...props }: ButtonProps) {
   return <LyraButton size={size} {...props} />;

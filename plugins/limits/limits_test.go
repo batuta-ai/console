@@ -1,11 +1,61 @@
 package limits
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 )
+
+func TestDiskReadsCodexFile(t *testing.T) {
+	home := t.TempDir()
+	a := domain.Account{ID: "acct_codex", Adapter: "codex"}
+	ad, err := adapters.Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ad.IsolateDir(home, a.ID), ".codex")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rate_limit.json"), []byte(`{"percent":41,"window":"5h","origin":"codex"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snap := New(Disk{Home: home}).Snapshot(a)
+	if snap.Percent == nil || *snap.Percent != 41 || snap.Source != domain.SourceCurrent {
+		t.Fatalf("%+v", snap)
+	}
+}
+
+func TestDiskReadsClaudeFile(t *testing.T) {
+	home := t.TempDir()
+	a := domain.Account{ID: "acct_claude", Adapter: "claude"}
+	ad, err := adapters.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ad.IsolateDir(home, a.ID), ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rate_limit.json"), []byte(`{"percent":18,"window":"5h"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snap := New(Disk{Home: home}).Snapshot(a)
+	if snap.Percent == nil || *snap.Percent != 18 || snap.Source != domain.SourceCurrent {
+		t.Fatalf("%+v", snap)
+	}
+}
+
+func TestDiskMissingStaysUnavailable(t *testing.T) {
+	snap := New(Disk{Home: t.TempDir()}).Snapshot(domain.Account{ID: "acct_x", Adapter: "codex"})
+	if snap.Percent != nil || snap.Source != domain.SourceUnavailable {
+		t.Fatalf("%+v", snap)
+	}
+}
 
 func TestUnknownIsNotZero(t *testing.T) {
 	p := New(Unavailable{})
