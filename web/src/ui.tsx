@@ -20,7 +20,7 @@ import { Select as LyraSelect, type SelectProps } from "@lyra-ds/react/select";
 import { Shell } from "@lyra-ds/react/shell";
 import { Stat } from "@lyra-ds/react/stat";
 import { Stepper as LyraStepper } from "@lyra-ds/react/stepper";
-import { Tabs as LyraTabs, type TabsProps } from "@lyra-ds/react/tabs";
+import { Tabs as LyraTabs, TabsList, TabsTrigger } from "@lyra-ds/react/tabs";
 import { WorkspaceSwitcher as LyraWorkspaceSwitcher } from "@lyra-ds/react/workspace-switcher";
 
 export { AppSidebar, Badge, BottomNav, Brand, Breadcrumb, Card, EmptyState, PageHeader, Shell, Stat };
@@ -69,8 +69,28 @@ export function Select({ size = "sm", ...props }: SelectProps) {
   return <LyraSelect size={size} {...props} />;
 }
 
-export function Tabs({ variant = "pills", ...props }: TabsProps) {
-  return <LyraTabs variant={variant} {...props} />;
+export function Tabs({
+  variant = "pills",
+  active,
+  onChange,
+  items,
+}: {
+  variant?: "line" | "pills";
+  active: string;
+  onChange?: (value: string) => void;
+  items: { id: string; label: string; count?: number }[];
+}) {
+  return (
+    <LyraTabs variant={variant} active={active} onChange={onChange}>
+      <TabsList>
+        {items.map((item) => (
+          <TabsTrigger key={item.id} value={item.id} count={item.count}>
+            {item.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </LyraTabs>
+  );
 }
 
 export function Stepper({ steps, current }: { steps: string[]; current: number }) {

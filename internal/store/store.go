@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS events (
 		return err
 	}
 	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN origin TEXT NOT NULL DEFAULT 'custom'`)
+	_, _ = s.db.Exec(`ALTER TABLE missions ADD COLUMN brief TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -173,16 +174,16 @@ func (s *Store) PutMission(m domain.Mission) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO missions(id,workspace_id,title,squad_id,snapshot,status,attention,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		m.ID, m.WorkspaceID, m.Title, m.SquadID, string(b), m.Status, m.Attention, m.CreatedAt.Format(time.RFC3339Nano))
+	_, err = s.db.Exec(`INSERT OR REPLACE INTO missions(id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief) VALUES(?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.WorkspaceID, m.Title, m.SquadID, string(b), m.Status, m.Attention, m.CreatedAt.Format(time.RFC3339Nano), m.Brief)
 	return err
 }
 
 func (s *Store) GetMission(id string) (domain.Mission, error) {
 	var m domain.Mission
 	var snap, at string
-	err := s.db.QueryRow(`SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at FROM missions WHERE id=?`, id).
-		Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at)
+	err := s.db.QueryRow(`SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief FROM missions WHERE id=?`, id).
+		Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief)
 	if err != nil {
 		return m, err
 	}
@@ -192,7 +193,7 @@ func (s *Store) GetMission(id string) (domain.Mission, error) {
 }
 
 func (s *Store) ListMissions(workspaceID string) ([]domain.Mission, error) {
-	q := `SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at FROM missions`
+	q := `SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief FROM missions`
 	args := []any{}
 	if workspaceID != "" {
 		q += ` WHERE workspace_id=?`
@@ -208,7 +209,7 @@ func (s *Store) ListMissions(workspaceID string) ([]domain.Mission, error) {
 	for rows.Next() {
 		var m domain.Mission
 		var snap, at string
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at); err != nil {
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(snap), &m.SquadSnapshot)

@@ -52,6 +52,31 @@ func (a Adapter) Lookup() (string, error) {
 	return exec.LookPath(a.CLI)
 }
 
+// LoggedIn reports whether this account's isolate directory already holds a CLI
+// credential file. A connected folder without that file is not a login.
+func (a Adapter) LoggedIn(consoleHome string, account domain.Account) bool {
+	dir := a.IsolateDir(consoleHome, account.ID)
+	if dir == "" {
+		return false
+	}
+	var paths []string
+	switch a.ID {
+	case "codex":
+		paths = []string{filepath.Join(dir, ".codex", "auth.json")}
+	case "claude":
+		paths = []string{filepath.Join(dir, ".claude", ".credentials.json")}
+	default:
+		return false
+	}
+	for _, path := range paths {
+		st, err := os.Stat(path)
+		if err == nil && !st.IsDir() && st.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (a Adapter) IsolateDir(consoleHome, accountID string) string {
 	if consoleHome == "" || accountID == "" {
 		return ""

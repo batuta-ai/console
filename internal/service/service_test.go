@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/batuta-ai/console/integrations/batuta"
@@ -66,6 +67,19 @@ func TestSaveSquadPreservesBatutaOrigin(t *testing.T) {
 	}
 }
 
+func TestSessionPrompt(t *testing.T) {
+	got := cliPrompt("codex", sessionPrompt(true, "Add a health check"))
+	if len(got) != 1 || !strings.Contains(got[0], "batuta-plan") || !strings.Contains(got[0], "Add a health check") {
+		t.Fatalf("%q", got)
+	}
+	if extra := cliPrompt("cursor-agent", "hello"); extra != nil {
+		t.Fatalf("cursor should not get a positional prompt: %v", extra)
+	}
+	if plain := cliPrompt("codex", sessionPrompt(false, "just the goal")); len(plain) != 1 || plain[0] != "just the goal" {
+		t.Fatalf("%q", plain)
+	}
+}
+
 func TestStartSessionDefaultInject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "batuta")
@@ -92,7 +106,7 @@ func TestStartSessionDefaultInject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msn, err := svc.CreateMission(ws.ID, "Checkout", sq.ID)
+	msn, err := svc.CreateMission(ws.ID, "Checkout", "Ship the checkout form", sq.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,8 @@
 import { T, localeTag, type Msg } from "./i18n";
 
-export type Screen = "home" | "missions" | "room" | "squads" | "editor" | "accounts" | "activity" | "review";
+export type Screen = "home" | "missions" | "room" | "squads" | "editor" | "accounts" | "activity" | "review" | "login" | "setup";
 
-export type Workspace = { id: string; name: string; root: string };
+export type Workspace = { id: string; name: string; root: string; profile?: boolean };
 export type Member = {
   id?: string;
   role: string;
@@ -25,9 +25,11 @@ export type Skill = {
 export type Mission = {
   id: string;
   title: string;
+  brief?: string;
   status: string;
   workspace_id: string;
   attention?: string;
+  squad_id?: string;
   squad_snapshot?: { name?: string; members?: Member[] };
 };
 export type Account = {
@@ -37,6 +39,7 @@ export type Account = {
   adapter: string;
   isolation: string;
   connected: boolean;
+  authed?: boolean;
   session_cap?: number;
   vault_ref?: string;
 };
@@ -79,8 +82,10 @@ export type Watch = {
     worktree?: string;
   };
   health?: { last_error?: string };
+  log_title?: string;
   log_lines?: string[];
-  waves?: { rows?: { task?: string; title?: string; state?: string; gates?: string[] }[] }[];
+  plans?: { name: string; status?: string; done?: boolean }[];
+  waves?: { rows?: { task?: string; title?: string; state?: string; gates?: string[]; commit?: string }[] }[];
 };
 
 export const token = (() => {
@@ -137,8 +142,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export function gateMark(state?: string) {
   if (state === "pass") return "✓";
   if (state === "fail") return "✗";
+  if (state === "silent") return "·";
   return "—";
 }
+
+export const gateStages = ["gate_finished", "gate_tree", "gate_tests", "gate_scope"] as const;
 
 export function firstGates(watch: Watch | null): string[] {
   for (const wave of watch?.waves || []) {
@@ -182,14 +190,15 @@ export function limitLabel(lim?: Limit) {
 }
 
 export function taskRows(watch: Watch | null) {
-  const out: { task: string; title: string; state: string; gates: string[] }[] = [];
+  const out: { task: string; title: string; state: string; gates: string[]; commit: string }[] = [];
   for (const wave of watch?.waves || []) {
     for (const row of wave.rows || []) {
       out.push({
         task: row.task || "",
         title: row.title || row.task || "",
         state: row.state || "",
-        gates: [0, 1, 2, 3].map((i) => gateMark(row.gates?.[i])),
+        gates: [0, 1, 2, 3].map((i) => row.gates?.[i] || "pending"),
+        commit: row.commit || "",
       });
     }
   }

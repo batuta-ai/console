@@ -56,9 +56,72 @@ body {
 .brand-muted {
   color: var(--text-muted);
 }
-.side-pad {
-  padding: 0 18px 12px;
+.mission-brief {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.mission-objective {
+  margin: 4px 0 12px;
+  white-space: pre-wrap;
+}
+.plan-card {
   min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+  container-type: inline-size;
+}
+.plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px var(--cardpad) 16px;
+}
+.plan-card .lyra-stepper {
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+}
+.plan-card .lyra-step {
+  flex: none;
+  max-width: 100%;
+}
+.plan-card .lyra-step__label {
+  white-space: normal;
+}
+@container (max-width: 720px) {
+  .plan-card .lyra-stepper {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .plan-card .lyra-step__line {
+    width: 1.5px;
+    height: 12px;
+    margin-inline-start: 13px;
+  }
+}
+.side-pad {
+  padding: 0 0 12px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.lyra-appsidebar:not(.lyra-appsidebar--rail) .lyra-appsidebar__brand {
+  padding-inline: 0;
+}
+.lyra-appsidebar:not(.lyra-appsidebar--rail) .lyra-wssw,
+.lyra-appsidebar:not(.lyra-appsidebar--rail) .lyra-wssw__trigger {
+  width: 100%;
+  max-width: none;
 }
 .side-nav {
   display: flex;
@@ -228,6 +291,12 @@ h1 {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--gap);
 }
+.room-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(220px, 0.9fr);
+  gap: var(--gap);
+  align-items: start;
+}
 .ws-card,
 .sq-card {
   display: flex;
@@ -306,7 +375,7 @@ h1 {
 }
 .mission-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.6fr);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) minmax(6.5rem, 0.9fr) minmax(10.5rem, 1.2fr) minmax(0, 1.3fr);
   gap: 16px;
   align-items: center;
   width: 100%;
@@ -323,9 +392,12 @@ h1 {
 .mission-grid:hover {
   background: var(--surface-sunken);
 }
+.mission-grid.caps span {
+  white-space: nowrap;
+}
 .task-grid {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-columns: 1.25rem minmax(6rem, 1.4fr) minmax(7.5rem, 1.1fr) minmax(8rem, 1.15fr) minmax(5.5rem, 0.9fr);
   gap: 12px;
   align-items: center;
   width: 100%;
@@ -338,6 +410,9 @@ h1 {
   font: inherit;
   color: inherit;
   cursor: pointer;
+}
+.task-grid > * {
+  min-width: 0;
 }
 .task-grid:hover,
 .acct-grid:hover,
@@ -365,6 +440,22 @@ h1 {
 .gate--wait {
   background: var(--surface-sunken);
   color: var(--text-muted);
+}
+.gate--fail {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+.gate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gate-row {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
 }
 .room-bar {
   height: 3px;
@@ -598,23 +689,10 @@ button.acct-grid {
 .err {
   color: var(--danger-text);
 }
-.lyra-wssw {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-.lyra-wssw__trigger {
-  box-sizing: border-box;
-  min-width: 0;
-}
-.lyra-wssw__id {
-  min-width: 0;
-}
-.lyra-wssw--collapsed .lyra-wssw__id {
+.bt-shell .lyra-shell__topbar .lyra-wssw--collapsed .lyra-wssw__id {
   display: none;
 }
-.lyra-wssw--collapsed .lyra-wssw__trigger {
+.bt-shell .lyra-shell__topbar .lyra-wssw--collapsed .lyra-wssw__trigger {
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -867,9 +945,7 @@ button.acct-grid {
   flex: 1;
   min-height: 0;
   min-width: 0;
-}
-.bt-shell.lyra-shell--content {
-  height: auto;
+  height: 100%;
 }
 .bt-shell .lyra-shell__sidebar {
   padding: 0;
@@ -927,7 +1003,8 @@ button.acct-grid {
   padding-bottom: env(safe-area-inset-bottom);
 }
 @media (max-width: 1099px) {
-  .cards-wide {
+  .cards-wide,
+  .room-split {
     grid-template-columns: 1fr;
   }
   .bt-shell .lyra-shell__topbar {

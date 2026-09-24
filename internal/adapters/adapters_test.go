@@ -1,6 +1,8 @@
 package adapters
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,5 +66,27 @@ func TestIsolateEnvCursorAgent(t *testing.T) {
 	joined := strings.Join(env, " ")
 	if !strings.Contains(joined, "CURSOR_CONFIG_DIR=") || !strings.Contains(joined, "acct_cur") {
 		t.Fatalf("%v", env)
+	}
+}
+
+func TestLoggedInReadsCodexAuthFile(t *testing.T) {
+	home := t.TempDir()
+	a, err := Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct := domain.Account{ID: "acct_x", Adapter: "codex", Connected: true}
+	if a.LoggedIn(home, acct) {
+		t.Fatal("missing auth file should not count as login")
+	}
+	dir := a.IsolateDir(home, acct.ID)
+	if err := os.MkdirAll(filepath.Join(dir, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".codex", "auth.json"), []byte(`{"token":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !a.LoggedIn(home, acct) {
+		t.Fatal("auth.json should count as login")
 	}
 }

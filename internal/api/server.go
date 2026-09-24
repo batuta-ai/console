@@ -47,6 +47,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/accounts", s.auth(s.createAccount))
 	mux.HandleFunc("PATCH /v0/accounts/{id}", s.auth(s.renameAccount))
 	mux.HandleFunc("POST /v0/accounts/{id}/connect", s.auth(s.connectAccount))
+	mux.HandleFunc("POST /v0/accounts/{id}/login", s.auth(s.loginAccount))
+	mux.HandleFunc("POST /v0/workspaces/{id}/init", s.auth(s.initWorkspace))
 	mux.HandleFunc("GET /v0/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v0/sessions", s.auth(s.startSession))
 	mux.HandleFunc("POST /v0/sessions/{id}/stop", s.auth(s.stopSession))
@@ -102,6 +104,9 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "store", err.Error())
 		return
 	}
+	for i := range list {
+		list[i] = s.Svc.DecorateWorkspace(list[i])
+	}
 	writeJSON(w, list)
 }
 
@@ -136,7 +141,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "workspace", err.Error())
 		return
 	}
-	writeJSON(w, ws)
+	writeJSON(w, s.Svc.DecorateWorkspace(ws))
 }
 
 func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
@@ -216,13 +221,14 @@ func (s *Server) createMission(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		WorkspaceID string `json:"workspace_id"`
 		Title       string `json:"title"`
+		Brief       string `json:"brief"`
 		SquadID     string `json:"squad_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	m, err := s.Svc.CreateMission(in.WorkspaceID, in.Title, in.SquadID)
+	m, err := s.Svc.CreateMission(in.WorkspaceID, in.Title, in.Brief, in.SquadID)
 	if err != nil {
 		writeErr(w, 400, "mission", err.Error())
 		return
@@ -235,6 +241,9 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, "store", err.Error())
 		return
+	}
+	for i := range list {
+		list[i] = s.Svc.DecorateAccount(list[i])
 	}
 	writeJSON(w, list)
 }
@@ -282,7 +291,42 @@ func (s *Server) connectAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "account", err.Error())
 		return
 	}
-	writeJSON(w, a)
+	writeJSON(w, s.Svc.DecorateAccount(a))
+}
+
+func (s *Server) loginAccount(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Owner  string `json:"owner"`
+		Client string `json:"client"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err.Error() != "EOF" {
+		writeErr(w, 400, "json", err.Error())
+		return
+	}
+	sess, err := s.Svc.StartLogin(r.PathValue("id"), in.Owner, in.Client)
+	if err != nil {
+		writeErr(w, 400, "login", err.Error())
+		return
+	}
+	writeJSON(w, sess)
+}
+
+func (s *Server) initWorkspace(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Brief  string `json:"brief"`
+		Owner  string `json:"owner"`
+		Client string `json:"client"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, "json", err.Error())
+		return
+	}
+	sess, err := s.Svc.StartInit(r.PathValue("id"), in.Brief, in.Owner, in.Client)
+	if err != nil {
+		writeErr(w, 400, "init", err.Error())
+		return
+	}
+	writeJSON(w, sess)
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {

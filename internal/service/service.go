@@ -36,6 +36,24 @@ func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
 	return s
 }
 
+func (s *Service) DecorateWorkspace(w domain.Workspace) domain.Workspace {
+	if w.Root == "" {
+		return w
+	}
+	st, err := os.Stat(filepath.Join(w.Root, ".batuta", "profile.md"))
+	w.Profile = err == nil && !st.IsDir()
+	return w
+}
+
+func (s *Service) DecorateAccount(a domain.Account) domain.Account {
+	ad, err := adapters.Get(a.Adapter)
+	if err != nil {
+		return a
+	}
+	a.Authed = a.Connected && ad.LoggedIn(s.Home, a)
+	return a
+}
+
 func (s *Service) CreateWorkspace(name, root string) (domain.Workspace, error) {
 	if name == "" || root == "" {
 		return domain.Workspace{}, fmt.Errorf("name and root are required")
@@ -149,7 +167,9 @@ func (s *Service) ValidateDraft(q domain.Squad) domain.Validation {
 	return v
 }
 
-func (s *Service) CreateMission(workspaceID, title, squadID string) (domain.Mission, error) {
+func (s *Service) CreateMission(workspaceID, title, brief, squadID string) (domain.Mission, error) {
+	title = strings.TrimSpace(title)
+	brief = strings.TrimSpace(brief)
 	if title == "" || workspaceID == "" {
 		return domain.Mission{}, fmt.Errorf("workspace and title are required")
 	}
@@ -158,7 +178,7 @@ func (s *Service) CreateMission(workspaceID, title, squadID string) (domain.Miss
 		return domain.Mission{}, err
 	}
 	m := domain.Mission{
-		ID: domain.NewID("msn_"), WorkspaceID: workspaceID, Title: title, SquadID: squadID,
+		ID: domain.NewID("msn_"), WorkspaceID: workspaceID, Title: title, Brief: brief, SquadID: squadID,
 		SquadSnapshot: sq, Status: "open", CreatedAt: domain.Now(),
 	}
 	if err := s.Store.PutMission(m); err != nil {
@@ -373,6 +393,9 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	if len(argv) == 0 {
 		if path, err := ad.Lookup(); err == nil {
 			argv = []string{path}
+			if msn.Brief != "" {
+				argv = append(argv, cliPrompt(adapterID, sessionPrompt(in.inject(), msn.Brief))...)
+			}
 		} else {
 			argv = []string{"/bin/sh"}
 		}
@@ -381,6 +404,9 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	env := append([]string{}, profile.Env...)
 	if len(bound.Skills) > 0 {
 		env = append(env, "BATUTA_ROLE_SKILLS="+strings.Join(bound.Skills, ","))
+	}
+	if msn.Brief != "" {
+		env = append(env, "BATUTA_MISSION="+strings.Join(strings.Fields(msn.Brief), " "))
 	}
 	if in.AccountID != "" {
 		if acct, err := s.Store.GetAccount(in.AccountID); err == nil {
@@ -443,6 +469,181 @@ func (s *Service) StopSession(id string) (domain.Session, error) {
 	return stored, nil
 }
 
+func (s *Service) reuseLive(match func(domain.Session) bool, owner, client string) (domain.Session, bool) {
+	list, err := s.Store.ListSessions()
+	if err != nil {
+		return domain.Session{}, false
+	}
+	for _, sess := range list {
+		if !match(sess) {
+			continue
+		}
+		live := s.ReconcileSession(sess)
+		if live.Process != "running" {
+			continue
+		}
+		if owner != "" && client != "" {
+			if taken, err := s.Session.Take(live.ID, owner, client); err == nil {
+				live = taken
+				_ = s.Store.PutSession(live)
+			}
+		}
+		return live, true
+	}
+	return domain.Session{}, false
+}
+
+func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, error) {
+	a, err := s.Store.GetAccount(accountID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if !a.Connected {
+		return domain.Session{}, fmt.Errorf("connect the account folder before login")
+	}
+	if live, ok := s.reuseLive(func(sess domain.Session) bool {
+		return sess.AccountID == a.ID && sess.Work == "login"
+	}, owner, client); ok {
+		return live, nil
+	}
+	ad, err := adapters.Get(a.Adapter)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	path, err := ad.Lookup()
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("%s is not on PATH", ad.CLI)
+	}
+	sess := domain.Session{
+		ID: domain.NewID("s_"), AccountID: a.ID, Adapter: ad.ID, Argv: []string{path},
+		Process: "running", Work: "login", Owner: owner, OwnerClient: client,
+		Cols: 110, Rows: 40, CreatedAt: domain.Now(),
+	}
+	if sess.Owner == "" {
+		sess.Owner = "web"
+	}
+	live, err := s.Session.Start(sess, ad.IsolateEnv(s.Home, a), ad.IsolateDir(s.Home, a.ID))
+	if err != nil {
+		return sess, err
+	}
+	if client != "" && sess.Owner != "" {
+		live, _ = s.Session.Take(live.ID, sess.Owner, client)
+	}
+	if err := s.Store.PutSession(live); err != nil {
+		return live, err
+	}
+	_, _ = s.Store.AppendEvent("account.login", map[string]any{"id": a.ID, "session": live.ID})
+	return live, nil
+}
+
+func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Session, error) {
+	ws, err := s.Store.GetWorkspace(workspaceID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	ws = s.DecorateWorkspace(ws)
+	if ws.Profile {
+		return domain.Session{}, fmt.Errorf("this project already has a Batuta profile")
+	}
+	brief = strings.TrimSpace(brief)
+	if brief == "" {
+		return domain.Session{}, fmt.Errorf("setup answers are required")
+	}
+	if live, ok := s.reuseLive(func(sess domain.Session) bool {
+		return sess.WorkspaceID == ws.ID && sess.Work == "init"
+	}, owner, client); ok {
+		return live, nil
+	}
+	argv, extra, err := s.initCLI()
+	if err != nil {
+		return domain.Session{}, err
+	}
+	argv = append(argv, cliPrompt(filepath.Base(argv[0]), initPrompt(brief))...)
+	profile := batuta.Prepare(ws.Root, true)
+	env := append(append([]string{}, profile.Env...), extra...)
+	env = append(env, "BATUTA_INIT="+strings.Join(strings.Fields(brief), " "))
+	sess := domain.Session{
+		ID: domain.NewID("s_"), WorkspaceID: ws.ID, Adapter: filepath.Base(argv[0]), Argv: argv,
+		Process: "running", Work: "init", Owner: owner, OwnerClient: client,
+		Cols: 110, Rows: 40, BatutaInjected: profile.Enabled, SkillsVersion: profile.SkillsVersion,
+		CreatedAt: domain.Now(),
+	}
+	if sess.Owner == "" {
+		sess.Owner = "web"
+	}
+	live, err := s.Session.Start(sess, env, ws.Root)
+	if err != nil {
+		return sess, err
+	}
+	if client != "" {
+		live, _ = s.Session.Take(live.ID, sess.Owner, client)
+	}
+	if err := s.Store.PutSession(live); err != nil {
+		return live, err
+	}
+	_, _ = s.Store.AppendEvent("workspace.init", map[string]any{"id": ws.ID, "session": live.ID})
+	return live, nil
+}
+
+func sessionPrompt(inject bool, brief string) string {
+	brief = strings.TrimSpace(brief)
+	if !inject {
+		return brief
+	}
+	return "Use batuta-plan for this mission. Do not implement yet. Write .batuta/plans/<slug>.md with tasks, scope and acceptance criteria, set Status to proposed, and wait for approval.\n\nGoal:\n" + brief
+}
+
+func initPrompt(brief string) string {
+	return "Run batuta-init for this project. Write .batuta/profile.md and .batuta/routing.md from these answers, then stop.\n\n" + strings.TrimSpace(brief)
+}
+
+func cliPrompt(adapter, prompt string) []string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return nil
+	}
+	switch adapter {
+	case "codex", "claude":
+		return []string{prompt}
+	default:
+		return nil
+	}
+}
+
+func (s *Service) initCLI() ([]string, []string, error) {
+	accounts, err := s.Store.ListAccounts()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, a := range accounts {
+		a = s.DecorateAccount(a)
+		if !a.Authed {
+			continue
+		}
+		ad, err := adapters.Get(a.Adapter)
+		if err != nil || (a.Adapter != "codex" && a.Adapter != "claude") {
+			continue
+		}
+		path, err := ad.Lookup()
+		if err != nil {
+			continue
+		}
+		return []string{path}, ad.IsolateEnv(s.Home, a), nil
+	}
+	for _, id := range []string{"codex", "claude", "cursor-agent"} {
+		ad, err := adapters.Get(id)
+		if err != nil {
+			continue
+		}
+		path, err := ad.Lookup()
+		if err != nil {
+			continue
+		}
+		return []string{path}, nil, nil
+	}
+	return nil, nil, fmt.Errorf("no CLI on PATH for project setup")
+}
+
 func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) {
 	root := ""
 	if workspaceID != "" {
@@ -457,7 +658,12 @@ func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) 
 	if root == "" {
 		return domain.WatchView{API: "v0", Message: "workspace root required"}, nil
 	}
-	return batuta.Project(root, delivery)
+	view, err := batuta.Project(root, delivery)
+	if err != nil {
+		return view, err
+	}
+	view.Plans = batuta.ListPlans(root)
+	return view, nil
 }
 
 func (s *Service) Answer(req batuta.AnswerRequest) (string, error) {

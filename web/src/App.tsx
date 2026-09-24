@@ -11,7 +11,8 @@ import {
   criteria,
   evidence,
   eventOrigin,
-  firstGates,
+  gateMark,
+  gateStages,
   greeting,
   isolationLabel,
   limitLabel,
@@ -99,6 +100,10 @@ export function App() {
   const [activeMission, setActiveMission] = useState<Mission | null>(null);
   const [wsId, setWsId] = useState(() => localStorage.getItem("bt-ws") || "");
   const [wsDialog, setWsDialog] = useState(false);
+  const [loginAccount, setLoginAccount] = useState<Account | null>(null);
+  const [loginSession, setLoginSession] = useState<Session | null>(null);
+  const [setupWs, setSetupWs] = useState<Workspace | null>(null);
+  const [setupSession, setSetupSession] = useState<Session | null>(null);
 
   const currentWs = workspaces.find((w) => w.id === wsId) || workspaces[0];
   useEffect(() => {
@@ -142,6 +147,12 @@ export function App() {
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+
+  useEffect(() => {
+    if (screen !== "login" && screen !== "setup") return;
+    const id = window.setInterval(() => refreshRef.current(), 4000);
+    return () => window.clearInterval(id);
+  }, [screen]);
 
   useEffect(() => {
     refreshRef.current();
@@ -207,7 +218,7 @@ export function App() {
           </div>
         </>
       }
-      width={232}
+      width={320}
       collapsible={!phone}
       collapsed={rail}
       labels={{ collapse: T("collapse_nav"), expand: T("expand_nav") }}
@@ -266,7 +277,7 @@ export function App() {
 
   return (
     <div className={phone ? "frame frame--phone" : "frame"} data-theme={dark ? "dark" : "light"} data-density="comfortable">
-      <Shell scroll="content" className="bt-shell" sidebar={!phone ? sidebar : undefined} sidebarWidth={rail ? 64 : 232} topbar={topbar} sidebarLabel="Batuta Console">
+      <Shell scroll="content" className="bt-shell" sidebar={!phone ? sidebar : undefined} topbar={topbar} sidebarLabel="Batuta Console">
         {err ? <div className="err">{err}</div> : null}
         {screen === "home" && (
           <Home
@@ -291,7 +302,7 @@ export function App() {
         {screen === "missions" && (
           <Missions
             missions={wsMissions}
-            squads={squads}
+            squads={squads.filter((q) => squadReady(q, accounts))}
             workspace={currentWs}
             watch={watch}
             attention={attention}
@@ -299,7 +310,11 @@ export function App() {
               setActiveMission(m);
               go("room");
             }}
-            onCreated={refresh}
+            onCreated={(m) => {
+              setActiveMission(m);
+              go("room");
+              refresh();
+            }}
           />
         )}
         {screen === "room" && (
@@ -364,6 +379,44 @@ export function App() {
               setAddAccount(false);
               refresh();
             }}
+            onLogin={async (a) => {
+              const sess = await api<Session>(`/v0/accounts/${a.id}/login`, {
+                method: "POST",
+                body: JSON.stringify({ owner: "web", client: webClient }),
+              });
+              setLoginAccount(a);
+              setLoginSession(sess);
+              go("login");
+            }}
+          />
+        )}
+        {screen === "login" && loginSession && (
+          <LoginScreen
+            account={loginAccount}
+            sessionId={loginSession.id}
+            client={webClient}
+            onBack={() => {
+              refresh();
+              go("accounts");
+            }}
+          />
+        )}
+        {screen === "setup" && setupWs && (
+          <SetupScreen
+            workspace={workspaces.find((w) => w.id === setupWs.id) || setupWs}
+            sessionId={setupSession?.id || ""}
+            client={webClient}
+            onStart={async (brief) => {
+              const sess = await api<Session>(`/v0/workspaces/${setupWs.id}/init`, {
+                method: "POST",
+                body: JSON.stringify({ brief, owner: "web", client: webClient }),
+              });
+              setSetupSession(sess);
+            }}
+            onBack={() => {
+              refresh();
+              go("home");
+            }}
           />
         )}
         {screen === "activity" && <ActivityScreen activity={activity} sessions={sessions} missions={missions} onOpenMission={(m) => { setActiveMission(m); go("room"); }} />}
@@ -391,6 +444,11 @@ export function App() {
           setWsDialog(false);
           pickWorkspace(w.id);
           refresh();
+          if (!w.profile) {
+            setSetupWs(w);
+            setSetupSession(null);
+            go("setup");
+          }
         }}
       />
     </div>
@@ -400,7 +458,19 @@ export function App() {
 function chromeScreen(screen: Screen): Screen {
   if (screen === "editor") return "squads";
   if (screen === "room" || screen === "review") return "missions";
+  if (screen === "login") return "accounts";
+  if (screen === "setup") return "home";
   return screen;
+}
+
+function squadReady(q: Squad, accounts: Account[]) {
+  const members = q.members || [];
+  const maestros = members.filter((m) => m.maestro);
+  if (maestros.length !== 1 || !(maestros[0].skills || []).length) return false;
+  return members.every((m) => {
+    const account = accounts.find((a) => a.id === m.account_id);
+    return Boolean(m.role && m.cli && account && account.connected && account.authed && account.adapter === m.cli);
+  });
 }
 
 function Home({
@@ -553,9 +623,10 @@ function Missions({
   watch: Watch | null;
   attention: string;
   onOpen: (m: Mission) => void;
-  onCreated: () => void;
+  onCreated: (m: Mission) => void;
 }) {
   const [filter, setFilter] = useState("all");
+  const [creating, setCreating] = useState(false);
   const active = missions.filter((m) => !/done|complete|conclu/i.test(m.status));
   const done = missions.filter((m) => /done|complete|conclu/i.test(m.status));
   const shown = filter === "active" ? active : filter === "done" ? done : missions;
@@ -567,10 +638,11 @@ function Missions({
         title={T("missions")}
         actions={
           <Button
-            onClick={async () => {
-              if (!workspace || !squads[0]) return alert(T("need_ws_squad"));
-              await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspace.id, title: T("new_mission_title"), squad_id: squads[0].id }) });
-              onCreated();
+            onClick={() => {
+              if (!workspace) return alert(T("need_ws_squad"));
+              if (!workspace.profile) return alert(T("need_profile"));
+              if (squads.length === 0) return alert(T("need_ready_squad"));
+              setCreating(true);
             }}
           >
             {T("new_mission")}
@@ -601,6 +673,7 @@ function Missions({
             <button key={m.id} type="button" className={attn ? "mission-grid row-warn" : "mission-grid"} onClick={() => onOpen(m)}>
               <span style={{ display: "flex", flexDirection: "column" }}>
                 <span style={{ fontWeight: 500 }}>{m.title}</span>
+                {m.brief ? <span className="muted" style={{ fontSize: 12 }}>{m.brief}</span> : null}
                 <span className="mono muted" style={{ fontSize: 12 }}>
                   {m.id}
                 </span>
@@ -624,7 +697,96 @@ function Missions({
           );
         })}
       </section>
+      <NewMissionDialog
+        open={creating}
+        workspace={workspace}
+        squads={squads}
+        onClose={() => setCreating(false)}
+        onCreated={(m) => {
+          setCreating(false);
+          onCreated(m);
+        }}
+      />
     </div>
+  );
+}
+
+function planIndex(plans?: { status?: string; done?: boolean }[]) {
+  if (!plans || plans.length === 0) return 0;
+  if (plans.every((p) => p.done || p.status === "done")) return 4;
+  const open = plans.find((p) => !p.done) || plans[0];
+  if (open.status === "approved" || open.status === "in progress") return 4;
+  if (open.status === "proposed") return 3;
+  return 2;
+}
+
+function NewMissionDialog({
+  open,
+  workspace,
+  squads,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  workspace?: Workspace;
+  squads: Squad[];
+  onClose: () => void;
+  onCreated: (m: Mission) => void;
+}) {
+  const [objective, setObjective] = useState("");
+  const [squadID, setSquadID] = useState(squads[0]?.id || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open && !squads.some((q) => q.id === squadID)) setSquadID(squads[0]?.id || "");
+  }, [open, squads, squadID]);
+
+  return (
+    <Dialog
+      open={open}
+      title={T("new_mission")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            {T("cancel")}
+          </Button>
+          <Button
+            disabled={busy || !objective.trim() || !squadID || !workspace}
+            onClick={async () => {
+              if (!workspace) return;
+              const text = objective.trim();
+              const title = text.split("\n")[0].slice(0, 80);
+              setBusy(true);
+              try {
+                const m = await api<Mission>("/v0/missions", {
+                  method: "POST",
+                  body: JSON.stringify({ workspace_id: workspace.id, title, brief: text, squad_id: squadID }),
+                });
+                setObjective("");
+                onCreated(m);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {T("create")}
+          </Button>
+        </>
+      }
+    >
+      <Field label={T("mission_objective")} hint={T("mission_objective_hint")}>
+        <textarea className="mission-brief" rows={5} value={objective} onChange={(e) => setObjective(e.target.value)} />
+      </Field>
+      <Field label={T("mission_squad")}>
+        <Select value={squadID} onChange={(e) => setSquadID(e.target.value)}>
+          {squads.map((q) => (
+            <option key={q.id} value={q.id}>
+              {q.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+    </Dialog>
   );
 }
 
@@ -662,7 +824,6 @@ function Room({
   const shown = live || sessions[0];
   const owns = live?.owner === "web" && live.owner_client === client;
   const members = mission?.squad_snapshot?.members || [];
-  const gates = firstGates(watch);
   const attn = attentionLine(watch);
   const rows = taskRows(watch);
   const tasks = rows.length
@@ -670,25 +831,31 @@ function Room({
         key: r.task || String(i),
         name: r.title,
         role: members[i]?.role || T("agent_default"),
+        memberId: members[i]?.id || "",
         state: r.state,
         account: accounts.find((a) => a.id === members[i]?.account_id)?.label || members[i]?.account_id || "—",
         cli: members[i]?.cli || "",
         model: members[i]?.model || T("inherit"),
         task: r.task,
         gates: r.gates,
+        commit: r.commit,
       }))
     : members.map((mb, i) => ({
         key: mb.id || String(i),
         name: mb.role || T("member_default"),
         role: mb.role || T("agent_default"),
+        memberId: mb.id,
         state: "",
         account: accounts.find((a) => a.id === mb.account_id)?.label || mb.account_id || "—",
         cli: mb.cli,
         model: mb.model || T("inherit"),
         task: "",
-        gates: ["—", "—", "—", "—"],
+        gates: ["pending", "pending", "pending", "pending"],
+        commit: "",
       }));
   const selected = tasks[sel] || tasks[0];
+  const stageMarks = (selected?.gates || ["pending", "pending", "pending", "pending"]).map((state) => gateMark(state));
+  const starter = members.find((m) => m.id && m.id === selected?.memberId) || members.find((m) => m.maestro) || members[0];
   const crit = criteria(watch);
   const ev = evidence(watch);
   const integrated = rows.filter((r) => /done|pass|integr/i.test(r.state)).length;
@@ -715,13 +882,24 @@ function Room({
         actions={
           <div className="inline-actions">
             {["G0", "G1", "G2", "G3"].map((g, i) => (
-              <span key={g} className={gates[i] === "✓" ? "gate gate--done" : "gate gate--wait"}>
-                {g} {gates[i]}
+              <span key={g} className={stageMarks[i] === "✓" ? "gate gate--done" : stageMarks[i] === "✗" ? "gate gate--fail" : "gate gate--wait"} title={T(gateStages[i])}>
+                {g} {stageMarks[i]}
               </span>
             ))}
             <Button variant="secondary" onClick={onReview}>
               {T("review_delivery")}
             </Button>
+            {mission && live ? (
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  await api(`/v0/sessions/${live.id}/stop`, { method: "POST" });
+                  onRefresh();
+                }}
+              >
+                {T("stop_session")}
+              </Button>
+            ) : null}
             {mission && !live ? (
               <>
                 <label className="inject-toggle">
@@ -730,12 +908,11 @@ function Room({
                 </label>
                 <Button
                   onClick={async () => {
-                    const maestro = members.find((m) => m.maestro) || members[0];
                     await api("/v0/sessions", {
                       method: "POST",
                       body: JSON.stringify({
                         mission_id: mission.id,
-                        member_id: maestro?.id,
+                        member_id: starter?.id,
                         owner: "web",
                         client,
                         batuta: inject,
@@ -744,7 +921,7 @@ function Room({
                     onRefresh();
                   }}
                 >
-                  {T("start_session")}
+                  {T("start_selected", { role: starter?.role || T("agent_default") })}
                 </Button>
               </>
             ) : null}
@@ -761,6 +938,25 @@ function Room({
           ) : null}
         </div>
       </PageHeader>
+      <section className="panel plan-card">
+        <div className="panel-h">{T("plan_flow")}</div>
+        <div className="plan-body">
+          <div className="caps">{T("mission_objective")}</div>
+          <p className="mission-objective">{mission?.brief || mission?.title || "—"}</p>
+          <Stepper
+            steps={[T("plan_understand"), T("plan_decompose"), T("plan_write"), T("plan_approve"), T("plan_execute")]}
+            current={planIndex(watch?.plans) + 1}
+          />
+          {(watch?.plans || []).length === 0 ? <p className="muted">{T("plan_none")}</p> : null}
+          {(watch?.plans || []).map((p) => (
+            <div key={p.name} className="hist-grid">
+              <span className="mono">{p.name}</span>
+              <span>{p.status || "—"}</span>
+              <span className="muted">{p.done ? T("status_done") : T("status_open")}</span>
+            </div>
+          ))}
+        </div>
+      </section>
       {inject && !skillsRoot && !live ? (
         <Alert tone="warning" title={T("skills_missing_title")}>
           {T("skills_missing_body")}
@@ -795,7 +991,7 @@ function Room({
         ]}
       />
       {layout === "list" && (
-        <div className="cards-wide">
+        <div className="room-split">
           <section className="panel">
             <div className="task-grid caps" style={{ cursor: "default" }}>
               <span />
@@ -839,6 +1035,19 @@ function Room({
               ) : null}
             </div>
             <div style={{ fontSize: 17, fontWeight: 600 }}>{selected?.name || "—"}</div>
+            <div className="caps">{T("stages")}</div>
+            <div className="gate-list">
+              {gateStages.map((key, i) => {
+                const state = selected?.gates[i] || "pending";
+                return (
+                  <div key={key} className="gate-row">
+                    <span className={state === "pass" ? "gate gate--done" : state === "fail" ? "gate gate--fail" : "gate gate--wait"}>G{i}</span>
+                    <span>{T(key)}</span>
+                    <span className="muted">{state === "silent" ? T("gate_silent") : state === "pass" ? T("proof") : state === "fail" ? T("revision") : T("pending")}</span>
+                  </div>
+                );
+              })}
+            </div>
             <dl>
               <dt>{T("agent")}</dt>
               <dd>{selected?.role || "—"}</dd>
@@ -972,22 +1181,32 @@ function Room({
         )}
         {logTab === "diff" && (
           <div className="empty">
-            {T("no_diff")}
+            {selected?.commit ? T("journal_commit", { sha: selected.commit.slice(0, 12) }) : T("no_diff")}
           </div>
         )}
         {logTab === "history" && (
           <div>
-            {activity.slice(0, 12).map((e) => {
-              const origin = eventOrigin(e.kind);
-              return (
-                <div key={e.seq} className="hist-grid">
-                  <span className="mono muted">{clock(e.at)}</span>
-                  <span style={{ fontWeight: 500 }}>{origin.label}</span>
-                  <span>{e.kind}</span>
-                </div>
-              );
-            })}
-            {activity.length === 0 ? <div className="empty">{T("no_events")}</div> : null}
+            {(watch?.log_lines || []).map((line, i) => (
+              <div key={`log-${i}`} className="hist-grid">
+                <span className="mono muted">{i + 1}</span>
+                <span style={{ fontWeight: 500 }}>{watch?.log_title || T("journal")}</span>
+                <span>{line}</span>
+              </div>
+            ))}
+            {activity
+              .filter((e) => !mission || e.payload?.mission_id === mission.id || e.kind.startsWith("session"))
+              .slice(0, 12)
+              .map((e) => {
+                const origin = eventOrigin(e.kind);
+                return (
+                  <div key={e.seq} className="hist-grid">
+                    <span className="mono muted">{clock(e.at)}</span>
+                    <span style={{ fontWeight: 500 }}>{origin.label}</span>
+                    <span>{e.kind}</span>
+                  </div>
+                );
+              })}
+            {(watch?.log_lines || []).length === 0 && activity.length === 0 ? <div className="empty">{T("no_journal_lines")}</div> : null}
           </div>
         )}
       </section>
@@ -1361,6 +1580,93 @@ function SquadEditor({
   );
 }
 
+function LoginScreen({
+  account,
+  sessionId,
+  client,
+  onBack,
+}: {
+  account: Account | null;
+  sessionId: string;
+  client: string;
+  onBack: () => void;
+}) {
+  return (
+    <div className="page">
+      <PageHeader
+        title={T("login_title", { label: account?.label || account?.adapter || "" })}
+        description={T("login_hint")}
+        actions={
+          <Button variant="secondary" onClick={onBack}>
+            {T("back_accounts")}
+          </Button>
+        }
+      />
+      <section className="log-panel log-panel--fill">
+        <XTerm sessionId={sessionId} inputEnabled client={client} />
+      </section>
+    </div>
+  );
+}
+
+function SetupScreen({
+  workspace,
+  sessionId,
+  client,
+  onStart,
+  onBack,
+}: {
+  workspace: Workspace;
+  sessionId: string;
+  client: string;
+  onStart: (brief: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [stack, setStack] = useState("");
+  const [testCmd, setTestCmd] = useState("");
+  const [method, setMethod] = useState("tests after · conventional commits");
+  const [err, setErr] = useState("");
+  const ready = workspace.profile;
+  return (
+    <div className="page">
+      <PageHeader title={T("setup_title")} description={`${workspace.name} · ${workspace.root}`} actions={<Button variant="secondary" onClick={onBack}>{T("back_home")}</Button>} />
+      <p className="muted">{T("setup_hint")}</p>
+      {ready ? <Alert tone="success" title=".batuta/profile.md">{workspace.root}</Alert> : null}
+      {!sessionId ? (
+        <section className="panel plan-body">
+          <Field label={T("setup_stack")}>
+            <Input value={stack} onChange={(e) => setStack(e.target.value)} placeholder="go" />
+          </Field>
+          <Field label={T("setup_test")}>
+            <Input value={testCmd} onChange={(e) => setTestCmd(e.target.value)} placeholder="go test ./..." />
+          </Field>
+          <Field label={T("setup_method")}>
+            <Input value={method} onChange={(e) => setMethod(e.target.value)} />
+          </Field>
+          {err ? <p className="err">{err}</p> : null}
+          <Button
+            disabled={!stack.trim()}
+            onClick={async () => {
+              setErr("");
+              try {
+                await onStart(`Stack: ${stack.trim()}\nTest: ${testCmd.trim() || "unknown"}\nMethodology: ${method.trim()}`);
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            {T("start_setup")}
+          </Button>
+        </section>
+      ) : (
+        <section className="log-panel log-panel--fill">
+          <XTerm sessionId={sessionId} inputEnabled client={client} />
+        </section>
+      )}
+    </div>
+  );
+}
+
 function Accounts({
   accounts,
   limits,
@@ -1369,6 +1675,7 @@ function Accounts({
   onOpen,
   onClose,
   onSaved,
+  onLogin,
 }: {
   accounts: Account[];
   limits: Limit[];
@@ -1377,6 +1684,7 @@ function Accounts({
   onOpen: () => void;
   onClose: () => void;
   onSaved: () => void;
+  onLogin: (a: Account) => void;
 }) {
   const live = sessions.filter((s) => s.process === "running");
   const cap = accounts.reduce((n, a) => n + (a.session_cap || 0), 0);
@@ -1418,9 +1726,24 @@ function Accounts({
             <button key={a.id} type="button" className="acct-grid" onClick={() => setEdit(a)}>
               <span>
                 <span className="mono" style={{ fontWeight: 500 }}>
-                  {a.connected ? "● " : "○ "}
+                  {a.authed ? "● " : a.connected ? "◐ " : "○ "}
                   {a.label}
                 </span>
+                <div className="muted" style={{ fontSize: 11.5 }}>
+                  {a.authed ? T("signed_in") : a.connected ? T("folder_only") : "—"}
+                </div>
+                {a.connected && !a.authed ? (
+                  <button
+                    type="button"
+                    className="linkish"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onLogin(a);
+                    }}
+                  >
+                    {T("sign_in")}
+                  </button>
+                ) : null}
               </span>
               <span>
                 {a.provider} · {a.adapter}
@@ -1435,7 +1758,10 @@ function Accounts({
                 <div className="muted">{lim?.percent == null ? T("unknown") : T("limit_pct", { pct: Math.round(lim.percent), window: lim.window || T("window") })}</div>
                 <Progress value={lim?.percent} unknown={lim?.percent == null} />
               </span>
-              <span className="mono muted">{lim?.origin || lim?.source || "—"}</span>
+              <span className="mono muted">
+                {lim?.origin || lim?.source || "—"}
+                {lim?.observed_at ? <div>{relTime(lim.observed_at)}</div> : null}
+              </span>
             </button>
           );
         })}

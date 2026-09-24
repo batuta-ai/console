@@ -40,6 +40,7 @@ type Workspace struct {
 	Name      string    `json:"name"`
 	Root      string    `json:"root"`
 	CreatedAt time.Time `json:"created_at"`
+	Profile   bool      `json:"profile"`
 }
 
 type Member struct {
@@ -72,11 +73,19 @@ type Mission struct {
 	ID            string    `json:"id"`
 	WorkspaceID   string    `json:"workspace_id"`
 	Title         string    `json:"title"`
+	Brief         string    `json:"brief,omitempty"`
 	SquadID       string    `json:"squad_id"`
 	SquadSnapshot Squad     `json:"squad_snapshot"`
 	Status        string    `json:"status"`
 	Attention     string    `json:"attention,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// PlanRef is a Batuta plan file already on disk. The Console reads it; it does not write the plan.
+type PlanRef struct {
+	Name   string `json:"name"`
+	Status string `json:"status,omitempty"`
+	Done   bool   `json:"done,omitempty"`
 }
 
 type Account struct {
@@ -86,6 +95,7 @@ type Account struct {
 	Adapter    string    `json:"adapter"`
 	Isolation  Isolation `json:"isolation"`
 	Connected  bool      `json:"connected"`
+	Authed     bool      `json:"authed"`
 	SessionCap int       `json:"session_cap"`
 	AuthMethod string    `json:"auth_method"`
 	VaultRef   string    `json:"vault_ref,omitempty"`
@@ -152,6 +162,7 @@ type WatchView struct {
 	Health    map[string]any   `json:"health"`
 	LogTitle  string           `json:"log_title,omitempty"`
 	LogLines  []string         `json:"log_lines,omitempty"`
+	Plans     []PlanRef        `json:"plans,omitempty"`
 	Available bool             `json:"available"`
 	Message   string           `json:"message,omitempty"`
 }
