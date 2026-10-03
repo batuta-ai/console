@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:7c769d6c8c57 routing.md@sha256:bd765165d004 -->
+<!-- inputs: profile.md@sha256:e1e53e0d4522 routing.md@sha256:d8b1a9f186ff -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -15,7 +15,7 @@
 - [x] 3. Criar infraestrutura mínima de testes web e de jornada — testing/medium
       Scope: web/package.json, web/package-lock.json, web/*config*, web/src/test/**, web/tests/**, web/src/**/*.test.ts, web/src/**/*.test.tsx
       Accept: O runner cobre uma interação significativa de produto e uma resposta API com erro, em vez de apenas renderizar um componente → npm --prefix web run test:run; A jornada usa daemon e contas temporários, evita chamadas pagas por padrão e separa a qualificação real do CLI
-- [ ] 4. Atualizar e qualificar as bibliotecas publicadas mais recentes — fullstack/high
+- [x] 4. Atualizar e qualificar as bibliotecas publicadas mais recentes — fullstack/high
       Depends on: 1, 2, 3
       Scope: go.mod, go.sum, web/package.json, web/package-lock.json, web/src/**, web/*config*, web/tests/**, internal/**, cmd/**, integrations/**, plugins/**, docs/dependency-policy.md
       Accept: Dependências diretas, incluindo Lyra React/styles e Batuta, usam as releases mais recentes verificadas em fontes oficiais, com versões e breaking changes registrados; Ajustes de compatibilidade seguem teste primeiro e não escondem falhas → go test ./...; Suite web prova os contratos usados antes/depois da migração → npm --prefix web run test:run; Typecheck passa → npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json; Build web passa → npm --prefix web run build; Grafo/locks são reproduzíveis e nenhum downgrade é aplicado sem decisão explícita

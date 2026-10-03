@@ -10,20 +10,20 @@
     "test:journey": "node tests/daemon-journey.mjs"
   },
   "dependencies": {
-    "@lyra-ds/react": "^1.0.2",
-    "@lyra-ds/styles": "^1.0.3",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^5.5.0",
-    "lucide-react": "^1.46.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "@lyra-ds/react": "1.1.0",
+    "@lyra-ds/styles": "1.1.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "lucide-react": "1.51.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0",
-    "@vitejs/plugin-react": "^4.5.0",
-    "typescript": "^5.8.0",
-    "vite": "^6.3.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.2",
     "vitest": "5.0.3",
     "@testing-library/react": "16.3.3",
     "@testing-library/dom": "10.4.2",
@@ -31,5 +31,9 @@
     "@testing-library/jest-dom": "7.0.1",
     "jsdom": "30.1.1",
     "@types/node": "26.6.4"
-  }
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "packageManager": "npm@11.19.1"
 }

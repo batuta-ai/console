@@ -6,7 +6,7 @@
 
 Matriz escolhida: Codex e Claude, macOS e Linux, operação completa no web e na TUI.
 
-Ordem solicitada em 2026-10-03: inicialização, planejamento dos bloqueadores, estabilização funcional e depois revisão visual. A fase 1 tem um plano proposto; as fases 2 e 3 serão detalhadas a partir das evidências e decisões da fase anterior. Não há autorização de publicação ou de execução automática implícita neste roadmap.
+Ordem solicitada em 2026-10-03: inicialização, planejamento dos bloqueadores, estabilização funcional e depois revisão visual. A fase 1 tem um plano aprovado, em execução com TDD e versões publicadas atuais; as fases 2 e 3 serão detalhadas a partir das evidências e decisões da fase anterior. O usuário aprovou a execução do plano em 2026-10-03; não houve autorização de publicação.
 
 Fase 2: avaliar telas e estados reais, hierarquia de informação, navegação, distribuição entre missão/plano/progresso/atenção/evidências/terminal, comportamento em diferentes larguras e acessibilidade. Na TUI, revisar áreas, foco, atalhos e legibilidade em tamanhos de terminal representativos. Comparar alternativas antes de aprovar o desenho e dividi-lo em tarefas de implementação. R27 entra nesta fase: extração de componentes quando necessária, carregamento do terminal e uso sem fontes externas. Preservar os contratos funcionais qualificados na fase 1.
 
