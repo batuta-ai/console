@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestStartInputStop(t *testing.T) {
-	m := New(t.TempDir())
+	m := newTestManager(t)
 	sess, err := m.Start(domain.Session{ID: "s1", Argv: []string{"/bin/cat"}, Cols: 80, Rows: 24}, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,7 @@ func TestStartInputStop(t *testing.T) {
 }
 
 func TestReconnectDoesNotRequireNewProcess(t *testing.T) {
-	m := New(t.TempDir())
+	m := newTestManager(t)
 	sess, err := m.Start(domain.Session{ID: "s2", Argv: []string{"/bin/sleep", "8"}}, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +75,7 @@ func TestReconnectDoesNotRequireNewProcess(t *testing.T) {
 }
 
 func TestInputRequiresOwner(t *testing.T) {
-	m := New(t.TempDir())
+	m := newTestManager(t)
 	sess, err := m.Start(domain.Session{ID: "s3", Argv: []string{"/bin/cat"}}, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestInputRequiresOwner(t *testing.T) {
 }
 
 func TestStartUsesWorkspaceDir(t *testing.T) {
-	m := New(t.TempDir())
+	m := newTestManager(t)
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "here")
 	if err := os.WriteFile(marker, []byte("ok"), 0o600); err != nil {
@@ -124,13 +125,39 @@ func TestStartUsesWorkspaceDir(t *testing.T) {
 }
 
 func TestSubscribeReplays(t *testing.T) {
-	m := New(t.TempDir())
-	sess, err := m.Start(domain.Session{ID: "s5", Argv: []string{"/bin/sh", "-c", "printf hi; sleep 2"}}, nil, "")
+	m := newTestManager(t)
+	sess, err := m.Start(domain.Session{ID: "s5", Argv: []string{"/bin/sh", "-c", "printf hi; read answer"}}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _, _ = m.Stop(sess.ID) }()
-	time.Sleep(200 * time.Millisecond)
+	ready := make(chan []byte, 8)
+	firstUnsub, err := m.Subscribe(sess.ID, func(b []byte) {
+		select {
+		case ready <- append([]byte(nil), b...):
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstUnsub()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	var output []byte
+	for !strings.Contains(string(output), "hi") {
+		select {
+		case b := <-ready:
+			output = append(output, b...)
+		case <-timer.C:
+			t.Fatal("process output readiness watchdog")
+		}
+	}
+	firstUnsub()
+	defer func() {
+		if _, err := m.Stop(sess.ID); err != nil {
+			t.Errorf("replay session cleanup: %v", err)
+		}
+	}()
 	got := make(chan []byte, 4)
 	_, err = m.Subscribe(sess.ID, func(b []byte) {
 		select {
@@ -152,7 +179,7 @@ func TestSubscribeReplays(t *testing.T) {
 }
 
 func TestOnExitPersists(t *testing.T) {
-	m := New(t.TempDir())
+	m := newTestManager(t)
 	done := make(chan domain.Session, 1)
 	m.OnExit = func(s domain.Session) { done <- s }
 	if _, err := m.Start(domain.Session{ID: "s6", Argv: []string{"/usr/bin/true"}}, nil, ""); err != nil {
@@ -166,4 +193,17 @@ func TestOnExitPersists(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("exit callback did not complete")
 	}
+}
+
+func newTestManager(t *testing.T) *Manager {
+	t.Helper()
+	m := New(t.TempDir())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := m.Shutdown(ctx); err != nil {
+			t.Errorf("session lifecycle cleanup: %v", err)
+		}
+	})
+	return m
 }

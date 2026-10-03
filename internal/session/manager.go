@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,27 +17,36 @@ import (
 type Subscriber func([]byte)
 
 type live struct {
-	sess   domain.Session
-	cmd    *exec.Cmd
-	pty    *os.File
-	mu     sync.Mutex
-	subs   map[int]Subscriber
-	next   int
-	log    *os.File
-	replay []byte
-	done   chan struct{}
+	sess       domain.Session
+	cmd        *exec.Cmd
+	pty        *os.File
+	mu         sync.Mutex
+	subs       map[int]Subscriber
+	next       int
+	log        *os.File
+	replay     []byte
+	done       chan struct{}
+	readDone   chan struct{}
+	owned      *ownedProcess
+	cleanupErr error
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	live     map[string]*live
-	logs     string
-	accounts map[string]int
-	OnExit   func(domain.Session)
+	mu            sync.Mutex
+	live          map[string]*live
+	logs          string
+	accounts      map[string]int
+	OnExit        func(domain.Session)
+	closing       bool
+	active        sync.WaitGroup
+	shutdownOnce  sync.Once
+	shutdownDone  chan struct{}
+	shutdownErr   error
+	unresolvedErr error
 }
 
 func New(logs string) *Manager {
-	return &Manager{live: map[string]*live{}, logs: logs, accounts: map[string]int{}}
+	return &Manager{live: map[string]*live{}, logs: logs, accounts: map[string]int{}, shutdownDone: make(chan struct{})}
 }
 
 func (m *Manager) Live(id string) (*live, bool) {
@@ -72,6 +82,10 @@ func (p *Pending) Persist(write func(domain.Session) error) (domain.Session, err
 // is unlimited; all account-bound starts still contribute to the same count.
 func (m *Manager) StartPending(sess domain.Session, env []string, dir string, capacity int) (*Pending, error) {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session manager is shutting down")
+	}
 	if sess.AccountID != "" {
 		if capacity > 0 && m.accounts[sess.AccountID] >= capacity {
 			m.mu.Unlock()
@@ -79,11 +93,13 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		}
 		m.accounts[sess.AccountID]++
 	}
+	m.active.Add(1)
 	m.mu.Unlock()
 	spawned := false
 	defer func() {
 		if !spawned {
 			m.release(sess.AccountID)
+			m.active.Done()
 		}
 	}()
 
@@ -106,6 +122,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 	if err != nil {
 		return nil, err
 	}
+	owned := newOwnedProcess(cmd)
 	sess.PID = cmd.Process.Pid
 	sess.ProcessIdentity = ""
 	sess.RecoveryReason = ""
@@ -120,25 +137,26 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 	}
 	lf, err := os.OpenFile(logPath(m.logs, sess.ID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		stopErr := owned.stop()
+		waitErr := waitOwned(cmd, owned)
 		closeErr := pty.Close()
-		killErr := cmd.Process.Kill()
-		if errors.Is(killErr, os.ErrProcessDone) {
-			killErr = nil
-		}
-		waitErr := cmd.Wait()
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			waitErr = nil
-		}
-		return nil, errors.Join(err, closeErr, killErr, waitErr)
+		cleanupErr := errors.Join(stopErr, waitErr, closeErr)
+		m.recordCleanup(cleanupErr, waitErr)
+		return nil, errors.Join(err, cleanupErr)
 	}
-	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{})}
+	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned}
 	m.mu.Lock()
 	m.live[sess.ID] = l
+	closing := m.closing
 	m.mu.Unlock()
 	spawned = true
 	go l.readLoop(m)
 	go l.wait(m)
+	if closing {
+		if err := l.owned.stop(); err != nil {
+			m.recordCleanup(fmt.Errorf("shutdown session %s: %w", sess.ID, err), nil)
+		}
+	}
 	return &Pending{live: l}, nil
 }
 
@@ -218,14 +236,14 @@ func (m *Manager) Stop(id string) (domain.Session, error) {
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
 	}
-	if err := l.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := l.owned.stop(); err != nil {
 		return l.copy(), err
 	}
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	select {
 	case <-l.done:
-		return l.copy(), nil
+		return l.copy(), l.cleanupErr
 	case <-timer.C:
 		return l.copy(), fmt.Errorf("session %s termination did not complete", id)
 	}
@@ -250,6 +268,7 @@ func (l *live) copy() domain.Session {
 }
 
 func (l *live) readLoop(m *Manager) {
+	defer close(l.readDone)
 	buf := make([]byte, 4096)
 	for {
 		n, err := l.pty.Read(buf)
@@ -284,25 +303,85 @@ func (l *live) readLoop(m *Manager) {
 }
 
 func (l *live) wait(m *Manager) {
-	_ = l.cmd.Wait()
+	ownershipErr := waitOwned(l.cmd, l.owned)
+	cleanupErr := ownershipErr
 	now := time.Now().UTC()
 	l.mu.Lock()
-	l.sess.Process = "exited"
-	l.sess.EndedAt = &now
+	if l.cmd.ProcessState != nil {
+		l.sess.Process = "exited"
+		l.sess.EndedAt = &now
+	} else {
+		l.sess.Process = "unknown"
+	}
 	snap := l.sess
 	l.mu.Unlock()
 	m.release(snap.AccountID)
 	if m.OnExit != nil {
 		m.OnExit(snap)
 	}
-	_ = l.pty.Close()
-	_ = l.log.Close()
+	cleanupErr = errors.Join(cleanupErr, l.pty.Close())
+	<-l.readDone
+	cleanupErr = errors.Join(cleanupErr, l.log.Close())
+	l.cleanupErr = cleanupErr
+	m.recordCleanup(cleanupErr, ownershipErr)
 	m.mu.Lock()
 	delete(m.live, snap.ID)
 	m.mu.Unlock()
 	close(l.done)
+	m.active.Done()
 }
 
 func logPath(dir, id string) string {
 	return dir + "/" + id + ".log"
+}
+
+// Shutdown permanently closes admission and waits for all admitted starts,
+// readers and exit callbacks. A context bound does not cancel ongoing cleanup;
+// callers can wait again, but must keep callback resources alive until it ends.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.shutdownOnce.Do(func() {
+		m.mu.Lock()
+		m.closing = true
+		sessions := make([]*live, 0, len(m.live))
+		for _, l := range m.live {
+			sessions = append(sessions, l)
+		}
+		m.mu.Unlock()
+		go func() {
+			for _, l := range sessions {
+				if err := l.owned.stop(); err != nil {
+					m.recordCleanup(fmt.Errorf("shutdown PID %d: %w", l.cmd.Process.Pid, err), nil)
+				}
+			}
+			m.active.Wait()
+			close(m.shutdownDone)
+		}()
+	})
+	select {
+	case <-m.shutdownDone:
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return errors.Join(m.unresolvedErr, m.shutdownErr)
+	case <-ctx.Done():
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return errors.Join(ctx.Err(), m.unresolvedErr, m.shutdownErr)
+	}
+}
+
+func (m *Manager) recordCleanup(err, ownershipErr error) {
+	if err == nil {
+		return
+	}
+	log.Printf("session cleanup: %v", err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// A retired group cannot be repaired after reap. Keep its first failure,
+	// while completed descriptor failures only affect their active drain.
+	if ownershipErr != nil && m.unresolvedErr == nil {
+		m.unresolvedErr = ownershipErr
+	}
+	if m.closing && m.shutdownErr == nil {
+		m.shutdownErr = err
+	}
 }

@@ -2,11 +2,12 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Corrigir persistência, concorrência e controle de sessões → tarefas 5–8 verificadas; próxima tarefa9: grupo da PTY e shutdown. Reserva, término imediato, persistência e recuperação passaram no host; recuperação também qualificada no Linux nativo.
+- [ ] Fechar os bloqueadores de segurança → tarefas5–9 verificadas; próxima tarefa10: isolamento de credenciais por conta. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa8 — recuperação antes do listener, migração/identidade sem adotar PID antigo, stop terminal idempotente e corrida de término corrigida; host e Linux nativo verdes → codex/gpt-6-astra high, um retry e escalação crítica self; claude/sonnet5/5, commit ed66a40 (trilha: .batuta/runs/2026-10-03-startup-recovery.md).
 - [x] Tarefa 7 — reserva de capacidade antes do spawn, reuse serializado e estado terminal preservado; Go/race, web e tipos verdes no host → codex/gpt-6-astra high, uma correção de imports e provas; claude/sonnet 5/5, commit 5798bf0 (trilha: .batuta/runs/2026-10-03-session-admission.md).
 - [x] Tarefa6 — listagem semconsulta SQLite aninhada e política de conexão/Tx consistente; store-race5, encerramento natural20 e perfil completos verdes nohost → codex/gpt-6-astra high, semretry; claude/sonnet4/4, commit 0d32ad1 (trilha: .batuta/runs/2026-10-03-sqlite-contention.md).
 - [x] Tarefa5 — migrações SQLite versionadas sem perda de legado, rollback/falhas observáveis e mutação/evento atômicos nos caminhos de service/API → codex/gpt-6-astra high, sem retry; revisão claude/sonnet6/6, commit 46008bf (trilha: .batuta/runs/2026-10-03-store-migrations.md).

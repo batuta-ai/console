@@ -27,7 +27,28 @@
 //
 // OnExit must be configured before starting processes. Stop waits for termination
 // and callback completion, reporting kill errors or a completion timeout. Exit
-// callbacks must not call Stop on the same process. Stop kills only the process
-// leader; process-tree termination is a separate concern. Restart recovery lives
-// in service. No process is adopted or killed by catalog PID.
+// callbacks must not call Stop on the same process or Shutdown on their Manager.
+// Stop sends
+// immediate SIGKILL to the original PTY process group, including children that
+// ignore HUP. Natural leader exit also sweeps that group. Descendants that move
+// to another group/session are outside containment.
+//
+// Successful PTY startup establishes PID = PGID. The exclusively owned unreaped
+// leader anchors that number: group signals finish under an authority lock before
+// it is irrevocably retired, and only then does the sole Cmd.Wait reap the leader.
+// Linux observes exit with Waitid(WNOWAIT); Darwin observes native SZOMB without
+// consuming wait status. A map entry, saved PID, birth identity, or membership
+// observation never grants signaling authority. Darwin zombie-only group EPERM
+// is accepted only after a complete native observation finds no nonterminal or
+// unverifiable record in the still-anchored group. Other native errors propagate.
+// EndedAt follows the actual leader wait, never a requested signal. Group cleanup
+// failures remain errors even when the leader's terminal snapshot is retained.
+//
+// Shutdown permanently closes admission, includes admitted unpublished starts,
+// and joins callbacks, readers and descriptor cleanup. Its context bounds the
+// caller's wait, not the continuing cleanup. On timeout, keep callback resources
+// alive; a later Shutdown may wait again. Callbacks/subscribers must return for
+// draining to complete. Disconnect/unsubscribe does not stop a process; resize
+// and input retain their owner-client checks and existing transport semantics.
+// Restart recovery lives in service. No catalog PID is adopted or signaled.
 package session

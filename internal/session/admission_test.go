@@ -102,8 +102,10 @@ func TestLogOpenFailureReleasesAdmission(t *testing.T) {
 	root := t.TempDir()
 	logs := filepath.Join(root, "logs")
 	m := New(logs)
-	if _, err := m.StartPending(domain.Session{ID: "failed", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1); err == nil {
-		t.Fatal("missing logs directory accepted")
+	if _, err := m.StartPending(domain.Session{ID: "failed", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("post-spawn cleanup lost original log-open error: %v", err)
+	} else {
+		t.Logf("post-spawn failure after group cleanup and sole wait: %v", err)
 	}
 	if err := os.Mkdir(logs, 0700); err != nil {
 		t.Fatal(err)

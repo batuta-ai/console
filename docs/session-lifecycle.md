@@ -69,8 +69,8 @@ or events. Other catalog-only stops return recoverable `ErrSessionNotOwned`
 first truthfully reconciled; an already recovered row stays intact. Recovery
 persistence failures return HTTP 500, `stop_failed`; only a missing session
 returns HTTP 404, `not_found`. No `session.stopped` event or physical exit is
-invented, and the saved PID is never signaled. Current owned-session stop
-continues to use the Manager; process-tree termination remains a separate task.
+invented, and the saved PID is never signaled. Current owned-session stop uses
+the Manager's original PTY process group, as described below.
 
 Lost transport and physical liveness are different. Surviving or unverified
 former processes **cannot be reattached or controlled by this daemon** and may
@@ -84,6 +84,70 @@ fresh daemon. A process may exit just after an observation; recovery is evidence
 at one instant, not continuous monitoring. Unsupported operating systems report
 unverified inspection. Linux runtime qualification remains task40; a cross-build
 and parser tests alone do not qualify its runtime or provider behavior.
+
+## Owned groups and clean shutdown
+
+Successful PTY startup creates a new session and process group with the leader's
+PID as the original PGID. Authority belongs only to this live daemon's child.
+The exclusively owned **unreaped leader** anchors the group number. Every group
+signal completes under the same lock before authority is permanently retired;
+`Cmd.Wait` then runs exactly once. The leader may already be a zombie, but its
+number cannot be reused before collection. A live map entry, matching birth
+identity, earlier group membership, or a saved PID cannot replace this anchor.
+
+Stop immediately sends `SIGKILL` to the original group; there is no HUP/TERM grace
+period. This includes an original-group child that ignores HUP. Natural leader
+exit also triggers a final group sweep before reap. Concurrent/repeated stops
+cannot signal after retirement. A failure after spawn, such as log-open failure,
+uses the same signal/retire/wait order and preserves both the original error and
+cleanup errors. Descendants that change process group or session are outside
+this containment: Console does **not** promise to terminate arbitrary descendants.
+
+Linux observes the child with `waitid(WNOWAIT)`; macOS observes native `SZOMB`
+without consuming its wait status. Darwin's group kill can return `EPERM` for a
+zombie-only group because XNU excludes zombies from eligible signal recipients.
+Only while the original authority remains active, a successful complete native
+`kern.proc.pgrp` observation of an empty or all-zombie group classifies this
+specific error as no remaining group work. If every remaining record is a zombie
+or advertises Darwin's `P_WEXIT` flag, the error may instead mark an exit still
+in progress. That pending observation does not prove termination: Stop must await
+actual leader exit and the final group sweep within its deadline. Only successful
+final cleanup resolves this provisional error. Other live/unknown records,
+inspection failures, final cleanup failures and timeouts remain errors. This exception is
+Darwin-only. Observation never changes the target or authorizes another signal.
+Other observation/signaling/cleanup errors are returned or logged, not silently
+reported as successful group termination.
+
+The terminal snapshot and physical `EndedAt` follow the leader's actual wait,
+not the kill request. Stop waits up to two seconds for callback and descriptor
+cleanup, returning an error if completion is still pending. The latest terminal
+snapshot and released runtime slot survive catalog persistence failure; the
+service logs its write error. Leader exit does not by itself prove successful
+group cleanup, so a terminal snapshot may accompany a cleanup error.
+
+On SIGINT, SIGTERM, or a serving failure, the daemon permanently closes Manager
+admission. Starts already admitted but not yet published are included in drain;
+when they publish, they are stopped through their original owned authority.
+The daemon waits for leader collection, exit callbacks, PTY readers and file
+closure before closing the catalog. It also bounds HTTP shutdown within the
+same five-second budget. Cleanup failures or expiry produce a nonzero daemon
+exit. On timeout, callbacks/handlers may still be active: the catalog is left
+open until process exit rather than being closed underneath them. A timeout is
+not a claim of complete cleanup. Manager callers can wait again with a new
+context, and must keep callback resources alive until draining completes.
+Callbacks and subscriber functions must return for a complete drain. Every
+cleanup error is logged, and Stop reports its session's failure. Manager retains
+the first unresolved group/wait failure and the first current drain failure,
+without accumulating an unlimited error history. A descriptor failure from a
+completed earlier session remains reported to its Stop caller but does not make
+a later empty drain fail.
+
+Recovered catalog-only rows and unrelated OS processes are never part of this
+drain. Clean shutdown persists current owned exits before the next startup
+reconciles historical rows. Client detach/unsubscribe leaves the same owned PID
+running; reconnect resumes that transport. Input and native PTY resize continue
+to require the current owner client. Resize changes terminal dimensions without
+changing group authority or stopping the process.
 
 ## Storage and sources
 
@@ -99,3 +163,13 @@ Kernel behavior is documented in [XNU kern_sysctl.c](https://github.com/apple-os
 and [proc.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc.h).
 Linux field meanings come from the [kernel proc documentation](https://www.kernel.org/doc/html/latest/filesystems/proc.html).
 Sources checked 2026-10-03; no foreign-platform runtime result is inferred.
+
+Group lifetime and signaling follow POSIX Issue 8
+[process ID lifetime (4.17)](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap04.html),
+[kill](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html),
+[wait](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html), and
+[setpgid](https://pubs.opengroup.org/onlinepubs/9799919799/functions/setpgid.html).
+Darwin's zombie exclusion and EPERM behavior are in
+[XNU kern_sig.c, killpg1](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c);
+the group query in `kern_sysctl.c` covers both live and zombie lists without an
+implicit UID filter. No raw Darwin wait syscall ABI is assumed.
