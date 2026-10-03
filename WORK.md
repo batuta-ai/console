@@ -7,6 +7,7 @@
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa 2 — Go 1.27.1, testes/vet verdes e scanner sem vulnerabilidades após red com seis achados → codex/gpt-6.1-sol low, uma revisão de documentação, claude/sonnet; commit ab17681 (trilha: .batuta/runs/2026-10-03-go-toolchain.md).
 - [x] Tarefa 1 — atualizar core para v1.1.0-beta.46 e remover replace local; build/test/install isolados com red/green e proteção contra replacement/vendor/cache alterado → codex/gpt-6-astra high, escalado de codex/gpt-6.1-sol por limitações de sandbox; revisão claude/sonnet, commit ddf03a9 (trilha: .batuta/runs/2026-10-03-published-core.md).
 - [x] Registrar configuração/planejamento/auditoria aprovados → condutor self, commit d0af2af (chore(batuta): set up console stabilization).
 - [x] Aprovar plano/commit inicial e definir TDD obrigatório e bibliotecas atuais → decisão do usuário em 2026-10-03; sem nova confirmação necessária.

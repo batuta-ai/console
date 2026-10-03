@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:d697908f2ddd routing.md@sha256:2489b0360cec -->
+<!-- inputs: profile.md@sha256:7c769d6c8c57 routing.md@sha256:bd765165d004 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -12,7 +12,7 @@
       Depends on: 1
       Scope: go.mod, go.sum, README.md, docs/release-readiness.md, docs/release-readiness-evidence.md
       Accept: A toolchain estável mais recente verificada corrige os seis achados R02 e qualquer novo achado é avaliado sem supressão genérica → govulncheck ./...; A suíte existente permanece verde → go test ./...
-- [ ] 3. Criar infraestrutura mínima de testes web e de jornada — testing/medium
+- [x] 3. Criar infraestrutura mínima de testes web e de jornada — testing/medium
       Scope: web/package.json, web/package-lock.json, web/*config*, web/src/test/**, web/tests/**, web/src/**/*.test.ts, web/src/**/*.test.tsx
       Accept: O runner cobre uma interação significativa de produto e uma resposta API com erro, em vez de apenas renderizar um componente → npm --prefix web run test:run; A jornada usa daemon e contas temporários, evita chamadas pagas por padrão e separa a qualificação real do CLI
 - [ ] 4. Atualizar e qualificar as bibliotecas publicadas mais recentes — fullstack/high
