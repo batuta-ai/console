@@ -2,7 +2,9 @@ package service
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +31,9 @@ func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
 	s := &Service{Store: st, Session: sess, Quota: lim}
 	if sess != nil {
 		sess.OnExit = func(live domain.Session) {
-			_ = s.Store.PutSession(live)
-			_, _ = s.Store.AppendEvent("session.exited", map[string]any{"id": live.ID})
+			if err := s.Store.PutSessionWithEvent(live, "session.exited", map[string]any{"id": live.ID}); err != nil {
+				log.Printf("persist session %s exit: %v", live.ID, err)
+			}
 		}
 	}
 	return s
@@ -66,10 +69,9 @@ func (s *Service) CreateWorkspace(name, root string) (domain.Workspace, error) {
 		return existing, nil
 	}
 	w := domain.Workspace{ID: domain.NewID("ws_"), Name: name, Root: abs, CreatedAt: domain.Now()}
-	if err := s.Store.PutWorkspace(w); err != nil {
+	if err := s.Store.PutWorkspaceWithEvent(w, "workspace.created", map[string]any{"id": w.ID, "name": w.Name}); err != nil {
 		return w, err
 	}
-	_, _ = s.Store.AppendEvent("workspace.created", map[string]any{"id": w.ID, "name": w.Name})
 	return w, nil
 }
 
@@ -81,10 +83,9 @@ func (s *Service) EnsureBatutaCatalog() error {
 			return err
 		}
 		q.Draft = !s.ValidateDraft(q).Ready
-		if err := s.Store.PutSquad(q); err != nil {
+		if err := s.Store.PutSquadWithEvent(q, "squad.seeded", map[string]any{"id": q.ID, "origin": q.Origin}); err != nil {
 			return err
 		}
-		_, _ = s.Store.AppendEvent("squad.seeded", map[string]any{"id": q.ID, "origin": q.Origin})
 	}
 	return s.BindVacantMembers()
 }
@@ -118,10 +119,9 @@ func (s *Service) SaveSquad(q domain.Squad) (domain.Squad, error) {
 		}
 	}
 	q.Draft = !s.ValidateDraft(q).Ready
-	if err := s.Store.PutSquad(q); err != nil {
+	if err := s.Store.PutSquadWithEvent(q, "squad.saved", map[string]any{"id": q.ID, "version": q.Version}); err != nil {
 		return q, err
 	}
-	_, _ = s.Store.AppendEvent("squad.saved", map[string]any{"id": q.ID, "version": q.Version})
 	return q, nil
 }
 
@@ -181,10 +181,9 @@ func (s *Service) CreateMission(workspaceID, title, brief, squadID string) (doma
 		ID: domain.NewID("msn_"), WorkspaceID: workspaceID, Title: title, Brief: brief, SquadID: squadID,
 		SquadSnapshot: sq, Status: "open", CreatedAt: domain.Now(),
 	}
-	if err := s.Store.PutMission(m); err != nil {
+	if err := s.Store.PutMissionWithEvent(m, "mission.created", map[string]any{"id": m.ID, "title": m.Title, "squad": sq.ID, "squad_version": sq.Version}); err != nil {
 		return m, err
 	}
-	_, _ = s.Store.AppendEvent("mission.created", map[string]any{"id": m.ID, "title": m.Title, "squad": sq.ID, "squad_version": sq.Version})
 	return m, nil
 }
 
@@ -193,10 +192,9 @@ func (s *Service) CreateAccount(label, adapter string) (domain.Account, error) {
 	if err != nil {
 		return a, err
 	}
-	if err := s.Store.PutAccount(a); err != nil {
+	if err := s.Store.PutAccountWithEvent(a, "account.created", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolation": a.Isolation}); err != nil {
 		return a, err
 	}
-	_, _ = s.Store.AppendEvent("account.created", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolation": a.Isolation})
 	return a, nil
 }
 
@@ -213,10 +211,9 @@ func (s *Service) RenameAccount(id, label string) (domain.Account, error) {
 		return a, nil
 	}
 	a.Label = label
-	if err := s.Store.PutAccount(a); err != nil {
+	if err := s.Store.PutAccountWithEvent(a, "account.renamed", map[string]any{"id": a.ID, "label": a.Label}); err != nil {
 		return a, err
 	}
-	_, _ = s.Store.AppendEvent("account.renamed", map[string]any{"id": a.ID, "label": a.Label})
 	return a, nil
 }
 
@@ -239,10 +236,9 @@ func (s *Service) ConnectAccount(id string) (domain.Account, error) {
 		a.VaultRef = "local:" + a.ID
 	}
 	a.Connected = true
-	if err := s.Store.PutAccount(a); err != nil {
+	if err := s.Store.PutAccountWithEvent(a, "account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef}); err != nil {
 		return a, err
 	}
-	_, _ = s.Store.AppendEvent("account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef})
 	if err := s.BindVacantMembers(); err != nil {
 		return a, err
 	}
@@ -431,12 +427,14 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 		return sess, err
 	}
 	if in.Client != "" && in.Owner != "" {
-		live, _ = s.Session.Take(live.ID, in.Owner, in.Client)
+		live, err = s.Session.Take(live.ID, in.Owner, in.Client)
+		if err != nil {
+			return sess, s.stopAfterFailure(sess.ID, err)
+		}
 	}
-	if err := s.Store.PutSession(live); err != nil {
+	if err := s.persistStarted(live, "session.started", map[string]any{"id": live.ID, "adapter": live.Adapter, "batuta": live.BatutaInjected}); err != nil {
 		return live, err
 	}
-	_, _ = s.Store.AppendEvent("session.started", map[string]any{"id": live.ID, "adapter": live.Adapter, "batuta": live.BatutaInjected})
 	return live, nil
 }
 
@@ -464,15 +462,16 @@ func (s *Service) StopSession(id string) (domain.Session, error) {
 	} else {
 		stored.Process = "exited"
 	}
-	_ = s.Store.PutSession(stored)
-	_, _ = s.Store.AppendEvent("session.stopped", map[string]any{"id": id})
+	if err := s.Store.PutSessionWithEvent(stored, "session.stopped", map[string]any{"id": id}); err != nil {
+		return stored, err
+	}
 	return stored, nil
 }
 
-func (s *Service) reuseLive(match func(domain.Session) bool, owner, client string) (domain.Session, bool) {
+func (s *Service) reuseLive(match func(domain.Session) bool, owner, client string) (domain.Session, bool, error) {
 	list, err := s.Store.ListSessions()
 	if err != nil {
-		return domain.Session{}, false
+		return domain.Session{}, false, err
 	}
 	for _, sess := range list {
 		if !match(sess) {
@@ -483,14 +482,18 @@ func (s *Service) reuseLive(match func(domain.Session) bool, owner, client strin
 			continue
 		}
 		if owner != "" && client != "" {
-			if taken, err := s.Session.Take(live.ID, owner, client); err == nil {
-				live = taken
-				_ = s.Store.PutSession(live)
+			taken, err := s.Session.Take(live.ID, owner, client)
+			if err != nil {
+				return live, false, err
+			}
+			live = taken
+			if err := s.Store.PutSession(live); err != nil {
+				return live, false, err
 			}
 		}
-		return live, true
+		return live, true, nil
 	}
-	return domain.Session{}, false
+	return domain.Session{}, false, nil
 }
 
 func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, error) {
@@ -501,9 +504,11 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 	if !a.Connected {
 		return domain.Session{}, fmt.Errorf("connect the account folder before login")
 	}
-	if live, ok := s.reuseLive(func(sess domain.Session) bool {
+	if live, ok, err := s.reuseLive(func(sess domain.Session) bool {
 		return sess.AccountID == a.ID && sess.Work == "login"
-	}, owner, client); ok {
+	}, owner, client); err != nil {
+		return live, err
+	} else if ok {
 		return live, nil
 	}
 	ad, err := adapters.Get(a.Adapter)
@@ -527,12 +532,14 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 		return sess, err
 	}
 	if client != "" && sess.Owner != "" {
-		live, _ = s.Session.Take(live.ID, sess.Owner, client)
+		live, err = s.Session.Take(live.ID, sess.Owner, client)
+		if err != nil {
+			return sess, s.stopAfterFailure(sess.ID, err)
+		}
 	}
-	if err := s.Store.PutSession(live); err != nil {
+	if err := s.persistStarted(live, "account.login", map[string]any{"id": a.ID, "session": live.ID}); err != nil {
 		return live, err
 	}
-	_, _ = s.Store.AppendEvent("account.login", map[string]any{"id": a.ID, "session": live.ID})
 	return live, nil
 }
 
@@ -549,9 +556,11 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Se
 	if brief == "" {
 		return domain.Session{}, fmt.Errorf("setup answers are required")
 	}
-	if live, ok := s.reuseLive(func(sess domain.Session) bool {
+	if live, ok, err := s.reuseLive(func(sess domain.Session) bool {
 		return sess.WorkspaceID == ws.ID && sess.Work == "init"
-	}, owner, client); ok {
+	}, owner, client); err != nil {
+		return live, err
+	} else if ok {
 		return live, nil
 	}
 	argv, extra, err := s.initCLI()
@@ -576,12 +585,14 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Se
 		return sess, err
 	}
 	if client != "" {
-		live, _ = s.Session.Take(live.ID, sess.Owner, client)
+		live, err = s.Session.Take(live.ID, sess.Owner, client)
+		if err != nil {
+			return sess, s.stopAfterFailure(sess.ID, err)
+		}
 	}
-	if err := s.Store.PutSession(live); err != nil {
+	if err := s.persistStarted(live, "workspace.init", map[string]any{"id": ws.ID, "session": live.ID}); err != nil {
 		return live, err
 	}
-	_, _ = s.Store.AppendEvent("workspace.init", map[string]any{"id": ws.ID, "session": live.ID})
 	return live, nil
 }
 
@@ -676,7 +687,9 @@ func (s *Service) Answer(req batuta.AnswerRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, _ = s.Store.AppendEvent("watch.answered", map[string]any{"delivery": id, "task": req.Task})
+	if _, err := s.Store.AppendEvent("watch.answered", map[string]any{"delivery": id, "task": req.Task}); err != nil {
+		return id, fmt.Errorf("answer recorded for delivery %s, but catalog event failed: %w", id, err)
+	}
 	return id, nil
 }
 
@@ -703,4 +716,22 @@ func (s *Service) Limits() ([]domain.LimitSnapshot, error) {
 		return nil, err
 	}
 	return s.Quota.All(accts), nil
+}
+
+func (s *Service) persistStarted(live domain.Session, kind string, payload map[string]any) error {
+	if err := s.Store.PutSessionWithEvent(live, kind, payload); err != nil {
+		return s.stopAfterFailure(live.ID, err)
+	}
+	return nil
+}
+
+func (s *Service) stopAfterFailure(id string, cause error) error {
+	stopped, err := s.Session.Stop(id)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("cleanup session %s: %w", id, err))
+	}
+	if err == nil && stopped.Process != "exited" {
+		return errors.Join(cause, fmt.Errorf("cleanup session %s: process still %s", id, stopped.Process))
+	}
+	return cause
 }

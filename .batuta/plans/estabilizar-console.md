@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:e1e53e0d4522 routing.md@sha256:d8b1a9f186ff -->
+<!-- inputs: profile.md@sha256:d764c3a066bf routing.md@sha256:46675ff88d58 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -19,9 +19,9 @@
       Depends on: 1, 2, 3
       Scope: go.mod, go.sum, web/package.json, web/package-lock.json, web/src/**, web/*config*, web/tests/**, internal/**, cmd/**, integrations/**, plugins/**, docs/dependency-policy.md
       Accept: Dependências diretas, incluindo Lyra React/styles e Batuta, usam as releases mais recentes verificadas em fontes oficiais, com versões e breaking changes registrados; Ajustes de compatibilidade seguem teste primeiro e não escondem falhas → go test ./...; Suite web prova os contratos usados antes/depois da migração → npm --prefix web run test:run; Typecheck passa → npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json; Build web passa → npm --prefix web run build; Grafo/locks são reproduzíveis e nenhum downgrade é aplicado sem decisão explícita
-- [ ] 5. Introduzir migrações versionadas e falhas observáveis — data/high
+- [x] 5. Introduzir migrações versionadas e falhas observáveis — data/high
       Depends on: 1, 4
-      Scope: internal/store/**
+      Scope: internal/store/**, internal/service/**, internal/api/server.go, internal/api/server_test.go
       Accept: Fixtures de esquemas anteriores preservam contas, workspaces, missões e sessões, e uma migração inválida falha claramente → go test ./internal/store -count=1; Escritas importantes e seus eventos usam uma política consistente de transação, com falhas propagadas e retenção documentada
 - [ ] 6. Corrigir contenção e consultas SQLite — data/high
       Depends on: 5
@@ -256,3 +256,7 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 | R26 | 3, 6–19, 22–25, 27–33, 37–40; testes orientados a risco sem meta artificial de cobertura |
 | R27 | Fase 2 do roadmap, após a estabilização funcional |
 | R28 | 11 |
+
+**Task 5 — escopo refinado em 2026-10-03.** A descoberta confirmou que os pares de gravação/evento pertencem ao service e que session.control também grava diretamente na API. Incluí esses pontos e seus testes para aplicar o contrato real, sem apenas criar um helper não utilizado. Cada mutação de entidade e seu evento correspondente formam uma confirmação atômica; efeitos externos (processos, arquivos/core) não são uma transação SQLite e suas falhas devem ser reportadas, com cleanup de spawn não persistido. Callback assíncrono sem retorno reporta falha no log. Eventos são retidos sem expurgo automático nesta etapa; leituras continuam limitadas. Migrações preservam legados sem introduzir vínculos de delivery ou limpeza de referências; validação e concorrência permanecem nas tarefas seguintes.
+
+**Revisão da tarefa 5.** A atomicidade cobre a entidade e seu evento em SQLite. A tarefa25 precisa provar consistência/recuperação de ownership live quando session.control falhar ao persistir; a tarefa19 precisa provar idempotência e resposta recuperável quando o core aceitar uma resposta e o evento de catálogo falhar. Esses efeitos externos continuam explicitamente fora da transação SQLite. BindVacantMembers usa SaveSquad, que já aplica a transação; não é uma gravação sem evento.

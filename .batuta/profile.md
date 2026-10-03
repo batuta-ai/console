@@ -11,7 +11,7 @@ Template: templates/react.md
 Dependencies: Use the latest published releases verified against official registries/release notes at implementation time, including Lyra and Batuta. Pin the resolved dependency graph and run compatibility/regression checks. Batuta development may track its latest pre-release, while stable publication requires a qualified stable core/plugin contract. Do not silently downgrade to an older release or install floating latest dependencies during verification.
 Product scope: Codex and Claude; macOS and Linux; full operation in the web panel and TUI, selected by the user on 2026-10-03.
 
-Configured on 2026-10-03 using the defaults proposed during the audit and the user's instruction to start Batuta init. Test/build commands above describe the current repository. Add product-risk tests and release checks through the approved plan; the current race and vulnerability failures remain open findings. Format Go changes with gofmt. Public product documentation follows existing English docs; conducting records are in Portuguese and product strings support PT/EN.
+Configured on 2026-10-03 using the defaults proposed during the audit and the user's instruction to start Batuta init. Test/build commands above describe the current repository. Add product-risk tests and release checks through the approved plan; the source vulnerability scans are clean after tasks 2/4; the current race failures remain open for tasks 6/7. Format Go changes with gofmt. Public product documentation follows existing English docs; conducting records are in Portuguese and product strings support PT/EN.
 
 ## Project map
 

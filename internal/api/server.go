@@ -339,7 +339,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, sess := range list {
 		live := s.Svc.ReconcileSession(sess)
 		if live.Process != sess.Process {
-			_ = s.Svc.Store.PutSession(live)
+			if err := s.Svc.Store.PutSession(live); err != nil {
+				writeErr(w, 500, "store", err.Error())
+				return
+			}
 		}
 		out = append(out, live)
 	}
@@ -383,8 +386,10 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not_found", err.Error())
 		return
 	}
-	_ = s.Svc.Store.PutSession(sess)
-	_, _ = s.Svc.Store.AppendEvent("session.control", map[string]any{"id": sess.ID, "owner": sess.Owner})
+	if err := s.Svc.Store.PutSessionWithEvent(sess, "session.control", map[string]any{"id": sess.ID, "owner": sess.Owner}); err != nil {
+		writeErr(w, 500, "store", err.Error())
+		return
+	}
 	writeJSON(w, sess)
 }
 

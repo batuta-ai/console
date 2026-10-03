@@ -2,7 +2,7 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Corrigir persistência, concorrência e controle de sessões → próxima tarefa5: migrações versionadas, seguida por6: contenção SQLite e7: reserva atômica/saída de sessão; tarefas1–4 integradas e qualificadas.
+- [ ] Corrigir persistência, concorrência e controle de sessões → tarefa5 verificada; próxima tarefa6: contenção SQLite (7 falhas SQLITE_BUSY em20 sob race), seguida por7: reserva atômica/saída de sessão; tarefas1–4 integradas e qualificadas.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 

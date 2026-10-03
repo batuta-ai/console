@@ -30,36 +30,7 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS workspaces (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, root TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS squads (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT NOT NULL, version INTEGER NOT NULL, draft INTEGER NOT NULL, members TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'custom'
-);
-CREATE TABLE IF NOT EXISTS missions (
-  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL, squad_id TEXT NOT NULL, snapshot TEXT NOT NULL, status TEXT NOT NULL, attention TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS accounts (
-  id TEXT PRIMARY KEY, label TEXT NOT NULL, provider TEXT NOT NULL, adapter TEXT NOT NULL, isolation TEXT NOT NULL, connected INTEGER NOT NULL, session_cap INTEGER NOT NULL, auth_method TEXT NOT NULL, vault_ref TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY, mission_id TEXT NOT NULL, workspace_id TEXT NOT NULL, member_id TEXT, account_id TEXT, adapter TEXT NOT NULL, argv TEXT NOT NULL, process TEXT NOT NULL, work TEXT NOT NULL, owner TEXT NOT NULL, owner_client TEXT, pid INTEGER, cols INTEGER, rows INTEGER, batuta INTEGER NOT NULL, skills_version TEXT, created_at TEXT NOT NULL, ended_at TEXT
-);
-CREATE TABLE IF NOT EXISTS events (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
-);
-`)
-	if err != nil {
-		return err
-	}
-	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN origin TEXT NOT NULL DEFAULT 'custom'`)
-	_, _ = s.db.Exec(`ALTER TABLE missions ADD COLUMN brief TEXT NOT NULL DEFAULT ''`)
-	return nil
-}
-
-func (s *Store) PutWorkspace(w domain.Workspace) error {
+func (s catalogWriter) PutWorkspace(w domain.Workspace) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO workspaces(id,name,root,created_at) VALUES(?,?,?,?)`, w.ID, w.Name, w.Root, w.CreatedAt.Format(time.RFC3339Nano))
 	return err
 }
@@ -108,7 +79,7 @@ func (s *Store) GetWorkspaceByRoot(root string) (domain.Workspace, error) {
 	return w, nil
 }
 
-func (s *Store) PutSquad(q domain.Squad) error {
+func (s catalogWriter) PutSquad(q domain.Squad) error {
 	b, err := json.Marshal(q.Members)
 	if err != nil {
 		return err
@@ -169,7 +140,7 @@ func (s *Store) ListSquads() ([]domain.Squad, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PutMission(m domain.Mission) error {
+func (s catalogWriter) PutMission(m domain.Mission) error {
 	b, err := json.Marshal(m.SquadSnapshot)
 	if err != nil {
 		return err
@@ -222,7 +193,7 @@ func (s *Store) ListMissions(workspaceID string) ([]domain.Mission, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PutAccount(a domain.Account) error {
+func (s catalogWriter) PutAccount(a domain.Account) error {
 	c := 0
 	if a.Connected {
 		c = 1
@@ -276,7 +247,7 @@ func (s *Store) CountRunningSessions(accountID string) (int, error) {
 	return n, err
 }
 
-func (s *Store) PutSession(sess domain.Session) error {
+func (s catalogWriter) PutSession(sess domain.Session) error {
 	argv, err := json.Marshal(sess.Argv)
 	if err != nil {
 		return err
@@ -338,7 +309,7 @@ func (s *Store) ListSessions() ([]domain.Session, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) AppendEvent(kind string, payload map[string]any) (domain.Event, error) {
+func (s catalogWriter) AppendEvent(kind string, payload map[string]any) (domain.Event, error) {
 	if payload == nil {
 		payload = map[string]any{}
 	}
@@ -351,7 +322,10 @@ func (s *Store) AppendEvent(kind string, payload map[string]any) (domain.Event, 
 	if err != nil {
 		return domain.Event{}, err
 	}
-	seq, _ := res.LastInsertId()
+	seq, err := res.LastInsertId()
+	if err != nil {
+		return domain.Event{}, err
+	}
 	return domain.Event{Seq: seq, At: at, Kind: kind, Payload: payload}, nil
 }
 

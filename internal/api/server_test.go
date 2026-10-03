@@ -3,11 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -447,4 +449,87 @@ func get(t *testing.T, h http.Handler, path string) any {
 	var out any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return out
+}
+
+func TestSessionPersistenceBoundaries(t *testing.T) {
+	for _, mode := range []string{"control-event", "control-write", "list-write", "control-success"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "db")
+			st, err := store.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			svc := service.New(st, session.New(t.TempDir()), nil)
+			h := (&Server{Svc: svc, Token: "test-token"}).Handler()
+			sess := domain.Session{ID: "s", Process: "running", Owner: "old", Argv: []string{"/bin/cat"}}
+			if mode != "list-write" {
+				done := make(chan struct{})
+				onExit := svc.Session.OnExit
+				svc.Session.OnExit = func(s domain.Session) { onExit(s); close(done) }
+				sess, err = svc.Session.Start(sess, nil, t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					svc.Session.Stop(sess.ID)
+					select {
+					case <-done:
+					case <-time.After(5 * time.Second):
+						t.Error("process did not exit")
+					}
+				}()
+			}
+			if err := st.PutSession(sess); err != nil {
+				t.Fatal(err)
+			}
+			table := "sessions"
+			if mode == "control-event" {
+				table = "events"
+			}
+			if mode != "control-success" {
+				if _, err := db.Exec("CREATE TRIGGER reject_write BEFORE INSERT ON " + table + " BEGIN SELECT RAISE(ABORT,'injected failure'); END"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pathURL, method, body := "/v0/sessions/s/control", http.MethodPost, `{"surface":"web","client":"new"}`
+			if mode == "list-write" {
+				pathURL, method, body = "/v0/sessions", http.MethodGet, ""
+			}
+			req := httptest.NewRequest(method, pathURL, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if mode == "control-success" {
+				if rec.Code != 200 {
+					t.Fatalf("%d %s", rec.Code, rec.Body.String())
+				}
+				events, err := st.EventsSince(0, 100)
+				if err != nil || len(events) != 1 || events[0].Kind != "session.control" || !reflect.DeepEqual(events[0].Payload, map[string]any{"id": "s", "owner": "web"}) {
+					t.Fatalf("%v %v", events, err)
+				}
+				got, err := st.GetSession("s")
+				if err != nil || got.Owner != "web" || got.OwnerClient != "new" {
+					t.Fatalf("%+v %v", got, err)
+				}
+				return
+			}
+			if rec.Code != 500 || !strings.Contains(rec.Body.String(), "injected failure") {
+				t.Errorf("persistence error not returned: %d %s", rec.Code, rec.Body.String())
+			}
+			got, err := st.GetSession("s")
+			if err != nil || got.Owner != "old" || got.Process != "running" {
+				t.Errorf("catalog changed: %+v %v", got, err)
+			}
+			events, err := st.EventsSince(0, 100)
+			if err != nil || len(events) != 0 {
+				t.Errorf("event escaped transaction: %+v %v", events, err)
+			}
+		})
+	}
 }
