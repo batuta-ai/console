@@ -20,6 +20,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Share one connection so reads, bare writes and transactions cannot
+	// contend for SQLite locks within this Store.
+	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -266,12 +269,15 @@ func (s catalogWriter) PutSession(sess domain.Session) error {
 }
 
 func (s *Store) GetSession(id string) (domain.Session, error) {
+	return scanSession(s.db.QueryRow(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at FROM sessions WHERE id=?`, id))
+}
+
+func scanSession(row interface{ Scan(...any) error }) (domain.Session, error) {
 	var sess domain.Session
 	var argv, created string
 	var ended sql.NullString
 	var batuta int
-	err := s.db.QueryRow(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at FROM sessions WHERE id=?`, id).
-		Scan(&sess.ID, &sess.MissionID, &sess.WorkspaceID, &sess.MemberID, &sess.AccountID, &sess.Adapter, &argv, &sess.Process, &sess.Work, &sess.Owner, &sess.OwnerClient, &sess.PID, &sess.Cols, &sess.Rows, &batuta, &sess.SkillsVersion, &created, &ended)
+	err := row.Scan(&sess.ID, &sess.MissionID, &sess.WorkspaceID, &sess.MemberID, &sess.AccountID, &sess.Adapter, &argv, &sess.Process, &sess.Work, &sess.Owner, &sess.OwnerClient, &sess.PID, &sess.Cols, &sess.Rows, &batuta, &sess.SkillsVersion, &created, &ended)
 	if err != nil {
 		return sess, err
 	}
@@ -286,18 +292,14 @@ func (s *Store) GetSession(id string) (domain.Session, error) {
 }
 
 func (s *Store) ListSessions() ([]domain.Session, error) {
-	rows, err := s.db.Query(`SELECT id FROM sessions ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []domain.Session
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		sess, err := s.GetSession(id)
+		sess, err := scanSession(rows)
 		if err != nil {
 			return nil, err
 		}

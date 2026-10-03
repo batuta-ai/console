@@ -2,11 +2,12 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Corrigir persistência, concorrência e controle de sessões → tarefa5 verificada; próxima tarefa6: contenção SQLite (7 falhas SQLITE_BUSY em20 sob race), seguida por7: reserva atômica/saída de sessão; tarefas1–4 integradas e qualificadas.
+- [ ] Corrigir persistência, concorrência e controle de sessões → tarefas5/6 verificadas; próxima tarefa7: reserva atômica de capacidade e saída de sessão; SQLite passou store-race5 e encerramento natural20 semSQLITE_BUSY; tarefas1–6 integradas e qualificadas.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa5 — migrações SQLite versionadas sem perda de legado, rollback/falhas observáveis e mutação/evento atômicos nos caminhos de service/API → codex/gpt-6-astra high, sem retry; revisão claude/sonnet6/6, commit 46008bf (trilha: .batuta/runs/2026-10-03-store-migrations.md).
 - [x] Tarefa 4 — Lyra React/styles1.1.0, Vite8.3.2, TypeScript7.0.2, xterm6 e Go libs atuais, com contratos teste-primeiro/locks exatos/build/embed/scans qualificados → codex/gpt-6-astra high, uma correção de declaração CSS/documentação; revisão claude/sonnet, commit9ef0e9a (trilha: .batuta/runs/2026-10-03-latest-libs.md).
 - [x] Tarefa 3 — Vitest 5.0.3, três testes web e jornada sintética com daemon real/cleanup verificados → codex/gpt-6.1-sol low, uma correção de contrato [] e documentação; claude/sonnet, commit b4b7d59 (trilha: .batuta/runs/2026-10-03-web-test-infra.md).
 - [x] Tarefa 2 — Go 1.27.1, testes/vet verdes e scanner sem vulnerabilidades após red com seis achados → codex/gpt-6.1-sol low, uma revisão de documentação, claude/sonnet; commit ab17681 (trilha: .batuta/runs/2026-10-03-go-toolchain.md).

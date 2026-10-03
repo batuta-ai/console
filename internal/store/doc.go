@@ -21,6 +21,20 @@
 // serialization or event error. Event kinds and payloads belong to callers.
 // AppendEvent reports serialization, SQL and generated-sequence errors.
 //
+// Each Store uses one pooled SQLite connection. Reads, bare Put calls,
+// AppendEvent, migrations and entity/event transactions share that connection,
+// serializing database work within the Store. A transaction must use its own
+// catalogWriter, never reenter the pool. Read cursors must be exhausted or
+// closed before another database operation; ListSessions scans complete rows
+// directly rather than holding a cursor across GetSession calls. This avoids
+// pool starvation and read locks blocking a concurrent writer's commit.
+//
+// Long reads therefore delay writes. This policy does not serialize separate
+// Store handles or other processes opening the same file: use one shared Store
+// per daemon catalog. Cross-handle/process contention can still return SQLite
+// locking errors under the unchanged busy timeout; errors are not hidden or
+// retried. This is not a multi-process writer coordination mechanism.
+//
 // These transactions do not make multi-step workflows atomic, and do not
 // encompass processes, files, live session ownership or the core journal.
 // Service callers stop a newly spawned process if its persistence fails and

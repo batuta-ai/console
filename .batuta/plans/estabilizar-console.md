@@ -23,7 +23,7 @@
       Depends on: 1, 4
       Scope: internal/store/**, internal/service/**, internal/api/server.go, internal/api/server_test.go
       Accept: Fixtures de esquemas anteriores preservam contas, workspaces, missões e sessões, e uma migração inválida falha claramente → go test ./internal/store -count=1; Escritas importantes e seus eventos usam uma política consistente de transação, com falhas propagadas e retenção documentada
-- [ ] 6. Corrigir contenção e consultas SQLite — data/high
+- [x] 6. Corrigir contenção e consultas SQLite — data/high
       Depends on: 5
       Scope: internal/store/**, internal/api/server_test.go
       Accept: Listagem concorrente com término natural não produz SQLITE_BUSY nas repetições do caso R10 → go test -race ./internal/api -run TestNaturalExitIsExited -count=20; Consultas fecham rows antes de consultas aninhadas e escritas seguem a política definida → go test -race ./internal/store -count=5
@@ -98,9 +98,9 @@
       Depends on: 3, 18, 19, 22, 23
       Scope: web/src/**, web/tests/**, internal/webui/dist/**
       Accept: Escrita externa no journal atualiza missão/atenção enquanto o processo continua vivo e restart do daemon reconecta sem reload → npm --prefix web run test:run; Troca rápida de workspace ou missão não aplica resposta atrasada ao item atual, e polling/reconnect são limitados e canceláveis
-- [ ] 25. Corrigir identidade, controle e estados assíncronos da UI — frontend/high
+- [ ] 25. Corrigir identidade, controle e estados assíncronos da UI — fullstack/high
       Depends on: 3, 22, 24
-      Scope: web/src/**, web/tests/**, internal/webui/dist/**
+      Scope: web/src/**, web/tests/**, internal/webui/dist/**, internal/api/**, internal/service/**, internal/session/**
       Accept: Dois cadastros consecutivos limpam o diálogo, seleção de membro escolhe a sessão correta e tarefa usa identidade real → npm --prefix web run test:run; Transferência entre clientes reais respeita propriedade, não há botão aninhado e falhas/pending/retries impedem duplicação de ações
 - [ ] 26. Publicar capabilities honestas para a matriz escolhida — backend/medium
       Depends on: 14
@@ -260,3 +260,5 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 **Task 5 — escopo refinado em 2026-10-03.** A descoberta confirmou que os pares de gravação/evento pertencem ao service e que session.control também grava diretamente na API. Incluí esses pontos e seus testes para aplicar o contrato real, sem apenas criar um helper não utilizado. Cada mutação de entidade e seu evento correspondente formam uma confirmação atômica; efeitos externos (processos, arquivos/core) não são uma transação SQLite e suas falhas devem ser reportadas, com cleanup de spawn não persistido. Callback assíncrono sem retorno reporta falha no log. Eventos são retidos sem expurgo automático nesta etapa; leituras continuam limitadas. Migrações preservam legados sem introduzir vínculos de delivery ou limpeza de referências; validação e concorrência permanecem nas tarefas seguintes.
 
 **Revisão da tarefa 5.** A atomicidade cobre a entidade e seu evento em SQLite. A tarefa25 precisa provar consistência/recuperação de ownership live quando session.control falhar ao persistir; a tarefa19 precisa provar idempotência e resposta recuperável quando o core aceitar uma resposta e o evento de catálogo falhar. Esses efeitos externos continuam explicitamente fora da transação SQLite. BindVacantMembers usa SaveSquad, que já aplica a transação; não é uma gravação sem evento.
+
+**Task25 — escopo da recuperação de controle.** A revisão da tarefa5 identificou que session.control altera ownership live antes da confirmação SQLite. O contrato de transferência precisa incluir os métodos/handlers e testes de backend, além da UI: falha de persistência não pode conceder controle oculto ao novo cliente nem deixar catálogo/live divergentes. Incluí internal/api,service,session no escopo, mantendo a prioridade funcional e o roteiro de testes por clientes reais.
