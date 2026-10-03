@@ -190,3 +190,20 @@ The first reviewer invocation had a CLI argument-parsing error and performed no 
 No enabled browser was exposed by the computer-use inventory. Visual/accessibility certification, browser reconnection and new-user interaction scenarios therefore remain acceptance work, not completed tests. The full plan/approval/core-loop workflow, provider login, Linux runtime and real quota-file production were not executed.
 
 Batuta init configuration and routing were proposed through two asynchronous questions. No reply had arrived when this report was prepared. Its skill explicitly requires confirmation before writing the routing table; the profile/routing/WORK self-check was consequently not claimed complete. Review artifacts can exist under `.batuta/runs` without certifying project setup.
+
+
+## 2026-10-03 remediation evidence — R02 toolchain qualification
+
+The October 2 evidence above remains unchanged. The conductor supplied the pre-edit regression scan under Go 1.26.4: `govulncheck ./...` exited 3 with six reachable standard-library findings, plus two imported-package and two required-module findings without apparent vulnerable-symbol calls. The supplied red output is retained in `.batuta/runs/go-toolchain-2026-10-03/baseline-red.txt`.
+
+The conductor independently qualified source snapshot `43c49ec` under Go 1.27.1 with matching SDK environment. These are supplied host results, not worker reruns. The Go directive and README minimum were updated; dependency requirements and `go.sum` are unchanged.
+
+| Check | Independent conductor result | Retained parent log |
+| --- | --- | --- |
+| `govulncheck -show verbose ./...` | Exit 0; scanned 17 root packages, 35 modules and Go 1.27.1; **No vulnerabilities found** | `.batuta/runs/2026-10-03-go-toolchain.green-vuln.log` |
+| `go test ./...` | Exit 0; all 14 tested packages pass; `cmd/consoled`, accounts and webui have no tests | `.batuta/runs/2026-10-03-go-toolchain.green-test.log` |
+| `go vet ./...` | Exit 0; no output | `.batuta/runs/2026-10-03-go-toolchain.green-vet.log` |
+
+All six reachable R02 findings disappear, as do the baseline package/module reports; no remaining findings require triage at this checkpoint. No checks were weakened or findings suppressed. Worker sandbox and SDK troubleshooting remains in managed run evidence under `.batuta/runs/go-toolchain-2026-10-03/`.
+
+Source qualification of R02 passes. Final CI/release metadata qualification and release binary rescans remain future release tasks. Existing SQLite/lifecycle race findings remain open; the passing test command is not race-detector qualification. This evidence does not establish whole-release readiness or mark the plan complete. The final host tree remains subject to independent review.

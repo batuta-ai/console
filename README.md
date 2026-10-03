@@ -30,7 +30,7 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 ## Build and install from source
 
-Use Go 1.26.4 or newer and run these commands from a checkout of the desired
+Use Go 1.27.1 or newer and run these commands from a checkout of the desired
 Console revision. `go.mod` and `go.sum` pin the dependency graph, including
 Batuta core `v1.1.0-beta.46`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.

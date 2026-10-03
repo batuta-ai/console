@@ -297,3 +297,12 @@ Before implementation, settle four product choices: the stable core/host-plugin 
 Browser UI inspection could not run: the computer-use inventory exposed no browser. React/TUI interactions above were reviewed in source, not visually certified. Official provider authentication, real paid/model execution, Linux runtime, native folder dialogs, terminal accessibility/responsiveness and a complete approved-plan/core-loop mission were not exercised. No claim of end-to-end readiness is made from the passing build/unit tests.
 
 At the time of this 2026-10-02 audit, Batuta initialization was pending setup/routing confirmation. On 2026-10-03, the user requested initialization and remediation planning: project profile/routing, WORK and a proposed stabilization plan were added. See [the roadmap](../.batuta/roadmap.md) and [the proposed plan](../.batuta/plans/estabilizar-console.md). The user approved the plan and initial setup commit on 2026-10-03, requiring TDD and current library releases. Product implementation and release qualification remain pending at this planning checkpoint; publication has not occurred. The historical audit findings are unchanged by initialization.
+
+
+## 2026-10-03 remediation update — R02 toolchain qualification
+
+The module selects Go 1.27.1 and the README requires Go 1.27.1 or newer; existing dependency versions are unchanged. The October 2 audit baseline above is preserved.
+
+The conductor independently verified the source snapshot `43c49ec` with Go 1.27.1. The pre-edit scan under Go 1.26.4 exited 3 with six reachable standard-library vulnerabilities. The new `govulncheck -show verbose ./...` scan exited 0 with **No vulnerabilities found**, including no remaining package/module findings. `go test ./...` and `go vet ./...` both exited 0. See the dated [evidence update](release-readiness-evidence.md#2026-10-03-remediation-evidence--r02-toolchain-qualification) for scope and retained logs.
+
+Source qualification of R02 now passes. Final CI/release toolchain metadata and release binary rescans remain future release tasks. Existing race findings remain open; this verification does not establish whole-release readiness or mark the stabilization plan complete. The final host tree remains subject to independent review.

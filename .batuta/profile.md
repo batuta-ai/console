@@ -1,6 +1,6 @@
 # Profile — Batuta Console
 
-Stack: Go daemon/client + React 19, TypeScript, Vite, Bubble Tea TUI, SQLite, xterm.js; Lyra components and existing CSS.
+Stack: Go 1.27.1 daemon/client + React 19, TypeScript, Vite, Bubble Tea TUI, SQLite, xterm.js; Lyra components and existing CSS.
 Methodology: TDD always: write the behavioral/regression test first, run it and observe the expected failure, implement the smallest correction, rerun to green, then refactor; retain red/green commands and output. Conventional commits; feature branches; keep existing architecture and styling/state conventions.
 Test: go test ./... && npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json
 Build: npm --prefix web run build && go build -o bin/console ./cmd/console && go build -o bin/consoled ./cmd/consoled
@@ -15,8 +15,8 @@ Configured on 2026-10-03 using the defaults proposed during the audit and the us
 
 ## Project map
 
-This map was verified against Console HEAD 0461003 on 2026-10-03; start from source, not generated assets.
-The root go.mod/go.sum define the Go module; go.mod currently points core at ../core, which is a release blocker.
+This map was first verified against Console HEAD 0461003 on 2026-10-03; the module entry was refreshed after ddf03a9. Start from source, not generated assets.
+The root go.mod/go.sum define the Go module and pin published core v1.1.0-beta.46; there is no local core replacement. scripts/check-standalone.sh verifies an isolated test/build/install of both commands.
 cmd/console/main.go is the user CLI entry point and selects web or Bubble Tea mode.
 cmd/console/ensure.go starts/finds consoled; daemon/open platform files handle process detachment and browser launching.
 cmd/consoled/main.go wires runtime paths, store, sessions, limits, service and HTTP server.
