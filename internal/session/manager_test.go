@@ -153,17 +153,17 @@ func TestSubscribeReplays(t *testing.T) {
 
 func TestOnExitPersists(t *testing.T) {
 	m := New(t.TempDir())
-	var got domain.Session
-	m.OnExit = func(s domain.Session) { got = s }
+	done := make(chan domain.Session, 1)
+	m.OnExit = func(s domain.Session) { done <- s }
 	if _, err := m.Start(domain.Session{ID: "s6", Argv: []string{"/usr/bin/true"}}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if got.Process == "exited" && got.EndedAt != nil {
-			return
+	select {
+	case got := <-done:
+		if got.ID != "s6" || got.Process != "exited" || got.EndedAt == nil || got.EndedAt.IsZero() {
+			t.Fatalf("%+v", got)
 		}
-		time.Sleep(20 * time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("exit callback did not complete")
 	}
-	t.Fatalf("%+v", got)
 }

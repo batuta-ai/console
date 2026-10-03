@@ -20,6 +20,10 @@
 // its caller-specified event together, or roll back both on any write,
 // serialization or event error. Event kinds and payloads belong to callers.
 // AppendEvent reports serialization, SQL and generated-sequence errors.
+// Session rows are terminal once process is exited: subsequent puts preserve
+// that complete row, including EndedAt. WithEvent still commits the requested
+// event in its transaction, even if a late initial snapshot cannot replace the
+// terminal row. Session IDs identify one process lifecycle and are not reused.
 //
 // Each Store uses one pooled SQLite connection. Reads, bare Put calls,
 // AppendEvent, migrations and entity/event transactions share that connection,

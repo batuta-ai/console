@@ -263,7 +263,7 @@ func (s catalogWriter) PutSession(sess domain.Session) error {
 	if sess.EndedAt != nil {
 		ended = sess.EndedAt.Format(time.RFC3339Nano)
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO sessions(id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err = s.db.Exec(`INSERT INTO sessions(id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET mission_id=excluded.mission_id, workspace_id=excluded.workspace_id, member_id=excluded.member_id, account_id=excluded.account_id, adapter=excluded.adapter, argv=excluded.argv, process=excluded.process, work=excluded.work, owner=excluded.owner, owner_client=excluded.owner_client, pid=excluded.pid, cols=excluded.cols, rows=excluded.rows, batuta=excluded.batuta, skills_version=excluded.skills_version, created_at=excluded.created_at, ended_at=excluded.ended_at WHERE sessions.process <> 'exited'`,
 		sess.ID, sess.MissionID, sess.WorkspaceID, sess.MemberID, sess.AccountID, sess.Adapter, string(argv), sess.Process, sess.Work, sess.Owner, sess.OwnerClient, sess.PID, sess.Cols, sess.Rows, batuta, sess.SkillsVersion, sess.CreatedAt.Format(time.RFC3339Nano), ended)
 	return err
 }

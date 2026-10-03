@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/adapters"
@@ -22,6 +23,7 @@ type Service struct {
 	Session *session.Manager
 	Quota   *limits.Plugin
 	Home    string
+	reuseMu sync.Mutex
 }
 
 func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
@@ -372,19 +374,15 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	if err != nil {
 		return domain.Session{}, err
 	}
+	capacity := 0
 	if in.AccountID != "" {
 		acct, err := s.Store.GetAccount(in.AccountID)
 		if err != nil {
 			return domain.Session{}, fmt.Errorf("unknown account")
 		}
-		n, err := s.Store.CountRunningSessions(acct.ID)
-		if err != nil {
-			return domain.Session{}, err
-		}
-		if acct.SessionCap > 0 && n >= acct.SessionCap {
-			return domain.Session{}, fmt.Errorf("account at session capacity %d", acct.SessionCap)
-		}
+		capacity = acct.SessionCap
 	}
+
 	argv := in.Argv
 	if len(argv) == 0 {
 		if path, err := ad.Lookup(); err == nil {
@@ -422,20 +420,7 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	if sess.Owner == "" {
 		sess.Owner = "none"
 	}
-	live, err := s.Session.Start(sess, env, ws.Root)
-	if err != nil {
-		return sess, err
-	}
-	if in.Client != "" && in.Owner != "" {
-		live, err = s.Session.Take(live.ID, in.Owner, in.Client)
-		if err != nil {
-			return sess, s.stopAfterFailure(sess.ID, err)
-		}
-	}
-	if err := s.persistStarted(live, "session.started", map[string]any{"id": live.ID, "adapter": live.Adapter, "batuta": live.BatutaInjected}); err != nil {
-		return live, err
-	}
-	return live, nil
+	return s.startAndPersist(sess, env, ws.Root, capacity, "session.started", map[string]any{"id": sess.ID, "adapter": sess.Adapter, "batuta": sess.BatutaInjected})
 }
 
 func (s *Service) ReconcileSession(sess domain.Session) domain.Session {
@@ -497,6 +482,8 @@ func (s *Service) reuseLive(match func(domain.Session) bool, owner, client strin
 }
 
 func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, error) {
+	s.reuseMu.Lock()
+	defer s.reuseMu.Unlock()
 	a, err := s.Store.GetAccount(accountID)
 	if err != nil {
 		return domain.Session{}, err
@@ -527,23 +514,12 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 	if sess.Owner == "" {
 		sess.Owner = "web"
 	}
-	live, err := s.Session.Start(sess, ad.IsolateEnv(s.Home, a), ad.IsolateDir(s.Home, a.ID))
-	if err != nil {
-		return sess, err
-	}
-	if client != "" && sess.Owner != "" {
-		live, err = s.Session.Take(live.ID, sess.Owner, client)
-		if err != nil {
-			return sess, s.stopAfterFailure(sess.ID, err)
-		}
-	}
-	if err := s.persistStarted(live, "account.login", map[string]any{"id": a.ID, "session": live.ID}); err != nil {
-		return live, err
-	}
-	return live, nil
+	return s.startAndPersist(sess, ad.IsolateEnv(s.Home, a), ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID})
 }
 
 func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Session, error) {
+	s.reuseMu.Lock()
+	defer s.reuseMu.Unlock()
 	ws, err := s.Store.GetWorkspace(workspaceID)
 	if err != nil {
 		return domain.Session{}, err
@@ -580,20 +556,7 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Se
 	if sess.Owner == "" {
 		sess.Owner = "web"
 	}
-	live, err := s.Session.Start(sess, env, ws.Root)
-	if err != nil {
-		return sess, err
-	}
-	if client != "" {
-		live, err = s.Session.Take(live.ID, sess.Owner, client)
-		if err != nil {
-			return sess, s.stopAfterFailure(sess.ID, err)
-		}
-	}
-	if err := s.persistStarted(live, "workspace.init", map[string]any{"id": ws.ID, "session": live.ID}); err != nil {
-		return live, err
-	}
-	return live, nil
+	return s.startAndPersist(sess, env, ws.Root, 0, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID})
 }
 
 func sessionPrompt(inject bool, brief string) string {
@@ -718,11 +681,18 @@ func (s *Service) Limits() ([]domain.LimitSnapshot, error) {
 	return s.Quota.All(accts), nil
 }
 
-func (s *Service) persistStarted(live domain.Session, kind string, payload map[string]any) error {
-	if err := s.Store.PutSessionWithEvent(live, kind, payload); err != nil {
-		return s.stopAfterFailure(live.ID, err)
+func (s *Service) startAndPersist(sess domain.Session, env []string, dir string, capacity int, kind string, payload map[string]any) (domain.Session, error) {
+	pending, err := s.Session.StartPending(sess, env, dir, capacity)
+	if err != nil {
+		return sess, err
 	}
-	return nil
+	live, err := pending.Persist(func(latest domain.Session) error {
+		return s.Store.PutSessionWithEvent(latest, kind, payload)
+	})
+	if err != nil {
+		return live, s.stopAfterFailure(live.ID, err)
+	}
+	return live, nil
 }
 
 func (s *Service) stopAfterFailure(id string, cause error) error {

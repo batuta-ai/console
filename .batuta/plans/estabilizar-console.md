@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:d764c3a066bf routing.md@sha256:46675ff88d58 -->
+<!-- inputs: profile.md@sha256:7670cdb4b055 routing.md@sha256:c35538ce1b32 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -27,7 +27,7 @@
       Depends on: 5
       Scope: internal/store/**, internal/api/server_test.go
       Accept: Listagem concorrente com término natural não produz SQLITE_BUSY nas repetições do caso R10 → go test -race ./internal/api -run TestNaturalExitIsExited -count=20; Consultas fecham rows antes de consultas aninhadas e escritas seguem a política definida → go test -race ./internal/store -count=5
-- [ ] 7. Tornar reserva de capacidade e estado inicial da sessão atômicos — backend/high
+- [x] 7. Tornar reserva de capacidade e estado inicial da sessão atômicos — backend/high
       Depends on: 6
       Scope: internal/session/**, internal/service/**, internal/store/**
       Accept: Com limite 3 e 10 starts concorrentes, no máximo 3 processos iniciam, e reserva falhada é liberada → go test -race ./internal/service -count=10; Saída imediata nunca volta a running e o teste OnExit usa sincronização real → go test -race ./internal/session -count=10

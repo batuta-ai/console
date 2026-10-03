@@ -1,11 +1,12 @@
 package session
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
@@ -22,18 +23,19 @@ type live struct {
 	next   int
 	log    *os.File
 	replay []byte
-	closed atomic.Bool
+	done   chan struct{}
 }
 
 type Manager struct {
-	mu     sync.Mutex
-	live   map[string]*live
-	logs   string
-	OnExit func(domain.Session)
+	mu       sync.Mutex
+	live     map[string]*live
+	logs     string
+	accounts map[string]int
+	OnExit   func(domain.Session)
 }
 
 func New(logs string) *Manager {
-	return &Manager{live: map[string]*live{}, logs: logs}
+	return &Manager{live: map[string]*live{}, logs: logs, accounts: map[string]int{}}
 }
 
 func (m *Manager) Live(id string) (*live, bool) {
@@ -44,6 +46,46 @@ func (m *Manager) Live(id string) (*live, bool) {
 }
 
 func (m *Manager) Start(sess domain.Session, env []string, dir string) (domain.Session, error) {
+	pending, err := m.StartPending(sess, env, dir, 0)
+	if err != nil {
+		return sess, err
+	}
+	return pending.Snapshot(), nil
+}
+
+// Pending retains the process state through initial persistence, even if the
+// process has exited and left the live map. It does not retain an admission
+// after termination. Persist serializes the initial write with exit observation.
+type Pending struct{ live *live }
+
+func (p *Pending) Snapshot() domain.Session { return p.live.copy() }
+
+func (p *Pending) Persist(write func(domain.Session) error) (domain.Session, error) {
+	p.live.mu.Lock()
+	defer p.live.mu.Unlock()
+	err := write(p.live.sess)
+	return p.live.sess, err
+}
+
+// StartPending reserves account capacity before spawning. Nonpositive capacity
+// is unlimited; all account-bound starts still contribute to the same count.
+func (m *Manager) StartPending(sess domain.Session, env []string, dir string, capacity int) (*Pending, error) {
+	m.mu.Lock()
+	if sess.AccountID != "" {
+		if capacity > 0 && m.accounts[sess.AccountID] >= capacity {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("account at session capacity %d", capacity)
+		}
+		m.accounts[sess.AccountID]++
+	}
+	m.mu.Unlock()
+	spawned := false
+	defer func() {
+		if !spawned {
+			m.release(sess.AccountID)
+		}
+	}()
+
 	if len(sess.Argv) == 0 {
 		sess.Argv = []string{"/bin/sh"}
 	}
@@ -61,7 +103,7 @@ func (m *Manager) Start(sess domain.Session, env []string, dir string) (domain.S
 	}
 	pty, err := startPTY(cmd, sess.Cols, sess.Rows)
 	if err != nil {
-		return sess, err
+		return nil, err
 	}
 	sess.PID = cmd.Process.Pid
 	sess.Process = "running"
@@ -70,18 +112,26 @@ func (m *Manager) Start(sess domain.Session, env []string, dir string) (domain.S
 	}
 	lf, err := os.OpenFile(logPath(m.logs, sess.ID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		_ = pty.Close()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return sess, err
+		closeErr := pty.Close()
+		killErr := cmd.Process.Kill()
+		if errors.Is(killErr, os.ErrProcessDone) {
+			killErr = nil
+		}
+		waitErr := cmd.Wait()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			waitErr = nil
+		}
+		return nil, errors.Join(err, closeErr, killErr, waitErr)
 	}
-	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf}
+	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{})}
 	m.mu.Lock()
 	m.live[sess.ID] = l
 	m.mu.Unlock()
+	spawned = true
 	go l.readLoop(m)
 	go l.wait(m)
-	return sess, nil
+	return &Pending{live: l}, nil
 }
 
 func (m *Manager) Input(id, ownerClient string, data []byte) error {
@@ -160,18 +210,28 @@ func (m *Manager) Stop(id string) (domain.Session, error) {
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
 	}
-	_ = l.cmd.Process.Kill()
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			return l.copy(), nil
-		default:
-			if l.closed.Load() {
-				return l.copy(), nil
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
+	if err := l.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return l.copy(), err
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-l.done:
+		return l.copy(), nil
+	case <-timer.C:
+		return l.copy(), fmt.Errorf("session %s termination did not complete", id)
+	}
+}
+
+func (m *Manager) release(accountID string) {
+	if accountID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.accounts[accountID]--
+	if m.accounts[accountID] == 0 {
+		delete(m.accounts, accountID)
 	}
 }
 
@@ -223,7 +283,7 @@ func (l *live) wait(m *Manager) {
 	l.sess.EndedAt = &now
 	snap := l.sess
 	l.mu.Unlock()
-	l.closed.Store(true)
+	m.release(snap.AccountID)
 	if m.OnExit != nil {
 		m.OnExit(snap)
 	}
@@ -232,6 +292,7 @@ func (l *live) wait(m *Manager) {
 	m.mu.Lock()
 	delete(m.live, snap.ID)
 	m.mu.Unlock()
+	close(l.done)
 }
 
 func logPath(dir, id string) string {

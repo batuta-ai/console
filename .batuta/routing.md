@@ -1,6 +1,6 @@
 # Routing — Batuta Console
 
-<!-- inputs: profile.md@sha256:d764c3a066bf -->
+<!-- inputs: profile.md@sha256:7670cdb4b055 -->
 
 | Lane | Domain | Executor | Model | Effort |
 | --- | --- | --- | --- | --- |
