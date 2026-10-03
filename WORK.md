@@ -1,12 +1,14 @@
 # WORK — Batuta Console
 
 ## In progress
+- [ ] Tarefa 1 — core publicado atual e build independente, test-first → codex/gpt-6-astra high, escalado de codex/gpt-6.1-sol após duas entregas incompletas por dependências no sandbox; worktree .batuta/worktrees/published-core, brief .batuta/runs/2026-10-03-published-core.brief.md.
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; proposta em .batuta/plans/estabilizar-console.md.
 - [ ] Iniciar a estabilização funcional pelo core publicado e toolchain atual → sequential, roteamento em .batuta/routing.md; nenhuma tarefa de implementação iniciada.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Registrar configuração/planejamento/auditoria aprovados → condutor self, commit d0af2af (chore(batuta): set up console stabilization).
 - [x] Aprovar plano/commit inicial e definir TDD obrigatório e bibliotecas atuais → decisão do usuário em 2026-10-03; sem nova confirmação necessária.
 - [x] Definir matriz da primeira versão estável em 2026-10-03 → decisão do usuário: Codex e Claude, macOS e Linux, operação completa no web e na TUI.
 - [x] Auditar o projeto para publicação estável: 28 achados, 6 P0, 14 P1 e 8 P2 → condutor self e revisão independente claude/sonnet; sem commit (relatórios: docs/release-readiness.md e docs/release-readiness-evidence.md; trilha: .batuta/runs/2026-10-02-release-readiness.review.md).

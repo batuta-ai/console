@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	charm.land/bubbletea/v2 v2.0.9
-	github.com/batuta-ai/core v1.1.0-beta.21
+	github.com/batuta-ai/core v1.1.0-beta.46
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
 	github.com/mattn/go-isatty v0.0.20
@@ -41,5 +41,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/batuta-ai/core => ../core

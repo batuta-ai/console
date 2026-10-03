@@ -2,15 +2,15 @@
 <!-- inputs: profile.md@sha256:26e0c396482c routing.md@sha256:517064b8c524 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
-**Created:** 2026-10-03 · **Status:** approved
+**Created:** 2026-10-03 · **Status:** in progress
 
 ## Tasks
-- [ ] 1. Fixar o Batuta publicado mais recente e remover checkout irmão — infra/medium
+- [x] 1. Fixar o Batuta publicado mais recente e remover checkout irmão — infra/medium
       Scope: go.mod, go.sum, scripts/check-standalone.sh, README.md
       Accept: Testes e os dois binários funcionam em cópia isolada com GOWORK=off e sem core local → sh scripts/check-standalone.sh; A dependência usa a release publicada mais recente verificada, e o script falha antes da correção por depender do core local, sem reutilizar binários previamente construídos
 - [ ] 2. Atualizar e qualificar a toolchain Go estável mais recente — infra/medium
       Depends on: 1
-      Scope: go.mod, go.sum, docs/release-readiness.md, docs/release-readiness-evidence.md
+      Scope: go.mod, go.sum, README.md, docs/release-readiness.md, docs/release-readiness-evidence.md
       Accept: A toolchain estável mais recente verificada corrige os seis achados R02 e qualquer novo achado é avaliado sem supressão genérica → govulncheck ./...; A suíte existente permanece verde → go test ./...
 - [ ] 3. Criar infraestrutura mínima de testes web e de jornada — testing/medium
       Scope: web/package.json, web/package-lock.json, web/*config*, web/src/test/**, web/tests/**, web/src/**/*.test.ts, web/src/**/*.test.tsx
