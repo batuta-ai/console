@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"sync"
@@ -106,6 +107,13 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		return nil, err
 	}
 	sess.PID = cmd.Process.Pid
+	sess.ProcessIdentity = ""
+	sess.RecoveryReason = ""
+	if observed, err := InspectProcess(sess.PID); err == nil {
+		sess.ProcessIdentity = observed.Identity
+	} else {
+		log.Printf("observe session %s process identity: %v", sess.ID, err)
+	}
 	sess.Process = "running"
 	if sess.Owner == "" {
 		sess.Owner = "none"

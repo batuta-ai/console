@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -337,12 +338,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]domain.Session, 0, len(list))
 	for _, sess := range list {
-		live := s.Svc.ReconcileSession(sess)
-		if live.Process != sess.Process {
-			if err := s.Svc.Store.PutSession(live); err != nil {
-				writeErr(w, 500, "store", err.Error())
-				return
-			}
+		live, err := s.Svc.ReconcileSession(sess)
+		if err != nil {
+			writeErr(w, 500, "store", err.Error())
+			return
 		}
 		out = append(out, live)
 	}
@@ -365,8 +364,16 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.Svc.StopSession(r.PathValue("id"))
-	if err != nil {
+	if errors.Is(err, service.ErrSessionNotOwned) {
+		writeErr(w, 409, "session_not_owned", err.Error())
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, 404, "not_found", err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, "stop_failed", err.Error())
 		return
 	}
 	writeJSON(w, sess)

@@ -107,8 +107,8 @@ func TestLegacyMigrationLossless(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := version(t, s.db); got != 2 {
-					t.Errorf("schema version = %d, want 2", got)
+				if got := version(t, s.db); got != 3 {
+					t.Errorf("schema version = %d, want 3", got)
 				}
 				for table, query := range queries {
 					if got := rawRows(t, s.db, query); !reflect.DeepEqual(got, before[table]) {
@@ -152,7 +152,7 @@ func TestEmptyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if got := version(t, s.db); got != 2 {
+	if got := version(t, s.db); got != 3 {
 		t.Fatalf("version %d", got)
 	}
 }
@@ -183,7 +183,7 @@ func TestMigrationFailureRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if version(t, s.db) != 2 {
+	if version(t, s.db) != 3 {
 		t.Fatal("recovery did not advance")
 	}
 }
@@ -204,5 +204,63 @@ func TestFutureVersionUnchanged(t *testing.T) {
 	}
 	if got := fmt.Sprint(rawRows(t, db, "SELECT * FROM future")); got != "[[keep]]" {
 		t.Fatal(got)
+	}
+}
+
+func TestSchema2RecoveryMetadataMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schema2.db")
+	db := rawDB(t, path)
+	execSQL(t, db, legacySchema)
+	execSQL(t, db, `ALTER TABLE squads ADD COLUMN origin TEXT NOT NULL DEFAULT 'custom'; ALTER TABLE missions ADD COLUMN brief TEXT NOT NULL DEFAULT ''; PRAGMA user_version=2;
+ INSERT INTO sessions VALUES('s','m','w','member','account','codex','[ "cmd", "arg" ]','running','interactive','web','client',123,120,50,1,'v1','2020-01-02T03:04:05Z',NULL);
+ INSERT INTO events VALUES(42,'2020-01-02T03:04:05Z','old.event','{ "keep": true }');`)
+	const oldColumns = "id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at"
+	before := rawRows(t, db, "SELECT "+oldColumns+" FROM sessions")
+	events := rawRows(t, db, "SELECT * FROM events")
+	for range 2 {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if version(t, st.db) != 3 {
+			t.Errorf("schema2 did not upgrade to 3")
+		}
+		if !reflect.DeepEqual(before, rawRows(t, st.db, "SELECT "+oldColumns+" FROM sessions")) || !reflect.DeepEqual(events, rawRows(t, st.db, "SELECT * FROM events")) {
+			t.Fatal("migration changed history")
+		}
+		var identity, reason string
+		err = st.db.QueryRow("SELECT process_identity,recovery_reason FROM sessions").Scan(&identity, &reason)
+		if err != nil || identity != "" || reason != "" {
+			t.Errorf("legacy defaults: %q %q %v", identity, reason, err)
+		}
+		st.Close()
+	}
+}
+
+func TestRecoveryMigrationRollsBackFirstColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocked.db")
+	db := rawDB(t, path)
+	execSQL(t, db, legacySchema)
+	// Conflicting second column forces failure after first ALTER, proving DDL rollback.
+	execSQL(t, db, `ALTER TABLE sessions ADD COLUMN recovery_reason TEXT; PRAGMA user_version=2;`)
+	before := rawRows(t, db, "SELECT * FROM sqlite_schema ORDER BY name")
+	st, err := Open(path)
+	if st != nil {
+		st.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "migration 3") {
+		t.Fatalf("want migration 3 error: %v", err)
+	}
+	if version(t, db) != 2 || !reflect.DeepEqual(before, rawRows(t, db, "SELECT * FROM sqlite_schema ORDER BY name")) {
+		t.Fatal("failed migration leaked DDL/version")
+	}
+	execSQL(t, db, "ALTER TABLE sessions DROP COLUMN recovery_reason")
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if version(t, st.db) != 3 {
+		t.Fatal("retry did not migrate")
 	}
 }

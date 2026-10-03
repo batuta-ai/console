@@ -19,11 +19,12 @@ import (
 )
 
 type Service struct {
-	Store   *store.Store
-	Session *session.Manager
-	Quota   *limits.Plugin
-	Home    string
-	reuseMu sync.Mutex
+	Store      *store.Store
+	Session    *session.Manager
+	Quota      *limits.Plugin
+	Home       string
+	reuseMu    sync.Mutex
+	recoveryMu sync.Mutex
 }
 
 func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
@@ -423,15 +424,67 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	return s.startAndPersist(sess, env, ws.Root, capacity, "session.started", map[string]any{"id": sess.ID, "adapter": sess.Adapter, "batuta": sess.BatutaInjected})
 }
 
-func (s *Service) ReconcileSession(sess domain.Session) domain.Session {
-	if live, ok := s.Session.Snapshot(sess.ID); ok {
-		return live
+// ReconcileSessions must finish before the daemon opens its listener.
+func (s *Service) ReconcileSessions() error {
+	list, err := s.Store.ListSessions()
+	if err != nil {
+		return fmt.Errorf("list sessions for recovery: %w", err)
 	}
-	if sess.Process == "running" {
-		sess.Process = "unknown"
+	for _, sess := range list {
+		if _, err := s.ReconcileSession(sess); err != nil {
+			return err
+		}
 	}
-	return sess
+	return nil
 }
+
+func (s *Service) ReconcileSession(sess domain.Session) (domain.Session, error) {
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	// Capture ownership before the catalog read: exit persistence and removal
+	// may otherwise turn a stale running row into a false lost-session event.
+	live, owned := s.Session.Snapshot(sess.ID)
+	// Reload under the lock: concurrent GETs may carry the same stale row.
+	stored, err := s.Store.GetSession(sess.ID)
+	if err != nil {
+		return stored, err
+	}
+	if stored.Process == "exited" {
+		return stored, nil
+	}
+	if owned {
+		return live, nil
+	}
+	if stored.Process != "running" && (stored.Process != "unknown" || stored.RecoveryReason != "") {
+		return stored, nil
+	}
+	observed, inspectionErr := session.InspectProcess(stored.PID)
+	reason := "identity_unverified"
+	if inspectionErr == nil {
+		switch {
+		case observed.Missing:
+			reason = "process_missing"
+		case stored.ProcessIdentity == "" || observed.Identity == "":
+		case stored.ProcessIdentity == observed.Identity:
+			reason = "process_survived"
+		default:
+			reason = "identity_mismatch"
+		}
+	}
+	stored.Process = "unknown"
+	stored.RecoveryReason = reason
+	stored.Owner, stored.OwnerClient = "none", ""
+	payload := map[string]any{"id": stored.ID, "recovery_reason": reason}
+	if inspectionErr != nil {
+		payload["inspection_error"] = inspectionErr.Error()
+	}
+	if err := s.Store.PutSessionWithEvent(stored, "session.reconciled", payload); err != nil {
+		return stored, fmt.Errorf("reconcile session %s: %w", stored.ID, err)
+	}
+	return stored, nil
+}
+
+var ErrSessionNotOwned = errors.New("session process is not owned by this daemon; former transport cannot be reattached or controlled; start a new session")
 
 func (s *Service) StopSession(id string) (domain.Session, error) {
 	live, err := s.Session.Stop(id)
@@ -445,7 +498,14 @@ func (s *Service) StopSession(id string) (domain.Session, error) {
 	if live.ID != "" {
 		stored = live
 	} else {
-		stored.Process = "exited"
+		if stored.Process == "exited" {
+			return stored, nil
+		}
+		stored, err = s.ReconcileSession(stored)
+		if err != nil {
+			return stored, err
+		}
+		return stored, ErrSessionNotOwned
 	}
 	if err := s.Store.PutSessionWithEvent(stored, "session.stopped", map[string]any{"id": id}); err != nil {
 		return stored, err
@@ -462,7 +522,10 @@ func (s *Service) reuseLive(match func(domain.Session) bool, owner, client strin
 		if !match(sess) {
 			continue
 		}
-		live := s.ReconcileSession(sess)
+		live, err := s.ReconcileSession(sess)
+		if err != nil {
+			return live, false, err
+		}
 		if live.Process != "running" {
 			continue
 		}

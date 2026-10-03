@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 func (s *Store) migrate() error {
 	var version int
@@ -60,6 +60,11 @@ CREATE TABLE IF NOT EXISTS events (
 			if err := adoptColumn(tx, column.table, column.name, column.definition); err != nil {
 				return fmt.Errorf("migration 2 adopt %s.%s: %w", column.table, column.name, err)
 			}
+		}
+	case 3:
+		if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN process_identity TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN recovery_reason TEXT NOT NULL DEFAULT '';`); err != nil {
+			return fmt.Errorf("migration 3 add session recovery metadata: %w", err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {

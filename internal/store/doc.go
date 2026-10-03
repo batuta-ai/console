@@ -6,7 +6,10 @@
 // columns with defaults "custom" and "" respectively. The known legacy
 // layouts have neither column, origin only, or both columns. Adoption keeps
 // existing values, JSON bytes, timestamps, references, events and sequence
-// numbers. It does not repair references or bind legacy deliveries.
+// numbers. Version 3 adds sessions.process_identity and recovery_reason as
+// non-null text with empty defaults; legacy PID/CreatedAt never synthesize an
+// identity. Existing fields and event history remain unchanged. It does not
+// repair references or bind legacy deliveries.
 //
 // Each migration's DDL and version change commit in one transaction. Failure
 // identifies the version and operation, rolls back that migration, and leaves

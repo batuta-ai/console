@@ -102,24 +102,26 @@ type Account struct {
 }
 
 type Session struct {
-	ID             string     `json:"id"`
-	MissionID      string     `json:"mission_id"`
-	WorkspaceID    string     `json:"workspace_id"`
-	MemberID       string     `json:"member_id,omitempty"`
-	AccountID      string     `json:"account_id,omitempty"`
-	Adapter        string     `json:"adapter"`
-	Argv           []string   `json:"argv"`
-	Process        string     `json:"process"` // running, exited, unknown
-	Work           string     `json:"work"`
-	Owner          string     `json:"owner"` // tui, web, none
-	OwnerClient    string     `json:"owner_client,omitempty"`
-	PID            int        `json:"pid,omitempty"`
-	Cols           int        `json:"cols"`
-	Rows           int        `json:"rows"`
-	BatutaInjected bool       `json:"batuta_injected"`
-	SkillsVersion  string     `json:"skills_version,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	ID              string     `json:"id"`
+	MissionID       string     `json:"mission_id"`
+	WorkspaceID     string     `json:"workspace_id"`
+	MemberID        string     `json:"member_id,omitempty"`
+	AccountID       string     `json:"account_id,omitempty"`
+	Adapter         string     `json:"adapter"`
+	Argv            []string   `json:"argv"`
+	Process         string     `json:"process"` // running, exited, unknown
+	Work            string     `json:"work"`
+	Owner           string     `json:"owner"` // tui, web, none
+	OwnerClient     string     `json:"owner_client,omitempty"`
+	ProcessIdentity string     `json:"process_identity,omitempty"`
+	RecoveryReason  string     `json:"recovery_reason,omitempty"`
+	PID             int        `json:"pid,omitempty"`
+	Cols            int        `json:"cols"`
+	Rows            int        `json:"rows"`
+	BatutaInjected  bool       `json:"batuta_injected"`
+	SkillsVersion   string     `json:"skills_version,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
 }
 
 type Event struct {

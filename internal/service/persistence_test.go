@@ -115,6 +115,16 @@ func TestCatalogEventFailureRollsBack(t *testing.T) {
 				call = func() error { _, err := svc.ConnectAccount(a.ID); return err }
 			case "stop":
 				table = "sessions"
+				// Exercise a genuinely owned stop; catalog-only stops cannot claim exit.
+				svc.Session.OnExit = nil
+				owned, err := svc.Session.Start(domain.Session{ID: "old", Argv: []string{"/bin/cat"}}, nil, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer svc.Session.Stop(owned.ID)
+				if err := svc.Store.PutSession(owned); err != nil {
+					t.Fatal(err)
+				}
 				call = func() error { _, err := svc.StopSession("old"); return err }
 			}
 			before := catalogRows(t, db, table)
@@ -384,10 +394,14 @@ func TestCatalogEventContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect("account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef})
-	if err := svc.Store.PutSession(domain.Session{ID: "s", Process: "running"}); err != nil {
+	owned, err := svc.Session.Start(domain.Session{ID: "s", Argv: []string{"/bin/cat"}}, nil, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	svc.Session.OnExit(domain.Session{ID: "s", Process: "exited"})
+	defer svc.Session.Stop(owned.ID)
+	if err := svc.Store.PutSession(owned); err != nil {
+		t.Fatal(err)
+	}
 	expect("session.exited", map[string]any{"id": "s"})
 	if _, err := svc.StopSession("s"); err != nil {
 		t.Fatal(err)

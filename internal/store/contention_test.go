@@ -24,7 +24,7 @@ func TestListSessionsSingleConnection(t *testing.T) {
 		ID: "older", MissionID: "mission", WorkspaceID: "workspace", MemberID: "member",
 		AccountID: "account", Adapter: "codex", Argv: []string{"codex", "argument with spaces", "日本語"},
 		Process: "exited", Work: "interactive", Owner: "tui", OwnerClient: "client",
-		PID: 123, Cols: 120, Rows: 50, BatutaInjected: true, SkillsVersion: "v1",
+		PID: 123, Cols: 120, Rows: 50, BatutaInjected: true, SkillsVersion: "v1", ProcessIdentity: "observed-birth", RecoveryReason: "historical",
 		CreatedAt: created, EndedAt: &ended,
 	}
 	newer := domain.Session{ID: "newer", Adapter: "claude", Process: "running", CreatedAt: created.Add(time.Second)}

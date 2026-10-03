@@ -263,13 +263,13 @@ func (s catalogWriter) PutSession(sess domain.Session) error {
 	if sess.EndedAt != nil {
 		ended = sess.EndedAt.Format(time.RFC3339Nano)
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions(id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET mission_id=excluded.mission_id, workspace_id=excluded.workspace_id, member_id=excluded.member_id, account_id=excluded.account_id, adapter=excluded.adapter, argv=excluded.argv, process=excluded.process, work=excluded.work, owner=excluded.owner, owner_client=excluded.owner_client, pid=excluded.pid, cols=excluded.cols, rows=excluded.rows, batuta=excluded.batuta, skills_version=excluded.skills_version, created_at=excluded.created_at, ended_at=excluded.ended_at WHERE sessions.process <> 'exited'`,
-		sess.ID, sess.MissionID, sess.WorkspaceID, sess.MemberID, sess.AccountID, sess.Adapter, string(argv), sess.Process, sess.Work, sess.Owner, sess.OwnerClient, sess.PID, sess.Cols, sess.Rows, batuta, sess.SkillsVersion, sess.CreatedAt.Format(time.RFC3339Nano), ended)
+	_, err = s.db.Exec(`INSERT INTO sessions(id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at,process_identity,recovery_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET mission_id=excluded.mission_id, workspace_id=excluded.workspace_id, member_id=excluded.member_id, account_id=excluded.account_id, adapter=excluded.adapter, argv=excluded.argv, process=excluded.process, work=excluded.work, owner=excluded.owner, owner_client=excluded.owner_client, pid=excluded.pid, cols=excluded.cols, rows=excluded.rows, batuta=excluded.batuta, skills_version=excluded.skills_version, created_at=excluded.created_at, ended_at=excluded.ended_at, process_identity=excluded.process_identity, recovery_reason=excluded.recovery_reason WHERE sessions.process <> 'exited'`,
+		sess.ID, sess.MissionID, sess.WorkspaceID, sess.MemberID, sess.AccountID, sess.Adapter, string(argv), sess.Process, sess.Work, sess.Owner, sess.OwnerClient, sess.PID, sess.Cols, sess.Rows, batuta, sess.SkillsVersion, sess.CreatedAt.Format(time.RFC3339Nano), ended, sess.ProcessIdentity, sess.RecoveryReason)
 	return err
 }
 
 func (s *Store) GetSession(id string) (domain.Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at FROM sessions WHERE id=?`, id))
+	return scanSession(s.db.QueryRow(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at,process_identity,recovery_reason FROM sessions WHERE id=?`, id))
 }
 
 func scanSession(row interface{ Scan(...any) error }) (domain.Session, error) {
@@ -277,7 +277,7 @@ func scanSession(row interface{ Scan(...any) error }) (domain.Session, error) {
 	var argv, created string
 	var ended sql.NullString
 	var batuta int
-	err := row.Scan(&sess.ID, &sess.MissionID, &sess.WorkspaceID, &sess.MemberID, &sess.AccountID, &sess.Adapter, &argv, &sess.Process, &sess.Work, &sess.Owner, &sess.OwnerClient, &sess.PID, &sess.Cols, &sess.Rows, &batuta, &sess.SkillsVersion, &created, &ended)
+	err := row.Scan(&sess.ID, &sess.MissionID, &sess.WorkspaceID, &sess.MemberID, &sess.AccountID, &sess.Adapter, &argv, &sess.Process, &sess.Work, &sess.Owner, &sess.OwnerClient, &sess.PID, &sess.Cols, &sess.Rows, &batuta, &sess.SkillsVersion, &created, &ended, &sess.ProcessIdentity, &sess.RecoveryReason)
 	if err != nil {
 		return sess, err
 	}
@@ -292,7 +292,7 @@ func scanSession(row interface{ Scan(...any) error }) (domain.Session, error) {
 }
 
 func (s *Store) ListSessions() ([]domain.Session, error) {
-	rows, err := s.db.Query(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at FROM sessions ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id,mission_id,workspace_id,member_id,account_id,adapter,argv,process,work,owner,owner_client,pid,cols,rows,batuta,skills_version,created_at,ended_at,process_identity,recovery_reason FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}

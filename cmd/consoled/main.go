@@ -44,6 +44,9 @@ func main() {
 	defer st.Close()
 	svc := service.New(st, session.New(paths.Logs), limits.New(limits.Disk{Home: paths.Home}))
 	svc.Home = paths.Home
+	if err := svc.ReconcileSessions(); err != nil {
+		log.Fatal(err)
+	}
 	if err := svc.EnsureBatutaCatalog(); err != nil {
 		log.Printf("batuta catalog: %v", err)
 	}

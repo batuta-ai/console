@@ -25,7 +25,7 @@ func TestLateInitialSessionWritePreservesExit(t *testing.T) {
 				MemberID: "member", AccountID: "account", Adapter: "codex",
 				Argv: []string{"codex", "terminal-argument"}, Process: "exited", Work: "complete",
 				Owner: "tui", OwnerClient: "terminal-client", PID: 84, Cols: 90, Rows: 30,
-				BatutaInjected: true, SkillsVersion: "terminal-version",
+				BatutaInjected: true, SkillsVersion: "terminal-version", ProcessIdentity: "observed-terminal", RecoveryReason: "historical",
 				CreatedAt: ended.Add(-time.Minute), EndedAt: &ended,
 			}
 			if err := st.PutSessionWithEvent(terminal, "session.exited", map[string]any{"id": "s"}); err != nil {
