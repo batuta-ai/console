@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -70,12 +70,12 @@ try {
   });
   const token = await readFile(path.join(home, "auth.secret"), "utf8");
   const base = `http://127.0.0.1:${port}`;
-  const request = async (endpoint, method = "GET", body) => {
+  const request = async (endpoint, method = "GET", body, expectedStatus = 200) => {
     const response = await fetch(base + endpoint, {
       method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000),
     });
-    assert.equal(response.status, 200, `${endpoint}: ${await response.clone().text()}`);
+    assert.equal(response.status, expectedStatus, `${endpoint}: ${await response.clone().text()}`);
     return response.json();
   };
   assert.equal((await fetch(base + "/v0/workspaces", { signal: AbortSignal.timeout(5000) })).status, 401);
@@ -83,6 +83,8 @@ try {
   const workspace = await request("/v0/workspaces", "POST", { name: "Synthetic workspace", root: workspaceRoot });
   assert.equal(workspace.name, "Synthetic workspace");
   assert.equal(workspace.root, workspaceRoot);
+  assert.equal(workspace.profile, false);
+  assert.deepEqual(workspace.setup, { ready: false, state: "missing", code: "profile_missing", configuration_code: "profile_missing" });
   assert.deepEqual((await request("/v0/workspaces")).map(item => item.id), [workspace.id]);
   const account = await request("/v0/accounts", "POST", { label: "Synthetic Codex", adapter: "codex" });
   const connected = await request(`/v0/accounts/${account.id}/connect`, "POST", {});
@@ -92,8 +94,34 @@ try {
   const renamed = await request(`/v0/accounts/${account.id}`, "PATCH", { label: "Renamed synthetic account" });
   assert.equal(renamed.label, "Renamed synthetic account");
   assert.equal((await request("/v0/accounts")).find(item => item.id === account.id).label, renamed.label);
+  const initPath = `/v0/workspaces/${workspace.id}/init`;
+  const config = { stack: "Go", methodology: "TDD", test: "never-run-test", build: "never-run-build", install: "never-run-install", execution: "sequential", worktree: "medium+", template: "templates/go.md" };
+  const input = { account_id: account.id, config, brief: "Literal notes; $(never-run)", owner: "web", client: "synthetic-journey" };
+  assert.equal((await request(initPath, "POST", { brief: "old incomplete request" }, 409)).error, "authenticated_account_required");
+  assert.equal((await request(initPath, "POST", { account_id: account.id }, 400)).error, "init");
+  assert.equal((await request(initPath, "POST", { ...input, config: { ...config, execution: "invalid" } }, 400)).error, "init");
+  assert.equal((await request(initPath, "POST", { ...input, account_id: "absent" }, 404)).error, "init");
+  assert.equal((await request("/v0/workspaces/absent/init", "POST", input, 404)).error, "init");
+  // Empty PATH and isolated home keep this journey independent of credentials and providers.
+  assert.equal((await request(initPath, "POST", input, 409)).error, "cli_missing");
+  const listedAccount = (await request("/v0/accounts")).find(item => item.id === account.id);
+  assert.equal(listedAccount.readiness.ready, false);
+  assert.equal(listedAccount.readiness.code, "cli_missing");
+  assert.equal(typeof listedAccount.readiness.checked_at, "string");
   assert.deepEqual(await request("/v0/sessions"), []);
-  console.log("PASS: synthetic real-daemon auth, workspace persistence, isolated account connect/rename; no CLI/model execution");
+  const readWorkspace = async () => (await request("/v0/workspaces")).find(item => item.id === workspace.id);
+  assert.equal((await readWorkspace()).setup.attempt, undefined);
+  await mkdir(path.join(workspaceRoot, ".batuta"));
+  await writeFile(path.join(workspaceRoot, ".batuta", "profile.md"), "Stack: Go\n");
+  assert.equal((await readWorkspace()).setup.ready, false);
+  await writeFile(path.join(workspaceRoot, ".batuta", "profile.md"), "# Profile — synthetic\n" + Object.entries(config).map(([key, value]) => `${key[0].toUpperCase()}${key.slice(1)}: ${value}`).join("\n") + "\n");
+  await writeFile(path.join(workspaceRoot, ".batuta", "routing.md"), "| Lane | Domain | Executor | Model |\n|---|---|---|---|\n| low | * | codex | synthetic |\n| medium | * | codex | synthetic |\n| high | * | claude | synthetic |\n| critical | * | self | session |\n");
+  assert.equal((await readWorkspace()).setup.configuration_code, "work_missing");
+  await writeFile(path.join(workspaceRoot, "WORK.md"), "# Work — synthetic\n\n## In progress\n\n## Done\n");
+  const complete = await readWorkspace();
+  assert.equal(complete.profile, true);
+  assert.deepEqual(complete.setup, { ready: true, state: "ready" });
+  console.log("PASS: synthetic real-daemon auth, workspace persistence, explicit init validation/readiness DTO, missing/partial/ready configuration, isolated account connect/rename; no CLI/model execution");
 } finally {
   process.off("SIGINT", interrupted);
   process.off("SIGTERM", interrupted);

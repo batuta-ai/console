@@ -8,9 +8,16 @@ beforeEach(() => {
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: false,
     media: query,
+    addListener() {},
+    removeListener() {},
     addEventListener() {},
     removeEventListener() {},
   }));
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   vi.stubGlobal("WebSocket", class {
     onmessage = null;
     close() {}

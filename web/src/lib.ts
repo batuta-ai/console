@@ -2,7 +2,34 @@ import { T, localeTag, type Msg } from "./i18n";
 
 export type Screen = "home" | "missions" | "room" | "squads" | "editor" | "accounts" | "activity" | "review" | "login" | "setup";
 
-export type Workspace = { id: string; name: string; root: string; profile?: boolean };
+export type SetupConfig = {
+  stack: string;
+  methodology: string;
+  test: string;
+  build: string;
+  install: string;
+  execution: "" | "sequential" | "parallel";
+  worktree: "" | "off" | "medium+" | "always";
+  template: string;
+};
+export type InitAttempt = {
+  session_id: string;
+  account_id: string;
+  state: string;
+  process: string;
+  stop_requested: boolean;
+  recovery_reason?: string;
+  created_at: string;
+  ended_at?: string;
+};
+export type Workspace = {
+  id: string;
+  name: string;
+  root: string;
+  profile?: boolean;
+  setup?: { ready: boolean; state: string; code?: string; configuration_code?: string; attempt?: InitAttempt };
+};
+export type SetupDraft = { config: SetupConfig; account_id: string; brief: string };
 export type Member = {
   id?: string;
   role: string;
@@ -42,6 +69,18 @@ export type Account = {
   authed?: boolean;
   session_cap?: number;
   vault_ref?: string;
+  readiness?: {
+    supported: boolean;
+    available: boolean;
+    cli_compatible: boolean;
+    connected: boolean;
+    credential_configured: boolean;
+    authenticated: boolean;
+    ready: boolean;
+    code: string;
+    checked_at: string;
+    credential_source?: string;
+  };
 };
 export type Event = { seq: number; at: string; kind: string; payload?: Record<string, unknown> };
 export type Limit = {
@@ -60,6 +99,10 @@ export type Session = {
   owner_client?: string;
   adapter: string;
   mission_id: string;
+  workspace_id?: string;
+  recovery_reason?: string;
+  created_at?: string;
+  ended_at?: string;
   account_id?: string;
   work?: string;
   batuta_injected?: boolean;

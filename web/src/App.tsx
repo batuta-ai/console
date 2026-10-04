@@ -30,6 +30,8 @@ import {
   type Mission,
   type Screen,
   type Session,
+  type SetupConfig,
+  type SetupDraft,
   type Skill,
   type Squad,
   type Watch,
@@ -103,7 +105,7 @@ export function App() {
   const [loginAccount, setLoginAccount] = useState<Account | null>(null);
   const [loginSession, setLoginSession] = useState<Session | null>(null);
   const [setupWs, setSetupWs] = useState<Workspace | null>(null);
-  const [setupSession, setSetupSession] = useState<Session | null>(null);
+  const [setupDrafts, setSetupDrafts] = useState<Record<string, SetupDraft>>({});
 
   const currentWs = workspaces.find((w) => w.id === wsId) || workspaces[0];
   useEffect(() => {
@@ -113,7 +115,10 @@ export function App() {
     }
   }, [currentWs, wsId]);
 
+  const refreshGeneration = useRef(0);
+
   async function refresh() {
+    const generation = ++refreshGeneration.current;
     try {
       const [ws, msn, sq, ac, ev, sess, lim, sk] = await Promise.all([
         api<Workspace[]>("/v0/workspaces"),
@@ -125,6 +130,7 @@ export function App() {
         api<Limit[]>("/v0/limits"),
         api<{ root?: string; skills?: Skill[] }>("/v0/skills"),
       ]);
+      if (generation !== refreshGeneration.current) return;
       setWorkspaces(ws || []);
       setMissions(msn || []);
       setSquads(sq || []);
@@ -138,10 +144,10 @@ export function App() {
       const watchID = activeMission?.workspace_id || (ws || []).find((w) => w.id === wsId)?.id || ws?.[0]?.id;
       if (watchID) {
         const w = await api<Watch>(`/v0/watch?workspace=${encodeURIComponent(watchID)}`);
-        setWatch(w);
+        if (generation === refreshGeneration.current) setWatch(w);
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (generation === refreshGeneration.current) setErr(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -188,6 +194,11 @@ export function App() {
   function go(id: Screen) {
     setScreen(id);
     setAddAccount(false);
+  }
+
+  function openSetup(workspace: Workspace) {
+    setSetupWs(workspace);
+    go("setup");
   }
 
   function pickWorkspace(id: string) {
@@ -279,6 +290,13 @@ export function App() {
     <div className={phone ? "frame frame--phone" : "frame"} data-theme={dark ? "dark" : "light"} data-density="comfortable">
       <Shell scroll="content" className="bt-shell" sidebar={!phone ? sidebar : undefined} topbar={topbar} sidebarLabel="Batuta Console">
         {err ? <div className="err">{err}</div> : null}
+        {(screen === "home" || screen === "missions") && currentWs ? (
+          <div className="inline-actions" style={{ padding: "var(--cardpad)" }}>
+            <Button variant="secondary" onClick={() => openSetup(currentWs)}>
+              {T((currentWs.setup?.ready ?? currentWs.profile) ? "setup_details" : "setup_title")}
+            </Button>
+          </div>
+        ) : null}
         {screen === "home" && (
           <Home
             workspaces={workspaces}
@@ -304,6 +322,7 @@ export function App() {
             missions={wsMissions}
             squads={squads.filter((q) => squadReady(q, accounts))}
             workspace={currentWs}
+            onSetup={() => currentWs && openSetup(currentWs)}
             watch={watch}
             attention={attention}
             onOpen={(m) => {
@@ -403,15 +422,37 @@ export function App() {
         )}
         {screen === "setup" && setupWs && (
           <SetupScreen
+            key={setupWs.id}
             workspace={workspaces.find((w) => w.id === setupWs.id) || setupWs}
-            sessionId={setupSession?.id || ""}
+            accounts={accounts}
+            draft={setupDrafts[setupWs.id] || emptySetupDraft}
+            onDraft={(draft) => setSetupDrafts((previous) => ({ ...previous, [setupWs.id]: draft }))}
             client={webClient}
-            onStart={async (brief) => {
+            onRefresh={refresh}
+            onStart={async (draft) => {
               const sess = await api<Session>(`/v0/workspaces/${setupWs.id}/init`, {
                 method: "POST",
-                body: JSON.stringify({ brief, owner: "web", client: webClient }),
+                body: JSON.stringify({ ...draft, owner: "web", client: webClient }),
               });
-              setSetupSession(sess);
+              ++refreshGeneration.current;
+              setWorkspaces((previous) => previous.map((w) => {
+                if (w.id !== setupWs.id) return w;
+                const old = w.setup?.attempt?.session_id === sess.id ? w.setup.attempt : undefined;
+                return { ...w, setup: { ...w.setup, ready: w.setup?.ready ?? Boolean(w.profile), state: w.setup?.state || "partial", attempt: {
+                  session_id: sess.id, account_id: sess.account_id || draft.account_id,
+                  state: old?.state || (sess.process === "running" ? "running" : sess.process === "unknown" ? "interrupted" : "exited"),
+                  process: sess.process, stop_requested: old?.stop_requested || false,
+                  recovery_reason: sess.recovery_reason, created_at: sess.created_at || "", ended_at: sess.ended_at,
+                } } };
+              }));
+              await refresh();
+            }}
+            onCancel={async (sessionId) => {
+              await api(`/v0/sessions/${sessionId}/stop`, { method: "POST" });
+              ++refreshGeneration.current;
+              setWorkspaces((previous) => previous.map((w) => w.id === setupWs.id && w.setup?.attempt?.session_id === sessionId
+                ? { ...w, setup: { ...w.setup, attempt: { ...w.setup.attempt, stop_requested: true } } } : w));
+              await refresh();
             }}
             onBack={() => {
               refresh();
@@ -442,13 +483,10 @@ export function App() {
         onClose={() => setWsDialog(false)}
         onCreated={(w) => {
           setWsDialog(false);
+          setWorkspaces((previous) => [...previous.filter((item) => item.id !== w.id), w]);
           pickWorkspace(w.id);
           refresh();
-          if (!w.profile) {
-            setSetupWs(w);
-            setSetupSession(null);
-            go("setup");
-          }
+          if (!(w.setup?.ready ?? w.profile)) openSetup(w);
         }}
       />
     </div>
@@ -616,6 +654,7 @@ function Missions({
   attention,
   onOpen,
   onCreated,
+  onSetup,
 }: {
   missions: Mission[];
   squads: Squad[];
@@ -624,6 +663,7 @@ function Missions({
   attention: string;
   onOpen: (m: Mission) => void;
   onCreated: (m: Mission) => void;
+  onSetup: () => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [creating, setCreating] = useState(false);
@@ -640,7 +680,7 @@ function Missions({
           <Button
             onClick={() => {
               if (!workspace) return alert(T("need_ws_squad"));
-              if (!workspace.profile) return alert(T("need_profile"));
+              if (!(workspace.setup?.ready ?? workspace.profile)) return onSetup();
               if (squads.length === 0) return alert(T("need_ready_squad"));
               setCreating(true);
             }}
@@ -1609,60 +1649,173 @@ function LoginScreen({
   );
 }
 
+const emptySetupDraft: SetupDraft = {
+  config: { stack: "", methodology: "", test: "", build: "", install: "", execution: "", worktree: "", template: "" },
+  account_id: "",
+  brief: "",
+};
+
+function validSetupText(value: string, limit: number, multiline = false) {
+  return (multiline || Boolean(value.trim())) && new TextEncoder().encode(value).length <= limit &&
+    !(multiline ? /\0/ : /[\0\r\n]/).test(value);
+}
+
+function setupAccountReady(account?: Account) {
+  const r = account?.readiness;
+  return Boolean(account && (account.adapter === "codex" || account.adapter === "claude") &&
+    account.connected && r?.ready && r.supported &&
+    r.available && r.cli_compatible && r.connected && r.credential_configured && r.authenticated);
+}
+
+function attemptLabel(state: string) {
+  if (state === "running") return T("setup_running");
+  if (state === "interrupted") return T("setup_interrupted");
+  if (state === "cancel_requested") return T("setup_cancel_requested");
+  if (state === "exited_incomplete") return T("setup_incomplete");
+  if (state === "exited") return T("setup_exited");
+  return state;
+}
+
 function SetupScreen({
   workspace,
-  sessionId,
+  accounts,
+  draft,
+  onDraft,
   client,
   onStart,
+  onRefresh,
+  onCancel,
   onBack,
 }: {
   workspace: Workspace;
-  sessionId: string;
+  accounts: Account[];
+  draft: SetupDraft;
+  onDraft: (draft: SetupDraft) => void;
   client: string;
-  onStart: (brief: string) => Promise<void>;
+  onStart: (draft: SetupDraft) => Promise<void>;
+  onCancel: (sessionId: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
   onBack: () => void;
 }) {
-  const [stack, setStack] = useState("");
-  const [testCmd, setTestCmd] = useState("");
-  const [method, setMethod] = useState("tests after · conventional commits");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const ready = workspace.profile;
+  const [observing, setObserving] = useState("");
+  const ready = workspace.setup?.ready ?? workspace.profile;
+  const attempt = workspace.setup?.attempt;
+  const live = attempt?.process === "running" && attempt.state === "running";
+  const selected = accounts.find((a) => a.id === draft.account_id);
+  const accountReady = setupAccountReady(selected);
+  const configValid = Object.values(draft.config).every((value) => validSetupText(value, 8192)) &&
+    ["sequential", "parallel"].includes(draft.config.execution) && ["off", "medium+", "always"].includes(draft.config.worktree);
+  const notesValid = validSetupText(draft.brief, 65536, true);
+
+  function edit(next: SetupDraft) {
+    setConfirmed(false);
+    onDraft(next);
+  }
+
+  function field(key: keyof SetupConfig, label: string) {
+    return <Field key={key} label={label}>
+      <Input required value={draft.config[key]} aria-invalid={Boolean(draft.config[key]) && !validSetupText(draft.config[key], 8192)}
+        onChange={(e) => edit({ ...draft, config: { ...draft.config, [key]: e.target.value } })} />
+    </Field>;
+  }
+
+  async function act(action: () => Promise<void>) {
+    setBusy(true);
+    setErr("");
+    try {
+      await action();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setConfirmed(false);
+    }
+  }
+
   return (
     <div className="page">
       <PageHeader title={T("setup_title")} description={`${workspace.name} · ${workspace.root}`} actions={<Button variant="secondary" onClick={onBack}>{T("back_home")}</Button>} />
       <p className="muted">{T("setup_hint")}</p>
-      {ready ? <Alert tone="success" title=".batuta/profile.md">{workspace.root}</Alert> : null}
-      {!sessionId ? (
-        <section className="panel plan-body">
-          <Field label={T("setup_stack")}>
-            <Input value={stack} onChange={(e) => setStack(e.target.value)} placeholder="go" />
-          </Field>
-          <Field label={T("setup_test")}>
-            <Input value={testCmd} onChange={(e) => setTestCmd(e.target.value)} placeholder="go test ./..." />
-          </Field>
-          <Field label={T("setup_method")}>
-            <Input value={method} onChange={(e) => setMethod(e.target.value)} />
-          </Field>
-          {err ? <p className="err">{err}</p> : null}
-          <Button
-            disabled={!stack.trim()}
-            onClick={async () => {
-              setErr("");
-              try {
-                await onStart(`Stack: ${stack.trim()}\nTest: ${testCmd.trim() || "unknown"}\nMethodology: ${method.trim()}`);
-              } catch (e) {
-                setErr(e instanceof Error ? e.message : String(e));
-              }
-            }}
-          >
-            {T("start_setup")}
-          </Button>
-        </section>
-      ) : (
-        <section className="log-panel log-panel--fill">
-          <XTerm sessionId={sessionId} inputEnabled client={client} />
-        </section>
-      )}
+      <section className="panel plan-body" aria-label={T("setup_configuration")}>
+        <h2>{T(ready ? "setup_ready" : "setup_not_ready")}</h2>
+        <p>{workspace.setup?.configuration_code}</p>
+        <p>{workspace.setup?.code}</p>
+        <Button variant="secondary" disabled={busy} onClick={() => act(onRefresh)}>{T("setup_refresh")}</Button>
+      </section>
+      {attempt ? <section className="panel plan-body" aria-label={T("setup_attempt")}>
+        <h2>{T("setup_attempt")}</h2>
+        <dl>
+          <dt>{T("setup_session")}</dt><dd>{attempt.session_id}</dd>
+          <dt>{T("setup_account")}</dt><dd>{attempt.account_id}</dd>
+          <dt>{T("col_status")}</dt><dd>{attemptLabel(attempt.state)}</dd>
+          <dt>{T("setup_process")}</dt><dd>{processLife(attempt.process)}</dd>
+          <dt>{T("setup_created")}</dt><dd>{attempt.created_at}</dd>
+          {attempt.ended_at ? <><dt>{T("setup_ended")}</dt><dd>{attempt.ended_at}</dd></> : null}
+        </dl>
+        {attempt.recovery_reason ? <p>{attempt.recovery_reason}</p> : null}
+        {attempt.stop_requested ? <p>{T("setup_stop_intent")}</p> : null}
+        {attempt.state === "exited_incomplete" || attempt.state === "cancel_requested" ? <p>{T("setup_outcome_unknown")}</p> : null}
+        {!ready && !live ? <p>{T("setup_retry_hint")}</p> : null}
+        {live ? <div className="inline-actions">
+          <Button variant="secondary" onClick={() => setObserving(observing === attempt.session_id ? "" : attempt.session_id)}>{T(observing === attempt.session_id ? "setup_hide_terminal" : "setup_observe")}</Button>
+          <Button variant="secondary" disabled={busy || attempt.stop_requested} onClick={() => act(() => onCancel(attempt.session_id))}>{T("setup_cancel")}</Button>
+        </div> : null}
+      </section> : null}
+      {live && observing === attempt.session_id ? <section className="log-panel log-panel--fill" aria-label={T("setup_observe")}>
+        <XTerm sessionId={attempt.session_id} inputEnabled={false} client={client} />
+      </section> : null}
+      {err ? <p className="err" role="alert">{err}</p> : null}
+      {!ready ? <form className="panel plan-body" onSubmit={(e) => {
+        e.preventDefault();
+        if (busy || !confirmed || !configValid || !notesValid || !accountReady || workspace.setup?.state === "invalid_workspace") return;
+        void act(() => onStart(draft));
+      }}>
+        {field("stack", T("setup_stack"))}
+        {field("methodology", T("setup_method"))}
+        {field("test", T("setup_test"))}
+        {field("build", T("setup_build"))}
+        {field("install", T("setup_install"))}
+        <Field label={T("setup_execution")}>
+          <Select required value={draft.config.execution} onChange={(e) => {
+            const value = e.target.value;
+            if (value === "" || value === "sequential" || value === "parallel") edit({ ...draft, config: { ...draft.config, execution: value } });
+          }}>
+            <option value="">{T("setup_choose")}</option>
+            <option value="sequential">{T("setup_sequential")}</option><option value="parallel">{T("setup_parallel")}</option>
+          </Select>
+        </Field>
+        <Field label={T("setup_worktree")}>
+          <Select required value={draft.config.worktree} onChange={(e) => {
+            const value = e.target.value;
+            if (value === "" || value === "off" || value === "medium+" || value === "always") edit({ ...draft, config: { ...draft.config, worktree: value } });
+          }}>
+            <option value="">{T("setup_choose")}</option>
+            <option value="off">{T("setup_off")}</option><option value="medium+">{T("setup_medium")}</option><option value="always">{T("setup_always")}</option>
+          </Select>
+        </Field>
+        {field("template", T("setup_template"))}
+        <p className="muted">{T("setup_field_rules")}</p>
+        <Field label={T("setup_notes")}>
+          <textarea className="lyra-input" value={draft.brief} aria-invalid={!notesValid} onChange={(e) => edit({ ...draft, brief: e.target.value })} />
+        </Field>
+        <p className="muted">{T("setup_notes_rules")}</p>
+        <Field label={T("setup_account")}>
+          <Select required value={draft.account_id} onChange={(e) => edit({ ...draft, account_id: e.target.value })}>
+            <option value="">{T("setup_choose")}</option>
+            {draft.account_id && !selected ? <option value={draft.account_id}>{draft.account_id} · {T("setup_account_missing")}</option> : null}
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label} · {a.adapter} · {a.id} · {setupAccountReady(a) ? T("setup_account_ready") : a.readiness?.code || T("unknown")}</option>)}
+          </Select>
+        </Field>
+        {selected ? <p>{selected.readiness?.code || T("unknown")} · {selected.readiness?.checked_at || "—"}</p> : null}
+        {!accountReady ? <p>{T("setup_account_repair")}</p> : null}
+        <label className="inject-toggle">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />{T("setup_confirm")}
+        </label>
+        <Button type="submit" disabled={busy || !confirmed || !configValid || !notesValid || !accountReady || workspace.setup?.state === "invalid_workspace"}>{T("start_setup")}</Button>
+      </form> : null}
     </div>
   );
 }
