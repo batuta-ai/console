@@ -20,6 +20,7 @@ import (
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/adapters"
+	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/hostfs"
 	"github.com/batuta-ai/console/internal/i18n"
@@ -103,10 +104,11 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, capabilityResponse{
 		API: "v0", Product: "batuta-console", Lang: i18n.Lang(),
 		Integrations: []string{"generic", "batuta"}, Adapters: adapters.IDs(),
-		Features: map[string]bool{"pty": pty.Available, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
-		Runtime:  runningRuntime(),
-		Matrix:   releaseMatrix{Platforms: []string{"darwin", "linux"}, Providers: []string{"codex", "claude"}, Qualification: domain.CapabilityFact{Status: "pending", Code: "release_qualification_pending"}},
-		PTY:      pty, Providers: adapters.Capabilities(r.Context()),
+		Features:   map[string]bool{"pty": pty.Available, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
+		Runtime:    runningRuntime(),
+		Provenance: buildinfo.Current(),
+		Matrix:     releaseMatrix{Platforms: []string{"darwin", "linux"}, Providers: []string{"codex", "claude"}, Qualification: domain.CapabilityFact{Status: "pending", Code: "release_qualification_pending"}},
+		PTY:        pty, Providers: adapters.Capabilities(r.Context()),
 	})
 }
 

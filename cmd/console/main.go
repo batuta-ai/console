@@ -7,16 +7,25 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/client"
 	"github.com/batuta-ai/console/internal/runtime"
 	"github.com/batuta-ai/console/internal/tui"
 )
 
 func main() {
+	version := flag.Bool("version", false, "print binary version, revision, actual Go toolchain and provenance as JSON")
 	webOnly := flag.Bool("web", false, "open the local web UI and print its URL")
 	home := flag.String("home", "", "data directory")
 	listen := flag.String("listen", "", "loopback address")
 	flag.Parse()
+	if *version {
+		if err := buildinfo.WriteDiagnostic(os.Stdout, "console"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	paths, err := runtime.Resolve(*home, *listen)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

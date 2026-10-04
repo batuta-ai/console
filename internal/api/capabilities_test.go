@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/batuta-ai/console/internal/adapters"
+	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/i18n"
 	"github.com/batuta-ai/console/internal/store"
@@ -93,6 +94,17 @@ func testCapabilitiesObserved(t *testing.T, network bool) {
 		if err != nil || string(got[key]) != string(expected) {
 			t.Fatalf("legacy %s: %s, want %s", key, got[key], expected)
 		}
+	}
+	var provenance struct {
+		Release       struct{ Version string }
+		Compatibility struct {
+			API    string
+			Stable struct{ Status string }
+		}
+		Plugin struct{ Status string }
+	}
+	if err := json.Unmarshal(got["provenance"], &provenance); err != nil || provenance.Release.Version == "" || provenance.Compatibility.API != "v0" || provenance.Compatibility.Stable.Status != "pending" || provenance.Plugin.Status != "unknown" {
+		t.Fatalf("provenance: %s: %v", got["provenance"], err)
 	}
 	var host struct {
 		OS, Arch  string
@@ -359,4 +371,26 @@ func snapshotCapabilityCatalog(t *testing.T, st *store.Store) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestCapabilitiesProvenanceAuthentication(t *testing.T) {
+	handler := (&Server{Token: "test-token"}).Handler()
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/v0/capabilities", nil))
+	if denied.Code != http.StatusUnauthorized || strings.Contains(denied.Body.String(), "provenance") {
+		t.Fatalf("unauthorized: %d %s", denied.Code, denied.Body.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/v0/capabilities", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer test-token")
+	allowed := httptest.NewRecorder()
+	handler.ServeHTTP(allowed, req)
+	var got capabilityResponse
+	if err := json.Unmarshal(allowed.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if allowed.Code != http.StatusOK || !reflect.DeepEqual(got.Provenance, buildinfo.Current()) {
+		t.Fatalf("authenticated provenance: %d %+v", allowed.Code, got.Provenance)
+	}
 }

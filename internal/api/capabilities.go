@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/domain"
 )
 
@@ -22,6 +23,7 @@ type runtimeCapability struct {
 }
 
 type capabilityResponse struct {
+	Provenance   buildinfo.Info         `json:"provenance"`
 	API          string                 `json:"api"`
 	Product      string                 `json:"product"`
 	Lang         string                 `json:"lang"`

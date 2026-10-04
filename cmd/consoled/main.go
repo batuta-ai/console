@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/batuta-ai/console/internal/api"
+	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/runtime"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
@@ -22,9 +23,17 @@ import (
 )
 
 func main() {
+	version := flag.Bool("version", false, "print binary version, revision, actual Go toolchain and provenance as JSON")
 	listen := flag.String("listen", "", "loopback address")
 	home := flag.String("home", "", "data directory")
 	flag.Parse()
+	if *version {
+		if err := buildinfo.WriteDiagnostic(os.Stdout, "consoled"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	paths, err := runtime.Resolve(*home, *listen)
 	if err != nil {
 		log.Fatal(err)
