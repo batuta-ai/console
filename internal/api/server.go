@@ -7,9 +7,13 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -551,43 +555,152 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, list)
 }
 
+// A supplied cursor is never reset, even when it is ahead of the catalog.
+// Without a cursor, only the most recent bounded snapshot is sent.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if !s.checkToken(r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+		writeEventHTTPError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+		return
+	}
+	cursor, supplied, err := eventCursor(r.URL.RawQuery)
+	if err != nil {
+		writeEventHTTPError(w, http.StatusBadRequest, "cursor", "cursor must be one non-negative decimal sequence")
+		return
+	}
+	var list []domain.Event
+	if supplied {
+		list, err = s.Svc.Store.EventsSinceContext(r.Context(), cursor, 200)
+	} else {
+		list, err = s.Svc.Store.EventsRecentContext(r.Context(), 200)
+	}
+	if r.Context().Err() != nil {
+		return
+	}
+	if err != nil {
+		writeEventHTTPError(w, http.StatusInternalServerError, "events", "event snapshot unavailable")
+		return
+	}
+	snapshot, err := json.Marshal(map[string]any{"type": "snapshot", "events": list})
+	if err != nil {
+		writeEventHTTPError(w, http.StatusInternalServerError, "events", "event snapshot unavailable")
+		return
+	}
+	if r.Context().Err() != nil {
 		return
 	}
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"127.0.0.1:*", "localhost:*"}})
 	if err != nil {
 		return
 	}
-	defer c.Close(websocket.StatusNormalClosure, "")
-	list, _ := s.Svc.Store.EventsSince(0, 200)
-	b, _ := json.Marshal(map[string]any{"type": "snapshot", "events": list})
-	_ = c.Write(r.Context(), websocket.MessageText, b)
-	cursor := int64(0)
+	ctx, cancel := context.WithCancel(r.Context())
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer cancel()
+		_, _, err := c.Read(ctx)
+		if err == nil {
+			_ = c.Close(websocket.StatusPolicyViolation, "unexpected event socket message")
+		} else if !ordinaryEventDisconnect(ctx, err) {
+			slog.Warn("event socket read failed")
+		}
+	}()
+	defer func() { cancel(); _ = c.CloseNow(); <-readDone }()
+	if !writeEventSocket(ctx, c, snapshot) {
+		return
+	}
 	if len(list) > 0 {
 		cursor = list[len(list)-1].Seq
 	}
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		more, err := s.Svc.Store.EventsSinceContext(ctx, cursor, 50)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("event socket catalog read failed")
+				_ = c.Close(websocket.StatusInternalError, "event read failed")
+			}
+			return
+		}
+		for _, e := range more {
+			payload, err := json.Marshal(map[string]any{"type": "event", "event": e})
+			if err != nil {
+				slog.Warn("event socket encoding failed")
+				_ = c.Close(websocket.StatusInternalError, "event encoding failed")
+				return
+			}
+			if !writeEventSocket(ctx, c, payload) {
+				return
+			}
+			cursor = e.Seq
+		}
+		if len(more) == 50 {
+			continue
+		}
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-tick.C:
-			more, err := s.Svc.Store.EventsSince(cursor, 50)
-			if err != nil || len(more) == 0 {
-				continue
-			}
-			for _, e := range more {
-				payload, _ := json.Marshal(map[string]any{"type": "event", "event": e})
-				if err := c.Write(r.Context(), websocket.MessageText, payload); err != nil {
-					return
-				}
-				cursor = e.Seq
-			}
 		}
 	}
+}
+
+func writeEventHTTPError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": code, "message": message}); err != nil {
+		slog.Warn("event socket HTTP diagnostic write failed")
+	}
+}
+
+func eventCursor(rawQuery string) (int64, bool, error) {
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return 0, false, err
+	}
+	values, supplied := query["cursor"]
+	if !supplied {
+		return 0, false, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return 0, true, errors.New("invalid cursor")
+	}
+	for _, digit := range values[0] {
+		if digit < '0' || digit > '9' {
+			return 0, true, errors.New("invalid cursor")
+		}
+	}
+	cursor, err := strconv.ParseInt(values[0], 10, 64)
+	return cursor, true, err
+}
+
+func writeEventSocket(ctx context.Context, c *websocket.Conn, payload []byte) bool {
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := c.Write(writeCtx, websocket.MessageText, payload); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || !ordinaryEventDisconnect(ctx, err) {
+			slog.Warn("event socket write failed")
+		} else {
+			slog.Info("event socket write ended")
+		}
+		return false
+	}
+	return true
+}
+
+func ordinaryEventDisconnect(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	status := websocket.CloseStatus(err)
+	if status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway || status == websocket.StatusNoStatusRcvd {
+		return true
+	}
+	var networkError *net.OpError
+	return errors.As(err, &networkError) && !networkError.Timeout()
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

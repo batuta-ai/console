@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -352,10 +353,14 @@ func (s catalogWriter) AppendEvent(kind string, payload map[string]any) (domain.
 }
 
 func (s *Store) EventsSince(cursor int64, limit int) ([]domain.Event, error) {
+	return s.EventsSinceContext(context.Background(), cursor, limit)
+}
+
+func (s *Store) EventsSinceContext(ctx context.Context, cursor int64, limit int) ([]domain.Event, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := s.db.Query(`SELECT seq,at,kind,payload FROM events WHERE seq>? ORDER BY seq LIMIT ?`, cursor, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT seq,at,kind,payload FROM events WHERE seq>? ORDER BY seq LIMIT ?`, cursor, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -367,8 +372,13 @@ func (s *Store) EventsSince(cursor int64, limit int) ([]domain.Event, error) {
 		if err := rows.Scan(&e.Seq, &at, &e.Kind, &payload); err != nil {
 			return nil, err
 		}
-		e.At, _ = time.Parse(time.RFC3339Nano, at)
-		_ = json.Unmarshal([]byte(payload), &e.Payload)
+		e.At, err = time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d timestamp: %w", e.Seq, err)
+		}
+		if err := json.Unmarshal([]byte(payload), &e.Payload); err != nil {
+			return nil, fmt.Errorf("decode event %d payload: %w", e.Seq, err)
+		}
 		out = append(out, e)
 	}
 	if out == nil {
@@ -378,10 +388,14 @@ func (s *Store) EventsSince(cursor int64, limit int) ([]domain.Event, error) {
 }
 
 func (s *Store) EventsRecent(limit int) ([]domain.Event, error) {
+	return s.EventsRecentContext(context.Background(), limit)
+}
+
+func (s *Store) EventsRecentContext(ctx context.Context, limit int) ([]domain.Event, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.Query(`SELECT seq,at,kind,payload FROM events ORDER BY seq DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT seq,at,kind,payload FROM events ORDER BY seq DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -393,8 +407,13 @@ func (s *Store) EventsRecent(limit int) ([]domain.Event, error) {
 		if err := rows.Scan(&e.Seq, &at, &e.Kind, &payload); err != nil {
 			return nil, err
 		}
-		e.At, _ = time.Parse(time.RFC3339Nano, at)
-		_ = json.Unmarshal([]byte(payload), &e.Payload)
+		e.At, err = time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d timestamp: %w", e.Seq, err)
+		}
+		if err := json.Unmarshal([]byte(payload), &e.Payload); err != nil {
+			return nil, fmt.Errorf("decode event %d payload: %w", e.Seq, err)
+		}
 		out = append(out, e)
 	}
 	if out == nil {
