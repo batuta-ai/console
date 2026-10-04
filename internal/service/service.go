@@ -392,17 +392,14 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 		capacity = acct.SessionCap
 	}
 
-	argv := in.Argv
-	if len(argv) == 0 {
-		if path, err := ad.Lookup(); err == nil {
-			argv = []string{path}
-			if msn.Brief != "" {
-				argv = append(argv, cliPrompt(adapterID, sessionPrompt(in.inject(), msn.Brief))...)
-			}
-		} else {
-			argv = []string{"/bin/sh"}
-		}
+	command, err := ad.Command(adapters.CommandRequest{
+		Mode: "interactive", Prompt: sessionPrompt(in.inject(), msn.Brief),
+		Model: bound.Model, Effort: bound.Effort, Argv: in.Argv,
+	})
+	if err != nil {
+		return domain.Session{}, err
 	}
+
 	profile := batuta.Prepare(ws.Root, in.inject())
 	env := append([]string{}, profile.Env...)
 	if len(bound.Skills) > 0 {
@@ -414,14 +411,14 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	env = append(env, accountEnv...)
 	sess := domain.Session{
 		ID: domain.NewID("s_"), MissionID: msn.ID, WorkspaceID: ws.ID, MemberID: member.ID,
-		AccountID: in.AccountID, Adapter: adapterID, Argv: argv, Process: "running", Work: "interactive",
+		AccountID: in.AccountID, Adapter: adapterID, Argv: command.Argv, Process: "running", Work: "interactive",
 		Owner: in.Owner, OwnerClient: in.Client, Cols: 110, Rows: 40, BatutaInjected: profile.Enabled,
 		SkillsVersion: profile.SkillsVersion, CreatedAt: domain.Now(),
 	}
 	if sess.Owner == "" {
 		sess.Owner = "none"
 	}
-	return s.startAndPersist(sess, env, ws.Root, capacity, "session.started", map[string]any{"id": sess.ID, "adapter": sess.Adapter, "batuta": sess.BatutaInjected})
+	return s.startAndPersist(sess, env, ws.Root, capacity, "session.started", map[string]any{"id": sess.ID, "adapter": sess.Adapter, "batuta": sess.BatutaInjected, "command": command.Report})
 }
 
 // ReconcileSessions must finish before the daemon opens its listener.
@@ -565,12 +562,13 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 	if err != nil {
 		return domain.Session{}, err
 	}
-	path, err := ad.Lookup()
+	command, err := ad.Command(adapters.CommandRequest{Mode: "login"})
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("%s is not on PATH", ad.CLI)
+		return domain.Session{}, err
 	}
+
 	sess := domain.Session{
-		ID: domain.NewID("s_"), AccountID: a.ID, Adapter: ad.ID, Argv: []string{path},
+		ID: domain.NewID("s_"), AccountID: a.ID, Adapter: ad.ID, Argv: command.Argv,
 		Process: "running", Work: "login", Owner: owner, OwnerClient: client,
 		Cols: 110, Rows: 40, CreatedAt: domain.Now(),
 	}
@@ -581,7 +579,7 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 	if err != nil {
 		return domain.Session{}, err
 	}
-	return s.startAndPersist(sess, env, ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID})
+	return s.startAndPersist(sess, env, ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID, "command": command.Report})
 }
 
 func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Session, error) {
@@ -606,16 +604,15 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Se
 	} else if ok {
 		return live, nil
 	}
-	argv, extra, err := s.initCLI()
+	ad, command, extra, err := s.initCLI(initPrompt(brief))
 	if err != nil {
 		return domain.Session{}, err
 	}
-	argv = append(argv, cliPrompt(filepath.Base(argv[0]), initPrompt(brief))...)
 	profile := batuta.Prepare(ws.Root, true)
 	env := append(append([]string{}, profile.Env...), extra...)
 	env = append(env, "BATUTA_INIT="+strings.Join(strings.Fields(brief), " "))
 	sess := domain.Session{
-		ID: domain.NewID("s_"), WorkspaceID: ws.ID, Adapter: filepath.Base(argv[0]), Argv: argv,
+		ID: domain.NewID("s_"), WorkspaceID: ws.ID, Adapter: ad.ID, Argv: command.Argv,
 		Process: "running", Work: "init", Owner: owner, OwnerClient: client,
 		Cols: 110, Rows: 40, BatutaInjected: profile.Enabled, SkillsVersion: profile.SkillsVersion,
 		CreatedAt: domain.Now(),
@@ -623,14 +620,17 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Se
 	if sess.Owner == "" {
 		sess.Owner = "web"
 	}
-	return s.startAndPersist(sess, env, ws.Root, 0, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID})
+	return s.startAndPersist(sess, env, ws.Root, 0, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID, "command": command.Report})
 }
 
 func sessionPrompt(inject bool, brief string) string {
-	brief = strings.TrimSpace(brief)
+	if strings.TrimSpace(brief) == "" {
+		return ""
+	}
 	if !inject {
 		return brief
 	}
+	brief = strings.TrimSpace(brief)
 	return "Use batuta-plan for this mission. Do not implement yet. Write .batuta/plans/<slug>.md with tasks, scope and acceptance criteria, set Status to proposed, and wait for approval.\n\nGoal:\n" + brief
 }
 
@@ -638,24 +638,12 @@ func initPrompt(brief string) string {
 	return "Run batuta-init for this project. Write .batuta/profile.md and .batuta/routing.md from these answers, then stop.\n\n" + strings.TrimSpace(brief)
 }
 
-func cliPrompt(adapter, prompt string) []string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return nil
-	}
-	switch adapter {
-	case "codex", "claude":
-		return []string{prompt}
-	default:
-		return nil
-	}
-}
-
-func (s *Service) initCLI() ([]string, []string, error) {
+func (s *Service) initCLI(prompt string) (adapters.Adapter, adapters.Command, []string, error) {
 	accounts, err := s.Store.ListAccounts()
 	if err != nil {
-		return nil, nil, err
+		return adapters.Adapter{}, adapters.Command{}, nil, err
 	}
+	request := adapters.CommandRequest{Mode: "init", Prompt: prompt}
 	for _, a := range accounts {
 		a = s.DecorateAccount(a)
 		if !a.Authed {
@@ -665,28 +653,36 @@ func (s *Service) initCLI() ([]string, []string, error) {
 		if err != nil || (a.Adapter != "codex" && a.Adapter != "claude") {
 			continue
 		}
-		path, err := ad.Lookup()
+		command, err := ad.Command(request)
 		if err != nil {
+			if errors.Is(err, adapters.ErrInvalidCommand) {
+				return ad, command, nil, err
+			}
 			continue
 		}
 		env, err := ad.IsolateEnv(s.Home, a)
 		if err != nil {
-			return nil, nil, err
+			return ad, command, nil, err
 		}
-		return []string{path}, env, nil
+		return ad, command, env, nil
 	}
-	for _, id := range []string{"codex", "claude", "cursor-agent"} {
+	var failures []error
+	for _, id := range []string{"codex", "claude"} {
 		ad, err := adapters.Get(id)
 		if err != nil {
-			continue
+			return ad, adapters.Command{}, nil, err
 		}
-		path, err := ad.Lookup()
+		command, err := ad.Command(request)
 		if err != nil {
+			if errors.Is(err, adapters.ErrInvalidCommand) {
+				return ad, command, nil, err
+			}
+			failures = append(failures, err)
 			continue
 		}
-		return []string{path}, nil, nil
+		return ad, command, nil, nil
 	}
-	return nil, nil, fmt.Errorf("no CLI on PATH for project setup")
+	return adapters.Adapter{}, adapters.Command{}, nil, fmt.Errorf("no supported CLI on PATH for project setup: %w", errors.Join(failures...))
 }
 
 func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) {

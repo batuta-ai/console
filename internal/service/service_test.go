@@ -68,15 +68,17 @@ func TestSaveSquadPreservesBatutaOrigin(t *testing.T) {
 }
 
 func TestSessionPrompt(t *testing.T) {
-	got := cliPrompt("codex", sessionPrompt(true, "Add a health check"))
-	if len(got) != 1 || !strings.Contains(got[0], "batuta-plan") || !strings.Contains(got[0], "Add a health check") {
+	got := sessionPrompt(true, "Add a health check")
+	if !strings.Contains(got, "batuta-plan") || !strings.Contains(got, "Add a health check") {
 		t.Fatalf("%q", got)
 	}
-	if extra := cliPrompt("cursor-agent", "hello"); extra != nil {
-		t.Fatalf("cursor should not get a positional prompt: %v", extra)
-	}
-	if plain := cliPrompt("codex", sessionPrompt(false, "just the goal")); len(plain) != 1 || plain[0] != "just the goal" {
+	if plain := sessionPrompt(false, "  just the goal  "); plain != "  just the goal  " {
 		t.Fatalf("%q", plain)
+	}
+	for _, inject := range []bool{false, true} {
+		if blank := sessionPrompt(inject, " \t\n "); blank != "" {
+			t.Fatalf("blank goal: %q", blank)
+		}
 	}
 }
 
