@@ -24,6 +24,7 @@ import (
 	"github.com/batuta-ai/console/internal/hostfs"
 	"github.com/batuta-ai/console/internal/i18n"
 	"github.com/batuta-ai/console/internal/service"
+	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
 	"github.com/coder/websocket"
 )
@@ -98,12 +99,14 @@ func (s *Server) checkToken(r *http.Request) bool {
 }
 
 func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{
-		"api": "v0", "product": "batuta-console",
-		"lang":         i18n.Lang(),
-		"integrations": []string{"generic", "batuta"},
-		"adapters":     adapters.IDs(),
-		"features":     map[string]any{"pty": true, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
+	pty := session.ObservePTY(r.Context())
+	writeJSON(w, capabilityResponse{
+		API: "v0", Product: "batuta-console", Lang: i18n.Lang(),
+		Integrations: []string{"generic", "batuta"}, Adapters: adapters.IDs(),
+		Features: map[string]bool{"pty": pty.Available, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
+		Runtime:  runningRuntime(),
+		Matrix:   releaseMatrix{Platforms: []string{"darwin", "linux"}, Providers: []string{"codex", "claude"}, Qualification: domain.CapabilityFact{Status: "pending", Code: "release_qualification_pending"}},
+		PTY:      pty, Providers: adapters.Capabilities(r.Context()),
 	})
 }
 

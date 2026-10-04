@@ -59,7 +59,7 @@ func (c *ReadinessChecker) CheckCLI(ctx context.Context, home string, account do
 		r.Code = "adapter_unsupported"
 		return r
 	}
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+	if !SelectedPlatform(runtime.GOOS) {
 		r.Code = "platform_unsupported"
 		return r
 	}
@@ -97,7 +97,7 @@ func (c *ReadinessChecker) CheckCLI(ctx context.Context, home string, account do
 		r.Code = "check_cancelled"
 		return r
 	}
-	qualified := ad.ID == "codex" && banner == "codex-cli 0.160.0" || ad.ID == "claude" && (banner == "2.1.286 (Claude Code)" || banner == "2.1.289 (Claude Code)")
+	qualified := compatibleBanner(ad.ID, banner)
 	if !qualified {
 		r.Code = "cli_incompatible"
 		return r

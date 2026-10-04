@@ -73,6 +73,64 @@ Console tag (`go install ...@<tag>`) remains pending publication and verificatio
 The core pre-release is selected for development; stable publication still
 requires qualification against a stable core/plugin contract.
 
+## Selected platform and provider matrix
+
+The selected release matrix is **Codex and Claude on macOS and Linux**.
+Selection describes the intended product scope; native operational and full
+provider, mission, browser and TUI qualification remain pending. Windows is
+excluded: its PTY start/resize implementation rejects operations. Other adapter
+catalog entries remain visible for compatibility but are outside this matrix.
+Sporadic WSL fork `EPERM` and stable core/plugin publication evidence remain open.
+Source installation or component cross-compilation does not qualify a release.
+
+`GET /v0/capabilities` retains `api`, `product`, `lang`, `integrations`, the
+`adapters` string list and the existing `features` keys. New typed objects expose:
+
+- `runtime`: the running binary's `os`, `arch`, `go_version`, and `selected`
+  platform status. `build.version` comes from Go build information, including a
+  VCS-derived pseudo-version for an untagged Git build, or `(devel)` when
+  reported by the toolchain. Unavailable version/revision values are `unknown`,
+  and unavailable VCS modification status is `null`. This is build provenance,
+  not qualification or a claim that the current source matches that binary.
+- `matrix`: selected `platforms` (`darwin`, `linux`) and `providers` (`codex`,
+  `claude`), with release `qualification.status = pending`.
+- `pty`: `supported` means the running platform has the selected native backend.
+  `available` means a request-local PTY allocation, resize and descriptor close
+  succeeded, without launching a process. `code` is `pty_available`,
+  `pty_unavailable`, `check_cancelled` or `platform_unsupported`. The legacy
+  `features.pty` mirrors `available`; it is false on Windows and on observation
+  failure. Availability is a point-in-time observation, not a launch guarantee.
+  Native backend availability still leaves operational qualification `pending`;
+  excluded platforms have qualification `unsupported`.
+- `providers`: each catalog adapter has `id`, `cli`, `selected`, `supported`,
+  its existing static `isolation` label, and separate evidence facts.
+  `installation.status` is `present`/`missing` (`cli_present`/`cli_missing`) from
+  executable PATH lookup, or `not_checked`/`check_cancelled`. Presence includes
+  outside-matrix executables and never proves compatibility or readiness.
+  `compatibility` is `not_checked`/`isolated_account_required` on the selected
+  platform/provider pairs, otherwise `unsupported` with `adapter_unsupported`
+  or `platform_unsupported`. `compatible_banners` shares the existing per-account
+  readiness policy:
+  Codex `codex-cli 0.160.0`; Claude `2.1.286 (Claude Code)` and
+  `2.1.289 (Claude Code)`. Banners describe the policy, not an observed version.
+  `account_readiness` is always `not_checked`/`account_readiness_required`;
+  `qualification` is `pending`/`native_operation_qualification_pending` for
+  selected pairs, otherwise `unsupported` with the same exclusion diagnostic.
+
+Capabilities queries inspect no account credentials, authenticate with no
+provider, execute no CLI and mutate no catalog or account state. Local filesystem
+and PTY syscalls are synchronous; cancellation is checked around observations,
+with PTY resources closed before returning. Cancellation cannot interrupt an
+in-progress syscall, and no hard deadline is guaranteed for synchronous syscalls.
+Diagnostics omit private paths and raw error/output text. A cancelled query does not imply installation absence.
+The existing per-account `AccountReadiness` checks remain the authority for
+login, init and execution: an explicit connected isolated account, bounded exact
+CLI version check and fresh provider authentication are separate requirements.
+Static isolation labels, installed executables, synthetic version fixtures and
+native PTY availability cannot substitute for these guards or full release QA.
+This endpoint supplies metadata for later clients; it adds no web/TUI flow and
+does not enable blocked operations.
+
 ## Develop
 
 The web UI lives in `web/` and is embedded from `internal/webui/dist`.
