@@ -2,11 +2,12 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Fechar os bloqueadores de segurança → tarefas5–9 verificadas; próxima tarefa10: isolamento de credenciais por conta. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
+- [ ] Fechar os bloqueadores de segurança → tarefas5–11 verificadas; próxima tarefa12: validar referências antes de spawn. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa10 — ambiente fechado, identidade sintética A/B e limpeza de homes privados qualificados no macOS/WSL2 → self/session critical, refinamentos de cobertura, claude/sonnet4/4; commit812acff (trilha: .batuta/runs/2026-10-03-credential-isolation.md). Falha esporádica de start PTY Linux permanece pendente38/40/41, sem causa/correção confirmada.
 - [x] Tarefa9 — stop/natural exit do grupo original e shutdown com deadline, callback/descritores drenados, replay/resize e processos alheios preservados; macOS e WSL2 nativos verdes → codex/gpt-6-astra high, um retry, escalação crítica self e revisão claude/sonnet5/5; commit006c216 (trilha: .batuta/runs/2026-10-03-process-tree.md).
 - [x] Tarefa8 — recuperação antes do listener, migração/identidade sem adotar PID antigo, stop terminal idempotente e corrida de término corrigida; host e Linux nativo verdes → codex/gpt-6-astra high, um retry e escalação crítica self; claude/sonnet5/5, commit ed66a40 (trilha: .batuta/runs/2026-10-03-startup-recovery.md).
 - [x] Tarefa 7 — reserva de capacidade antes do spawn, reuse serializado e estado terminal preservado; Go/race, web e tipos verdes no host → codex/gpt-6-astra high, uma correção de imports e provas; claude/sonnet 5/5, commit 5798bf0 (trilha: .batuta/runs/2026-10-03-session-admission.md).
@@ -32,3 +33,5 @@ Qualificação de runtime: em 2026-10-03 o usuário confirmou testes no macOS lo
 Autorização adicional em 2026-10-03: o usuário permite selecionar Codex/Claude disponíveis neste Mac para a qualificação. Informou aliases SSH windows ou server e autorizou instalar uma distribuição no WSL2, atualmente sem distro em execução. Verificar resolução/conexão e estado antes de instalar; manter isolamento de credenciais do produto e registrar os perfis efetivamente selecionados.
 
 Preparação Linux: SSH server confirmado (Windows_NT), WSL2 ativo com Docker Desktop. Instalação autorizada de Ubuntu-26.04 por comando sem TTY não retornou; somente os processos do instalador dessa distro foram interrompidos. Repetição em SSH com TTY mostrou download de Ubuntu 26.04 LTS. Instalação, usuário de QA e toolchains foram concluídos. O snapshot422e0e0 passou em Linux nativo nos testes race5 de session/service/store/api/consoled, na observação WNOWAIT de processos reais e no build dos dois comandos. Somente o escopo da recuperação foi qualificado; fluxos completos de produto seguem pendentes. A rodada de revisão da tarefa 8 foi cancelada no transporte antes da entrega, com reds e alterações parciais preservados; continuidade no mesmo codex/gpt-6-astra high, sem mudar rota e sem tratar como aprovação.
+
+Pendência nativa de qualificação: fork/exec /bin/cat EPERM apareceu uma vez na última matriz WSL; focused200/full-race5 sob strace e repeat sem ptrace passaram. Não é uma prova de correção da falha: fechamento Linux completo38/40/41 precisa resolver sua confiabilidade. Registro .batuta/runs/2026-10-03-credential-isolation.native-spawn-diagnosis.md.

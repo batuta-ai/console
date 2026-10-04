@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +41,16 @@ func Resolve(home, listen string) (Paths, error) {
 	if err := requireLoopback(listen); err != nil {
 		return Paths{}, err
 	}
+	if err := os.MkdirAll(home, 0700); err != nil {
+		return Paths{}, err
+	}
+	dir, err := privateDirectory(home)
+	if err != nil {
+		return Paths{}, err
+	}
+	if err := dir.Close(); err != nil {
+		return Paths{}, err
+	}
 	if err := os.MkdirAll(filepath.Join(home, "logs"), 0o700); err != nil {
 		return Paths{}, err
 	}
@@ -54,27 +62,6 @@ func Resolve(home, listen string) (Paths, error) {
 		Logs:   filepath.Join(home, "logs"),
 		Listen: listen,
 	}, nil
-}
-
-func LoadOrCreateAuth(path string) (string, error) {
-	b, err := os.ReadFile(path)
-	if err == nil {
-		tok := string(b)
-		if len(tok) >= 32 {
-			return tok, nil
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	tok := hex.EncodeToString(raw[:])
-	if err := os.WriteFile(path, []byte(tok), 0o600); err != nil {
-		return "", err
-	}
-	return tok, nil
 }
 
 func requireLoopback(listen string) error {
@@ -99,30 +86,33 @@ type LockInfo struct {
 }
 
 func WriteLock(path string, info LockInfo) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	dir, err := privateDirectory(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("daemon already running: %w", err)
+	f, err := privateFileAt(dir, filepath.Base(path), syscall.O_CREAT|syscall.O_RDWR)
+	err = errors.Join(err, dir.Close())
+	if err != nil {
+		if f != nil {
+			err = errors.Join(err, f.Close())
+		}
+		return nil, err
+	}
+	if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return nil, errors.Join(fmt.Errorf("daemon already running: %w", err), f.Close())
 	}
 	if err := f.Truncate(0); err != nil {
-		f.Close()
-		return nil, err
+		return nil, errors.Join(err, f.Close())
 	}
 	enc, err := json.Marshal(info)
 	if err != nil {
-		f.Close()
-		return nil, err
+		return nil, errors.Join(err, f.Close())
 	}
 	if _, err := f.Write(enc); err != nil {
-		f.Close()
-		return nil, err
+		return nil, errors.Join(err, f.Close())
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return nil, err
+		return nil, errors.Join(err, f.Close())
 	}
 	return f, nil
 }
