@@ -149,6 +149,32 @@ running; reconnect resumes that transport. Input and native PTY resize continue
 to require the current owner client. Resize changes terminal dimensions without
 changing group authority or stopping the process.
 
+## Internal diagnostics
+
+On macOS and Linux, Manager also runs internal diagnostic commands without a
+PTY, session row, replay buffer, transcript or exit callback. Commands receive
+the same closed runtime environment as sessions. Without an explicitly supplied
+private HOME, each command gets a temporary credentialless HOME that is removed
+after its owned group, command waiter and output readers finish.
+
+Diagnostics have a five-second maximum deadline and a shared 32 KiB budget for
+stdout and stderr. Only a successful command with completed cleanup returns
+stdout in memory. Stderr is discarded; errors, cancellation, excess output and
+unsuccessful exits return no raw output. Callers must not persist returned
+credential-bearing data in session logs. Unsupported platforms refuse the
+command before spawning.
+
+A successful Setsid start establishes the same unreaped-child group authority
+as a PTY session. Natural exit, cancellation and Manager shutdown sweep only
+that original group before the sole command waiter reaps the leader. Shutdown
+closes diagnostic admission and waits for admitted commands, including starts
+racing shutdown. A caller timeout may return before cleanup finishes; Manager
+retains that work until drain completes. Escaped groups are outside containment.
+After leader exit, a 250 ms pipe-drain bound closes inherited output descriptors
+that escaped descendants keep open and reports an error instead of successful
+truncated output. Ordinary nonzero diagnostic exits and output-limit errors do
+not count as failed group cleanup.
+
 ## Storage and sources
 
 Schema 3 adds non-null `process_identity` and `recovery_reason`, defaulting to

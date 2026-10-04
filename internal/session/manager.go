@@ -36,6 +36,7 @@ type live struct {
 type Manager struct {
 	mu            sync.Mutex
 	live          map[string]*live
+	probes        map[*ownedProcess]struct{}
 	logs          string
 	accounts      map[string]int
 	OnExit        func(domain.Session)
@@ -48,7 +49,7 @@ type Manager struct {
 }
 
 func New(logs string) *Manager {
-	return &Manager{live: map[string]*live{}, logs: logs, accounts: map[string]int{}, shutdownDone: make(chan struct{})}
+	return &Manager{live: map[string]*live{}, probes: map[*ownedProcess]struct{}{}, logs: logs, accounts: map[string]int{}, shutdownDone: make(chan struct{})}
 }
 
 func (m *Manager) Live(id string) (*live, bool) {
@@ -364,11 +365,20 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		for _, l := range m.live {
 			sessions = append(sessions, l)
 		}
+		probes := make([]*ownedProcess, 0, len(m.probes))
+		for p := range m.probes {
+			probes = append(probes, p)
+		}
 		m.mu.Unlock()
 		go func() {
 			for _, l := range sessions {
 				if err := l.owned.stop(); err != nil {
 					m.recordCleanup(fmt.Errorf("shutdown PID %d: %w", l.cmd.Process.Pid, err), nil)
+				}
+			}
+			for _, p := range probes {
+				if err := p.stop(); err != nil {
+					m.recordCleanup(err, err)
 				}
 			}
 			m.active.Wait()

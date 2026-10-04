@@ -14,7 +14,7 @@ import (
 var errAnchorLost = errors.New("owned unreaped child is no longer observable")
 var errGroupExiting = errors.New("owned group exit is pending verification")
 
-// Only successful startPTY may create this authority: Setsid establishes PID =
+// Only a successful Setsid start may create this authority: it establishes PID =
 // PGID. The sole reaper must retire it under mu before calling Cmd.Wait. Neither
 // catalog identity nor current membership can establish this authority later.
 type ownedProcess struct {
@@ -74,6 +74,11 @@ func (p *ownedProcess) retire(observeErr error) error {
 }
 
 func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
+	cleanupErr, waitErr := waitOwnedOutcome(cmd, p)
+	return errors.Join(cleanupErr, waitErr)
+}
+
+func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 	observeErr := observeOwnedExit(cmd.Process.Pid)
 	cleanupErr := p.retire(observeErr)
 	waitErr := cmd.Wait()
@@ -81,5 +86,5 @@ func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
 	if errors.As(waitErr, &exitErr) {
 		waitErr = nil
 	}
-	return errors.Join(cleanupErr, waitErr)
+	return cleanupErr, waitErr
 }

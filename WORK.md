@@ -2,7 +2,7 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Fechar os bloqueadores de segurança → tarefas5–12 verificadas; próxima tarefa13: argv oficial e ausência de fallback silencioso. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
+- [ ] Fechar os bloqueadores de segurança → tarefas5–12 verificadas; tarefa13 concluída; tarefa14: readiness/autenticação, com pré-requisito14a de probes qualificado. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
@@ -25,6 +25,7 @@
 - [x] Auditar o projeto para publicação estável: 28 achados, 6 P0, 14 P1 e 8 P2 → condutor self e revisão independente claude/sonnet; sem commit (relatórios: docs/release-readiness.md e docs/release-readiness-evidence.md; trilha: .batuta/runs/2026-10-02-release-readiness.review.md).
 - [x] Concluir Batuta init e preparar plano proposto em 2026-10-03 → condutor self; inventário de todos os adapters, mapa verificado após dois timeouts opencode/ling-3.1-flash-free e um timeout codex/gpt-6.1-sol, guards limpos; self-check, stamps, modelos e parsers do core validados; sem commit e sem ponteiro AGENTS.md, ambos opcionais sem autorização específica.
 
+- [x] Tarefa13: comandos oficiais e sem fallback shell → codex/gpt-6-astra high CLI; TDD real, rootMac/Linuxrace5/perfil/build0, Sonnet4/4 após completar pacote de evidências, sem retry/escalation de código; commit 5e7f01d86815ddc80eaadb412cb1dd6d6fcb5278; sintaxe0.160.0/2.1.286 e limites14/16/26/35/38–41 registrados.
 ## Contexto para retomar
 O usuário pediu iniciar Batuta init, planejar a correção dos bloqueadores e depois revisar o painel web e a TUI. O usuário aprovou o plano e commit inicial em 2026-10-03, exigindo TDD sempre e releases mais recentes das bibliotecas. O plano está in progress e os aceites descrevem provas futuras. O usuário escolheu Codex e Claude, macOS e Linux, e operação completa no web e na TUI. A revisão incluiu contratos do cliente, emulação de terminal e onboarding/contas/workspace/missão/aprovação/execução/perguntas na TUI, totalizando 41 tarefas após incluir a atualização explícita das bibliotecas. A versão estável exata de core/plugin e o destino de publicação continuam pendentes. A auditoria registrou falhas de race e govulncheck. O scan de fonte ficou sem achados nas tarefas2/4; os casos de race das tarefas 6/7 passaram no host; isso ainda não qualifica todos os fluxos de lançamento. O usuário autorizou os perfis Codex/Claude locais para qualificação; selecionar e registrar perfis isolados nas tarefas39/40, sem fallback automático a credenciais do daemon.
 
