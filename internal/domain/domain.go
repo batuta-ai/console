@@ -2,7 +2,9 @@ package domain
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -224,4 +226,40 @@ func ResolveBinding(workspace, mission, member, squad Member) Member {
 	overlay(mission)
 	overlay(workspace)
 	return out
+}
+
+// ErrInvalidReference distinguishes incompatible input from catalog failures.
+var ErrInvalidReference = errors.New("invalid catalog reference")
+
+// SelectSnapshotMember keeps historical membership authoritative. Generic sessions
+// still require a mission/workspace; only explicit injection opt-out permits an
+// empty snapshot. Configuration inheritance must never change this selected ID.
+func SelectSnapshotMember(snapshot Squad, id string, inject bool) (Member, error) {
+	if len(snapshot.Members) == 0 {
+		if id != "" {
+			return Member{}, fmt.Errorf("member %q: %w", id, sql.ErrNoRows)
+		}
+		if inject {
+			return Member{}, fmt.Errorf("%w: injection requires a snapshot member", ErrInvalidReference)
+		}
+		return Member{}, nil
+	}
+	seen := make(map[string]bool)
+	selected := snapshot.Members[0]
+	found := false
+	for _, member := range snapshot.Members {
+		if member.ID == "" || seen[member.ID] {
+			return Member{}, fmt.Errorf("%w: snapshot member IDs must be nonempty and unique", ErrInvalidReference)
+		}
+		seen[member.ID] = true
+		if id != "" && member.ID == id {
+			selected, found = member, true
+		} else if id == "" && member.Maestro {
+			selected = member
+		}
+	}
+	if id != "" && !found {
+		return Member{}, fmt.Errorf("member %q: %w", id, sql.ErrNoRows)
+	}
+	return selected, nil
 }

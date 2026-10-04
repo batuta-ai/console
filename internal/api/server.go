@@ -231,7 +231,7 @@ func (s *Server) createMission(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := s.Svc.CreateMission(in.WorkspaceID, in.Title, in.Brief, in.SquadID)
 	if err != nil {
-		writeErr(w, 400, "mission", err.Error())
+		writeErr(w, referenceStatus(err), "mission", err.Error())
 		return
 	}
 	writeJSON(w, m)
@@ -356,7 +356,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.Svc.StartSession(in)
 	if err != nil {
-		writeErr(w, 400, "session", err.Error())
+		writeErr(w, referenceStatus(err), "session", err.Error())
 		return
 	}
 	writeJSON(w, sess)
@@ -551,3 +551,16 @@ func writeErr(w http.ResponseWriter, code int, codeName, msg string) {
 }
 
 var _ = adapters.All
+
+func referenceStatus(err error) int {
+	if errors.Is(err, domain.ErrInvalidReference) {
+		return http.StatusBadRequest
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	if service.CatalogReferenceFailure(err) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadRequest
+}

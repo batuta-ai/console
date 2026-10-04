@@ -344,8 +344,8 @@ func TestUnknownAccountRejected(t *testing.T) {
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
 	_, code := postRaw(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": "nope", "argv": []string{"/bin/true"}})
-	if code != 400 {
-		t.Fatalf("unknown account must 400, got %d", code)
+	if code != 404 {
+		t.Fatalf("unknown account must 404, got %d", code)
 	}
 }
 

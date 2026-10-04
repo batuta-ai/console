@@ -174,18 +174,21 @@ func (s *Service) CreateMission(workspaceID, title, brief, squadID string) (doma
 	title = strings.TrimSpace(title)
 	brief = strings.TrimSpace(brief)
 	if title == "" || workspaceID == "" {
-		return domain.Mission{}, fmt.Errorf("workspace and title are required")
+		return domain.Mission{}, invalidReference("workspace and title are required")
+	}
+	if _, err := s.Store.GetWorkspace(workspaceID); err != nil {
+		return domain.Mission{}, catalogReferenceError{fmt.Errorf("workspace %q: %w", workspaceID, err)}
 	}
 	sq, err := s.Store.GetSquad(squadID)
 	if err != nil {
-		return domain.Mission{}, err
+		return domain.Mission{}, catalogReferenceError{err}
 	}
 	m := domain.Mission{
 		ID: domain.NewID("msn_"), WorkspaceID: workspaceID, Title: title, Brief: brief, SquadID: squadID,
 		SquadSnapshot: sq, Status: "open", CreatedAt: domain.Now(),
 	}
 	if err := s.Store.PutMissionWithEvent(m, "mission.created", map[string]any{"id": m.ID, "title": m.Title, "squad": sq.ID, "squad_version": sq.Version}); err != nil {
-		return m, err
+		return m, catalogReferenceError{err}
 	}
 	return m, nil
 }
@@ -303,6 +306,9 @@ func bindVacant(q domain.Squad, byCLI map[string]string) (domain.Squad, bool) {
 	return q, changed
 }
 
+// StartSessionIn always references a catalog mission and an existing workspace
+// directory. Inject=false skips Batuta injection, not reference validation.
+// Empty snapshots are permitted only with explicit injection opt-out and no member.
 type StartSessionIn struct {
 	MissionID string   `json:"mission_id"`
 	MemberID  string   `json:"member_id,omitempty"`
@@ -324,34 +330,33 @@ func (in StartSessionIn) inject() bool {
 func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	msn, err := s.Store.GetMission(in.MissionID)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, catalogReferenceError{err}
 	}
 	ws, err := s.Store.GetWorkspace(msn.WorkspaceID)
 	if err != nil {
+		return domain.Session{}, catalogReferenceError{err}
+	}
+	info, err := os.Stat(ws.Root)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("%w: workspace root: %w", domain.ErrInvalidReference, err)
+	}
+	if !info.IsDir() {
+		return domain.Session{}, invalidReference("workspace root is not a directory")
+	}
+	member, err := domain.SelectSnapshotMember(msn.SquadSnapshot, in.MemberID, in.inject())
+	if err != nil {
 		return domain.Session{}, err
 	}
-	var member domain.Member
-	for _, m := range msn.SquadSnapshot.Members {
-		if in.MemberID != "" && m.ID == in.MemberID {
-			member = m
-			break
-		}
-		if in.MemberID == "" && m.Maestro {
-			member = m
-		}
-	}
-	if in.MemberID == "" && member.ID == "" && len(msn.SquadSnapshot.Members) > 0 {
-		member = msn.SquadSnapshot.Members[0]
-	}
 	var squadMember domain.Member
-	if sq, err := s.Store.GetSquad(msn.SquadID); err == nil {
+	sq, err := s.Store.GetSquad(msn.SquadID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return domain.Session{}, catalogReferenceError{fmt.Errorf("current squad: %w", err)}
+	}
+	if err == nil && member.ID != "" {
 		for _, m := range sq.Members {
-			if member.ID != "" && m.ID == member.ID {
+			if m.ID == member.ID {
 				squadMember = m
 				break
-			}
-			if member.Maestro && m.Maestro {
-				squadMember = m
 			}
 		}
 	}
@@ -368,17 +373,17 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	}
 	ad, err := adapters.Get(adapterID)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, fmt.Errorf("%w: %w", domain.ErrInvalidReference, err)
 	}
 	capacity := 0
 	var accountEnv []string
 	if in.AccountID != "" {
 		acct, err := s.Store.GetAccount(in.AccountID)
 		if err != nil {
-			return domain.Session{}, fmt.Errorf("unknown account")
+			return domain.Session{}, catalogReferenceError{fmt.Errorf("account %q: %w", in.AccountID, err)}
 		}
 		if acct.Adapter != ad.ID {
-			return domain.Session{}, fmt.Errorf("account adapter does not match selected adapter")
+			return domain.Session{}, invalidReference("account adapter does not match selected adapter")
 		}
 		accountEnv, err = ad.IsolateEnv(s.Home, acct)
 		if err != nil {
@@ -408,7 +413,7 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	}
 	env = append(env, accountEnv...)
 	sess := domain.Session{
-		ID: domain.NewID("s_"), MissionID: msn.ID, WorkspaceID: ws.ID, MemberID: in.MemberID,
+		ID: domain.NewID("s_"), MissionID: msn.ID, WorkspaceID: ws.ID, MemberID: member.ID,
 		AccountID: in.AccountID, Adapter: adapterID, Argv: argv, Process: "running", Work: "interactive",
 		Owner: in.Owner, OwnerClient: in.Client, Cols: 110, Rows: 40, BatutaInjected: profile.Enabled,
 		SkillsVersion: profile.SkillsVersion, CreatedAt: domain.Now(),
@@ -771,3 +776,18 @@ func (s *Service) stopAfterFailure(id string, cause error) error {
 	}
 	return cause
 }
+
+func invalidReference(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", domain.ErrInvalidReference, fmt.Sprintf(format, args...))
+}
+
+// CatalogReferenceFailure identifies catalog I/O without classifying process or
+// account-admission errors as storage failures.
+func CatalogReferenceFailure(err error) bool {
+	var failure catalogReferenceError
+	return errors.As(err, &failure)
+}
+
+type catalogReferenceError struct{ error }
+
+func (e catalogReferenceError) Unwrap() error { return e.error }

@@ -103,7 +103,11 @@ func TestCatalogEventFailureRollsBack(t *testing.T) {
 				call = func() error { q.Name = "changed"; _, err := svc.SaveSquad(q); return err }
 			case "mission":
 				table = "missions"
-				call = func() error { _, err := svc.CreateMission("w", "new", "brief", q.ID); return err }
+				ws, err := svc.CreateWorkspace("fixture", t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				call = func() error { _, err := svc.CreateMission(ws.ID, "new", "brief", q.ID); return err }
 			case "account":
 				table = "accounts"
 				call = func() error { _, err := svc.CreateAccount("new", "codex"); return err }

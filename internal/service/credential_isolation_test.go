@@ -161,7 +161,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 	if err != nil {
 		t.Fatal(err)
 	}
-	squad, err := svc.SaveSquad(domain.Squad{Name: "fixture"})
+	squad, err := svc.SaveSquad(domain.Squad{Name: "fixture", Members: []domain.Member{{ID: "fixture-member"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

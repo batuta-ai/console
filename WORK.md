@@ -2,11 +2,12 @@
 
 ## In progress
 - [ ] Executar o plano aprovado de 41 tarefas com TDD e versões atuais → condutor self; plano aprovado em .batuta/plans/estabilizar-console.md.
-- [ ] Fechar os bloqueadores de segurança → tarefas5–11 verificadas; próxima tarefa12: validar referências antes de spawn. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
+- [ ] Fechar os bloqueadores de segurança → tarefas5–12 verificadas; próxima tarefa13: argv oficial e ausência de fallback silencioso. Grupo da PTY, stop/shutdown/timeout, replay e resize passaram no macOS e Linux nativo; qualificação completa dos provedores permanece39/40.
 - [ ] Revisitar a distribuição visual do web e da TUI depois do fechamento funcional → fase 2 de .batuta/roadmap.md, ainda sem desenho aprovado.
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa11 — token local serializado, arquivos/locks privados e publicação completa sem substituir final; short-write32 real red→green e matrizes nativas macOS/WSL2 qualificadas → self/session critical, duas revisões claude/sonnet4/4, commit a6eddea (trilha: .batuta/runs/2026-10-03-local-auth.md). Workaround Darwin marcado com causa inferior não confirmada; runtime Linux completo continua bloqueado pela falha PTY38/40/41.
 - [x] Tarefa10 — ambiente fechado, identidade sintética A/B e limpeza de homes privados qualificados no macOS/WSL2 → self/session critical, refinamentos de cobertura, claude/sonnet4/4; commit812acff (trilha: .batuta/runs/2026-10-03-credential-isolation.md). Falha esporádica de start PTY Linux permanece pendente38/40/41, sem causa/correção confirmada.
 - [x] Tarefa9 — stop/natural exit do grupo original e shutdown com deadline, callback/descritores drenados, replay/resize e processos alheios preservados; macOS e WSL2 nativos verdes → codex/gpt-6-astra high, um retry, escalação crítica self e revisão claude/sonnet5/5; commit006c216 (trilha: .batuta/runs/2026-10-03-process-tree.md).
 - [x] Tarefa8 — recuperação antes do listener, migração/identidade sem adotar PID antigo, stop terminal idempotente e corrida de término corrigida; host e Linux nativo verdes → codex/gpt-6-astra high, um retry e escalação crítica self; claude/sonnet5/5, commit ed66a40 (trilha: .batuta/runs/2026-10-03-startup-recovery.md).

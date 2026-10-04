@@ -127,3 +127,28 @@ func TestTaskRows(t *testing.T) {
 		t.Fatalf("%+v", rows)
 	}
 }
+
+func TestSnapshotSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, id, want string
+		members        []Member
+		inject         bool
+		invalid        bool
+	}{
+		{name: "last maestro", want: "b", members: []Member{{ID: "a", Maestro: true}, {ID: "b", Maestro: true}}},
+		{name: "first fallback", want: "a", members: []Member{{ID: "a"}, {ID: "b"}}},
+		{name: "explicit", id: "a", want: "a", members: []Member{{ID: "a"}, {ID: "b", Maestro: true}}},
+		{name: "empty generic"},
+		{name: "empty injected", inject: true, invalid: true},
+		{name: "duplicate even after match", id: "a", members: []Member{{ID: "a"}, {ID: "a"}}, invalid: true},
+		{name: "empty ID", members: []Member{{ID: ""}}, invalid: true},
+		{name: "foreign", id: "foreign", members: []Member{{ID: "a"}}, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SelectSnapshotMember(Squad{Members: tc.members}, tc.id, tc.inject)
+			if (err != nil) != tc.invalid || got.ID != tc.want {
+				t.Fatalf("got %+v err %v", got, err)
+			}
+		})
+	}
+}
