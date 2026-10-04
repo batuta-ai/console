@@ -229,15 +229,10 @@ func (s *Service) ConnectAccount(id string) (domain.Account, error) {
 	if err != nil {
 		return a, err
 	}
-	dir := ad.IsolateDir(s.Home, a.ID)
-	if dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return a, err
-		}
-		a.VaultRef = dir
-	} else {
-		a.VaultRef = "local:" + a.ID
+	if _, err := ad.IsolateEnv(s.Home, a); err != nil {
+		return a, err
 	}
+	a.VaultRef = ad.IsolateDir(s.Home, a.ID)
 	a.Connected = true
 	if err := s.Store.PutAccountWithEvent(a, "account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef}); err != nil {
 		return a, err
@@ -376,10 +371,18 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 		return domain.Session{}, err
 	}
 	capacity := 0
+	var accountEnv []string
 	if in.AccountID != "" {
 		acct, err := s.Store.GetAccount(in.AccountID)
 		if err != nil {
 			return domain.Session{}, fmt.Errorf("unknown account")
+		}
+		if acct.Adapter != ad.ID {
+			return domain.Session{}, fmt.Errorf("account adapter does not match selected adapter")
+		}
+		accountEnv, err = ad.IsolateEnv(s.Home, acct)
+		if err != nil {
+			return domain.Session{}, err
 		}
 		capacity = acct.SessionCap
 	}
@@ -403,15 +406,7 @@ func (s *Service) StartSession(in StartSessionIn) (domain.Session, error) {
 	if msn.Brief != "" {
 		env = append(env, "BATUTA_MISSION="+strings.Join(strings.Fields(msn.Brief), " "))
 	}
-	if in.AccountID != "" {
-		if acct, err := s.Store.GetAccount(in.AccountID); err == nil {
-			acctAd := ad
-			if a, err := adapters.Get(acct.Adapter); err == nil {
-				acctAd = a
-			}
-			env = append(env, acctAd.IsolateEnv(s.Home, acct)...)
-		}
-	}
+	env = append(env, accountEnv...)
 	sess := domain.Session{
 		ID: domain.NewID("s_"), MissionID: msn.ID, WorkspaceID: ws.ID, MemberID: in.MemberID,
 		AccountID: in.AccountID, Adapter: adapterID, Argv: argv, Process: "running", Work: "interactive",
@@ -577,7 +572,11 @@ func (s *Service) StartLogin(accountID, owner, client string) (domain.Session, e
 	if sess.Owner == "" {
 		sess.Owner = "web"
 	}
-	return s.startAndPersist(sess, ad.IsolateEnv(s.Home, a), ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID})
+	env, err := ad.IsolateEnv(s.Home, a)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	return s.startAndPersist(sess, env, ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID})
 }
 
 func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Session, error) {
@@ -665,7 +664,11 @@ func (s *Service) initCLI() ([]string, []string, error) {
 		if err != nil {
 			continue
 		}
-		return []string{path}, ad.IsolateEnv(s.Home, a), nil
+		env, err := ad.IsolateEnv(s.Home, a)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []string{path}, env, nil
 	}
 	for _, id := range []string{"codex", "claude", "cursor-agent"} {
 		ad, err := adapters.Get(id)

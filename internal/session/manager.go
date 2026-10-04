@@ -11,24 +11,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/batuta-ai/console/internal/accounts"
 	"github.com/batuta-ai/console/internal/domain"
 )
 
 type Subscriber func([]byte)
 
 type live struct {
-	sess       domain.Session
-	cmd        *exec.Cmd
-	pty        *os.File
-	mu         sync.Mutex
-	subs       map[int]Subscriber
-	next       int
-	log        *os.File
-	replay     []byte
-	done       chan struct{}
-	readDone   chan struct{}
-	owned      *ownedProcess
-	cleanupErr error
+	sess        domain.Session
+	cmd         *exec.Cmd
+	pty         *os.File
+	mu          sync.Mutex
+	subs        map[int]Subscriber
+	next        int
+	log         *os.File
+	replay      []byte
+	done        chan struct{}
+	readDone    chan struct{}
+	owned       *ownedProcess
+	cleanupErr  error
+	privateHome string
 }
 
 type Manager struct {
@@ -80,7 +82,7 @@ func (p *Pending) Persist(write func(domain.Session) error) (domain.Session, err
 
 // StartPending reserves account capacity before spawning. Nonpositive capacity
 // is unlimited; all account-bound starts still contribute to the same count.
-func (m *Manager) StartPending(sess domain.Session, env []string, dir string, capacity int) (*Pending, error) {
+func (m *Manager) StartPending(sess domain.Session, env []string, dir string, capacity int) (pending *Pending, startErr error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -96,12 +98,24 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 	m.active.Add(1)
 	m.mu.Unlock()
 	spawned := false
+	privateHome := ""
 	defer func() {
 		if !spawned {
+			if privateHome != "" {
+				startErr = errors.Join(startErr, os.RemoveAll(privateHome))
+			}
 			m.release(sess.AccountID)
 			m.active.Done()
 		}
 	}()
+	if accounts.ExplicitHome(env) == "" {
+		privateEnv, home, err := accounts.SessionEnvironment()
+		if err != nil {
+			return nil, fmt.Errorf("prepare private session environment: %w", err)
+		}
+		privateHome = home
+		env = append(append([]string{}, env...), privateEnv...)
+	}
 
 	if len(sess.Argv) == 0 {
 		sess.Argv = []string{"/bin/sh"}
@@ -113,8 +127,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		sess.Rows = 40
 	}
 	cmd := exec.Command(sess.Argv[0], sess.Argv[1:]...)
-	cmd.Env = append(os.Environ(), env...)
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+	cmd.Env = accounts.RuntimeEnvironment(os.Environ(), env)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -144,7 +157,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		m.recordCleanup(cleanupErr, waitErr)
 		return nil, errors.Join(err, cleanupErr)
 	}
-	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned}
+	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
 	m.mu.Lock()
 	m.live[sess.ID] = l
 	closing := m.closing
@@ -322,6 +335,11 @@ func (l *live) wait(m *Manager) {
 	cleanupErr = errors.Join(cleanupErr, l.pty.Close())
 	<-l.readDone
 	cleanupErr = errors.Join(cleanupErr, l.log.Close())
+	if l.privateHome != "" {
+		homeErr := os.RemoveAll(l.privateHome)
+		cleanupErr = errors.Join(cleanupErr, homeErr)
+		ownershipErr = errors.Join(ownershipErr, homeErr)
+	}
 	l.cleanupErr = cleanupErr
 	m.recordCleanup(cleanupErr, ownershipErr)
 	m.mu.Lock()
@@ -376,8 +394,8 @@ func (m *Manager) recordCleanup(err, ownershipErr error) {
 	log.Printf("session cleanup: %v", err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// A retired group cannot be repaired after reap. Keep its first failure,
-	// while completed descriptor failures only affect their active drain.
+	// Keep the first unresolved owned group/private-home failure, while
+	// completed descriptor failures only affect their active drain.
 	if ownershipErr != nil && m.unresolvedErr == nil {
 		m.unresolvedErr = ownershipErr
 	}

@@ -45,8 +45,14 @@ func TestIsolateEnvDistinctHomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e1 := a.IsolateEnv(home, domain.Account{ID: "acct_one"})
-	e2 := a.IsolateEnv(home, domain.Account{ID: "acct_two"})
+	e1, err := a.IsolateEnv(home, domain.Account{ID: "acct_one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2, err := a.IsolateEnv(home, domain.Account{ID: "acct_two"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(e1) < 3 || e1[0] == e2[0] {
 		t.Fatalf("homes must differ: %v vs %v", e1, e2)
 	}
@@ -62,7 +68,10 @@ func TestIsolateEnvCursorAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := a.IsolateEnv(home, domain.Account{ID: "acct_cur"})
+	env, err := a.IsolateEnv(home, domain.Account{ID: "acct_cur"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	joined := strings.Join(env, " ")
 	if !strings.Contains(joined, "CURSOR_CONFIG_DIR=") || !strings.Contains(joined, "acct_cur") {
 		t.Fatalf("%v", env)

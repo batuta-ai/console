@@ -78,38 +78,10 @@ func (a Adapter) LoggedIn(consoleHome string, account domain.Account) bool {
 }
 
 func (a Adapter) IsolateDir(consoleHome, accountID string) string {
-	if consoleHome == "" || accountID == "" {
+	if !validIsolate(consoleHome, accountID) {
 		return ""
 	}
 	return filepath.Join(consoleHome, "accounts", accountID)
-}
-
-// IsolateEnv returns HOME (and Codex/Claude config homes) for this account
-// so two accounts of the same CLI do not share credentials.
-func (a Adapter) IsolateEnv(consoleHome string, account domain.Account) []string {
-	dir := a.IsolateDir(consoleHome, account.ID)
-	if dir == "" {
-		return nil
-	}
-	_ = os.MkdirAll(dir, 0o700)
-	cfg := filepath.Join(dir, ".config")
-	_ = os.MkdirAll(cfg, 0o700)
-	env := []string{"HOME=" + dir, "XDG_CONFIG_HOME=" + cfg}
-	switch a.ID {
-	case "codex":
-		codexHome := filepath.Join(dir, ".codex")
-		_ = os.MkdirAll(codexHome, 0o700)
-		env = append(env, "CODEX_HOME="+codexHome)
-	case "claude":
-		claudeHome := filepath.Join(dir, ".claude")
-		_ = os.MkdirAll(claudeHome, 0o700)
-		env = append(env, "CLAUDE_CONFIG_DIR="+claudeHome)
-	case "cursor-agent":
-		cursorHome := filepath.Join(dir, ".cursor")
-		_ = os.MkdirAll(cursorHome, 0o700)
-		env = append(env, "CURSOR_CONFIG_DIR="+cursorHome)
-	}
-	return env
 }
 
 func NewAccount(label, adapterID string) (domain.Account, error) {

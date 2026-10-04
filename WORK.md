@@ -7,6 +7,7 @@
 - [ ] Qualificar o candidato final e definir remoto/tags/compatibilidade core/plugin para publicação → fase 3 do roadmap; publicação pendente.
 
 ## Done
+- [x] Tarefa9 — stop/natural exit do grupo original e shutdown com deadline, callback/descritores drenados, replay/resize e processos alheios preservados; macOS e WSL2 nativos verdes → codex/gpt-6-astra high, um retry, escalação crítica self e revisão claude/sonnet5/5; commit006c216 (trilha: .batuta/runs/2026-10-03-process-tree.md).
 - [x] Tarefa8 — recuperação antes do listener, migração/identidade sem adotar PID antigo, stop terminal idempotente e corrida de término corrigida; host e Linux nativo verdes → codex/gpt-6-astra high, um retry e escalação crítica self; claude/sonnet5/5, commit ed66a40 (trilha: .batuta/runs/2026-10-03-startup-recovery.md).
 - [x] Tarefa 7 — reserva de capacidade antes do spawn, reuse serializado e estado terminal preservado; Go/race, web e tipos verdes no host → codex/gpt-6-astra high, uma correção de imports e provas; claude/sonnet 5/5, commit 5798bf0 (trilha: .batuta/runs/2026-10-03-session-admission.md).
 - [x] Tarefa6 — listagem semconsulta SQLite aninhada e política de conexão/Tx consistente; store-race5, encerramento natural20 e perfil completos verdes nohost → codex/gpt-6-astra high, semretry; claude/sonnet4/4, commit 0d32ad1 (trilha: .batuta/runs/2026-10-03-sqlite-contention.md).
