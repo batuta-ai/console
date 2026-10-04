@@ -25,7 +25,7 @@ type admissionFixture struct {
 func admissionSetup(t *testing.T, cap int) admissionFixture {
 	t.Helper()
 	svc, db := persistenceSvc(t)
-	t.Setenv("BATUTA_SKILLS", t.TempDir())
+	t.Setenv("BATUTA_SKILLS", installedSkillFixture(t, t.TempDir(), "batuta", "batuta-init", "batuta-plan"))
 	cli := t.TempDir()
 	launches := filepath.Join(cli, "launches")
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nprintf '%s\\n' \"$$\" >> '" + launches + "'\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"

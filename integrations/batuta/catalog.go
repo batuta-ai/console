@@ -1,12 +1,14 @@
 package batuta
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/core/loop"
 )
 
 // Skill is a named capability the operator assigns to a squad member.
@@ -74,8 +76,8 @@ func discoverSkills(root string) map[string]string {
 	if root == "" {
 		return found
 	}
-	scanSkillDir(root, found)
-	scanSkillDir(filepath.Join(root, "skills"), found)
+	scanSkillDir(filepath.Dir(root), found)
+	found["batuta"] = root
 	return found
 }
 
@@ -85,17 +87,48 @@ func scanSkillDir(dir string, found map[string]string) {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
-		if _, err := os.Stat(filepath.Join(p, "SKILL.md")); err != nil {
+		if !validSkill(p) {
 			continue
 		}
 		if _, ok := found[e.Name()]; !ok {
-			found[e.Name()] = p
+			if resolved, err := filepath.EvalSymlinks(p); err == nil {
+				found[e.Name()] = resolved
+			}
 		}
 	}
+}
+
+// NativeSkills selects installed official skills and exactly named role skills.
+// Listing a custom sibling in the catalog does not authorize loading it.
+func (p Profile) NativeSkills(roles []string) (map[string]string, error) {
+	selected := map[string]string{}
+	if p.Enabled {
+		root, err := loop.FindSkills("", p.SkillsRoot)
+		if err != nil || root != p.SkillsRoot || !validSkill(root) {
+			return nil, fmt.Errorf("selected Batuta skill installation is no longer available: %q", p.SkillsRoot)
+		}
+	}
+	installed := discoverSkills(p.SkillsRoot)
+	for _, skill := range OfficialSkills {
+		if path := installed[skill.ID]; path != "" {
+			selected[skill.ID] = path
+		}
+	}
+	for _, name := range roles {
+		if name == "" || strings.HasPrefix(name, ".") || strings.ContainsAny(name, "/\\\x00") {
+			return nil, fmt.Errorf("invalid selected skill name %q", name)
+		}
+		path := installed[name]
+		if path == "" {
+			return nil, fmt.Errorf("selected skill %q is not installed in %q", name, p.SkillsRoot)
+		}
+		selected[name] = path
+	}
+	return selected, nil
 }
 
 func member(id, role, cli string, maestro bool, skills ...string) domain.Member {

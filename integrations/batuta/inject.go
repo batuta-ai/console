@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/batuta-ai/core/loop"
 )
 
 // Profile is the session-scoped Batuta preparation. It never overwrites a
@@ -13,7 +15,7 @@ type Profile struct {
 	Enabled       bool     `json:"enabled"`
 	SkillsRoot    string   `json:"skills_root,omitempty"`
 	SkillsVersion string   `json:"skills_version,omitempty"`
-	Env           []string  `json:"env"`
+	Env           []string `json:"env"`
 	Notes         []string `json:"notes"`
 }
 
@@ -29,7 +31,7 @@ func Prepare(workspace string, enable bool) Profile {
 		p.Notes = append(p.Notes, "Batuta injection off; generic CLI session")
 		return p
 	}
-	root := skillsRoot()
+	root := resolveSkills(workspace)
 	if root == "" {
 		p.Enabled = false
 		p.Notes = append(p.Notes, "no skills directory found; session will run without Batuta injection")
@@ -37,38 +39,50 @@ func Prepare(workspace string, enable bool) Profile {
 	}
 	p.SkillsRoot = root
 	p.SkillsVersion = readLockVersion(root)
+	if p.SkillsVersion == "present" {
+		p.SkillsVersion = readLockVersion(filepath.Dir(root))
+	}
+	if p.SkillsVersion == "present" && filepath.Base(filepath.Dir(root)) == "skills" {
+		p.SkillsVersion = readLockVersion(filepath.Dir(filepath.Dir(root)))
+	}
 	p.Env = append(p.Env, "BATUTA_SKILLS="+root)
 	if workspace != "" {
 		p.Env = append(p.Env, "BATUTA_JOURNAL="+filepath.Join(workspace, ".batuta", "journal"))
 	}
-	p.Notes = append(p.Notes, "skills and config apply to this session only; restart the CLI to pick up later changes")
+	p.Notes = append(p.Notes, "skill sources are validated for this launch; restart the CLI to pick up later changes")
 	return p
 }
 
 func skillsRoot() string {
-	if v, ok := os.LookupEnv("BATUTA_SKILLS"); ok {
-		if v == "" {
-			return ""
-		}
-		if st, err := os.Stat(v); err == nil && st.IsDir() {
-			return v
-		}
-		return ""
-	}
-	home, err := os.UserHomeDir()
+	workspace, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-	candidates := []string{
-		filepath.Join(home, ".agents", "skills"),
-		filepath.Join(home, ".claude", "plugins", "batuta"),
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && st.IsDir() {
-			return c
+	return resolveSkills(workspace)
+}
+
+func resolveSkills(workspace string) string {
+	if configured, ok := os.LookupEnv("BATUTA_SKILLS"); ok {
+		if strings.TrimSpace(configured) == "" {
+			return ""
 		}
+		for _, candidate := range []string{configured, filepath.Join(configured, "batuta"), filepath.Join(configured, "skills", "batuta")} {
+			if root, err := loop.FindSkills(workspace, candidate); err == nil && validSkill(root) {
+				return root
+			}
+		}
+		return ""
 	}
-	return ""
+	root, err := loop.FindSkills(workspace, "")
+	if err != nil || !validSkill(root) {
+		return ""
+	}
+	return root
+}
+
+func validSkill(path string) bool {
+	info, err := os.Stat(filepath.Join(path, "SKILL.md"))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func readLockVersion(root string) string {

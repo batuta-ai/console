@@ -58,9 +58,9 @@
       Depends on: 10, 13
       Scope: internal/adapters/**, internal/accounts/**, internal/service/**, internal/domain/**, internal/api/**
       Accept: Disponível, conectado, autenticado e não suportado são estados distintos, sem tratar arquivo não vazio como prova de login → go test ./internal/adapters ./internal/service ./internal/api -count=1; Credencial inválida, expirada, CLI ausente e adapter fora da matriz impedem execução com diagnóstico recuperável
-- [ ] 15. Corrigir descoberta e carregamento dos skills em HOME isolado — backend/high
+- [x] 15. Corrigir descoberta e carregamento dos skills em HOME isolado — backend/high
       Depends on: 1, 10, 13
-      Scope: integrations/batuta/inject.go, integrations/batuta/*_test.go, internal/service/**
+      Scope: integrations/batuta/inject.go, integrations/batuta/catalog.go, integrations/batuta/*_test.go, internal/service/**, internal/api/server_test.go (fixture TestSkillsCatalog)
       Accept: O caminho declarado como enabled é aceito pelo FindSkills da dependência publicada e fixtures cobrem ausência e estrutura incorreta → go test ./integrations/batuta ./internal/service -count=1; Conta isolada encontra os skills autorizados sem depender do HOME pessoal ou apenas da variável BATUTA_SKILLS
 - [ ] 16. Modelar inicialização como operação recuperável — backend/high
       Depends on: 12, 14, 15
@@ -299,3 +299,12 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 
 
 **Task14 — aprovação e limites.** Autenticação privada exige verificação HTTPS limitada e atual; arquivo presente e status CLI offline não provam login. Readiness não qualifica isolamento completo do adapter: a validação conservadora de Claude continua pendente da publicação honesta de capabilities26 e das jornadas reais39/40. Quatro critérios aprovados por revisão independente no candidato3e5ee62, com provas nativas macOS/WSL2. A tarefa16 deve distinguir falha real do catálogo de conta inexistente na seleção e validação estrutural, sem persistir Draft derivado de falha transitória; usar testes SQLite reais. Tarefas17/22/30 devem enviar conta explícita,35/41 documentar o contrato,38 incluir recusa de credencial malformada na jornada completa. Limites de formato/tamanho de credenciais e schema OAuth continuam39/40; não declarar publicação pronta.
+
+
+**Task15 — escopo de descoberta.** A descoberta e a listagem compartilham skillsRoot; catalog.go entra no escopo para manter Installed coerente com a raiz válida do core. Preparação nas contas deve disponibilizar somente skills autorizados em caminhos nativos, sem copiar configuração/credenciais ou sobrescrever conteúdo existente. BATUTA_SKILLS sozinho não prova carregamento pela CLI.
+
+
+**Task15 — retry de integração.** Prova nativa encontrou a fixture antiga de API sem adapters/ e expectativas de caminho temporário não normalizado no Darwin. Scope inclui apenas a fixture TestSkillsCatalog em server_test.go para o novo contrato de raiz canonical; nenhuma mudança de API de produto. Preservar igualdade e assertions originais. Timeout único de readiness no candidato anterior é investigado separadamente, sem aumentar prazo ou editar Task14 nesta tarefa.
+
+
+**Task15 — aprovação e recuperação de links.** Critérios4/4 revisados no candidato4652dc8 e provas nativas de skills macOS/Linux. Upgrade do caminho de plugin e troca de custom skills na mesma conta recusam links existentes com erro, preservando arquivos; não existe reconciliação automática qualificada. Task35 deve documentar e testar reparo explícito com processos da conta parados, inspeção dos links selecionados e preservação de conteúdo alheio;38/39/40 devem qualificar upgrade real e alternância de roles antes da estável. Customargv sem conta continua literal/sem credencial e declara BatutaInjected=false porque seu HOME descartável não tem a preparação nativa;35 documenta e38 prova essa jornada. Instalação local malformada não faz fallback silencioso. Nova ocorrência de PTY EPERM no WSL2 permanece bloqueador38/40/41, apesar de feature-race5/fullGo posteriores verdes.

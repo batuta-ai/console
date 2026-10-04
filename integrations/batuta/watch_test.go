@@ -69,7 +69,7 @@ func TestPrepareOff(t *testing.T) {
 }
 
 func TestPrepareUsesSkillsDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := skillFixture(t, t.TempDir(), "batuta")
 	if err := os.WriteFile(filepath.Join(dir, "skills-lock.json"), []byte(`{"version":"v0.7.0"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}

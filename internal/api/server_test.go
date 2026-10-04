@@ -380,10 +380,14 @@ func TestAnswerRejectsUnknownWorkspace(t *testing.T) {
 
 func TestSkillsCatalog(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "batuta"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "batuta", "adapters"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "batuta", "SKILL.md"), []byte("#\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillsRoot, err := filepath.EvalSymlinks(filepath.Join(root, "batuta"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("BATUTA_SKILLS", root)
@@ -392,7 +396,7 @@ func TestSkillsCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := get(t, h, "/v0/skills").(map[string]any)
-	if raw["root"] != root {
+	if raw["root"] != skillsRoot {
 		t.Fatalf("root %v", raw["root"])
 	}
 	skills := raw["skills"].([]any)

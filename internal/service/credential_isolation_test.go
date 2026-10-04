@@ -38,11 +38,12 @@ func fixtureRuntime(root, cli string) map[string]string {
 }
 
 type credentialRecord struct {
-	Env      map[string]string `json:"env"`
-	Identity string            `json:"identity"`
-	CWD      string            `json:"cwd"`
-	Argv     []string          `json:"argv"`
-	PTY      bool              `json:"pty"`
+	NativeSkills map[string]string `json:"native_skills"`
+	Env          map[string]string `json:"env"`
+	Identity     string            `json:"identity"`
+	CWD          string            `json:"cwd"`
+	Argv         []string          `json:"argv"`
+	PTY          bool              `json:"pty"`
 }
 
 // The real disposable subprocess reads only named keys seeded by its parent.
@@ -75,6 +76,25 @@ func TestCredentialRecordChild(t *testing.T) {
 		}
 	}
 	record.CWD, _ = os.Getwd()
+	// Discovery uses only native paths, independently of Batuta's core hint.
+	if err := os.Unsetenv("BATUTA_SKILLS"); err != nil {
+		t.Fatal(err)
+	}
+	native := filepath.Join(record.Env["HOME"], ".agents", "skills")
+	if adapter == "claude" {
+		native = filepath.Join(record.Env["CLAUDE_CONFIG_DIR"], "skills")
+	}
+	record.NativeSkills = map[string]string{}
+	entries, _ := os.ReadDir(native)
+	for _, entry := range entries {
+		if info, err := os.Stat(filepath.Join(native, entry.Name(), "SKILL.md")); err == nil && info.Mode().IsRegular() {
+			target, err := filepath.EvalSymlinks(filepath.Join(native, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.NativeSkills[entry.Name()] = target
+		}
+	}
 	config, file := record.Env["CODEX_HOME"], "auth.json"
 	if adapter == "claude" {
 		config, file = record.Env["CLAUDE_CONFIG_DIR"], ".credentials.json"
@@ -148,9 +168,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		t.Setenv(key, "synthetic-daemon-"+key)
 	}
 	t.Setenv("BATUTA_SKILLS", filepath.Join(root, "skills"))
-	if err := os.Mkdir(filepath.Join(root, "skills"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	installedSkillFixture(t, filepath.Join(root, "skills"), "batuta", "batuta-init", "batuta-plan")
 	for _, key := range credentialSentinels {
 		t.Setenv(key, "synthetic-daemon-"+key)
 	}
@@ -269,9 +287,13 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 				if mode == "direct" {
 					metadata["BATUTA_ROLE_SKILLS"] = "explicit-role"
 				} else if mode != "login" {
+					skillsRoot, err := filepath.EvalSymlinks(filepath.Join(root, "skills", "batuta"))
+					if err != nil {
+						t.Fatal(err)
+					}
 					metadata["BATUTA_CONSOLE"] = "1"
 					metadata["BATUTA_WORKSPACE"] = ws.Root
-					metadata["BATUTA_SKILLS"] = filepath.Join(root, "skills")
+					metadata["BATUTA_SKILLS"] = skillsRoot
 					metadata["BATUTA_JOURNAL"] = filepath.Join(ws.Root, ".batuta", "journal")
 					if mode == "session" {
 						metadata["BATUTA_MISSION"] = "synthetic mission"

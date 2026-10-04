@@ -1,7 +1,6 @@
 package service
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,13 +83,7 @@ func TestSessionPrompt(t *testing.T) {
 
 func TestStartSessionDefaultInject(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "batuta")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("#\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	installedSkillFixture(t, root, "batuta", "batuta-review")
 	t.Setenv("BATUTA_SKILLS", root)
 
 	svc := testSvc(t)

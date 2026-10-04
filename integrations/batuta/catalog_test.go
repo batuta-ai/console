@@ -45,7 +45,7 @@ func TestListSkillsMarksInstalledAndCustom(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mustSkill("batuta")
+	skillFixture(t, root, "batuta")
 	mustSkill("batuta-review")
 	mustSkill("acme-lint")
 	t.Setenv("BATUTA_SKILLS", root)

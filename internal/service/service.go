@@ -442,7 +442,14 @@ func (s *Service) StartSessionContext(ctx context.Context, in StartSessionIn) (d
 		}
 	}
 
-	profile := batuta.Prepare(ws.Root, in.inject())
+	requiredSkills := append([]string{}, bound.Skills...)
+	if in.inject() && command.Report.Mode != "custom" && strings.TrimSpace(msn.Brief) != "" {
+		requiredSkills = append(requiredSkills, "batuta-plan")
+	}
+	profile, err := prepareSessionSkills(ws.Root, in.inject(), ad.ID, accountEnv, requiredSkills)
+	if err != nil {
+		return domain.Session{}, err
+	}
 	env := append([]string{}, profile.Env...)
 	if len(bound.Skills) > 0 {
 		env = append(env, "BATUTA_ROLE_SKILLS="+strings.Join(bound.Skills, ","))
@@ -695,7 +702,10 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	} else if ok {
 		return live, nil
 	}
-	profile := batuta.Prepare(ws.Root, true)
+	profile, err := prepareSessionSkills(ws.Root, true, ad.ID, extra, []string{"batuta-init"})
+	if err != nil {
+		return domain.Session{}, err
+	}
 	env := append(append([]string{}, profile.Env...), extra...)
 	env = append(env, "BATUTA_INIT="+strings.Join(strings.Fields(brief), " "))
 	sess := domain.Session{

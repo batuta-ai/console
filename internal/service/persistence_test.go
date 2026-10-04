@@ -207,7 +207,7 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			svc, db := persistenceSvc(t)
 			root := t.TempDir()
-			t.Setenv("BATUTA_SKILLS", t.TempDir())
+			t.Setenv("BATUTA_SKILLS", installedSkillFixture(t, t.TempDir(), "batuta", "batuta-init", "batuta-plan"))
 			cli := t.TempDir()
 			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
 				t.Fatal(err)
