@@ -225,8 +225,8 @@ func TestOfficialLoginInitCommand(t *testing.T) {
 					sess, err = f.svc.StartLogin(f.account.ID, "web", "test")
 				} else {
 					kind, goalSource = "workspace.init", "prompt"
-					want = append(want, "Run batuta-init for this project. Write .batuta/profile.md and .batuta/routing.md from these answers, then stop.\n\nsetup literal answers")
-					sess, err = f.svc.StartInit(f.workspace.ID, "setup literal answers", "web", "test")
+					want = append(want, "Run batuta-init for this project. Write .batuta/profile.md, .batuta/routing.md and WORK.md from these confirmed answers, preserving existing user content, then stop.\n\nStack: Go\nMethodology: TDD\nTest: go test ./...\nBuild: go build ./...\nInstall: go mod download\nExecution: sequential\nWorktree: medium+\nTemplate: templates/go.md\n\nAdditional notes:\nsetup literal answers")
+					sess, err = f.svc.StartInit(f.workspace.ID, "setup literal answers", "web", "test", confirmedFixtureInput(f.account.ID))
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -254,7 +254,7 @@ func TestOfficialMissingCLIHasNoLaunch(t *testing.T) {
 			case "login":
 				sess, err = f.svc.StartLogin(f.account.ID, "web", "test")
 			case "init":
-				sess, err = f.svc.StartInit(f.workspace.ID, "answers", "web", "test")
+				sess, err = f.svc.StartInit(f.workspace.ID, "answers", "web", "test", confirmedFixtureInput(f.account.ID))
 			default:
 				sess, err = f.start()
 			}
@@ -346,7 +346,7 @@ func TestOfficialUnsupportedAdaptersDoNotLaunch(t *testing.T) {
 				case "login":
 					sess, err = f.svc.StartLogin(f.account.ID, "web", "test")
 				case "init":
-					sess, err = f.svc.StartInit(f.workspace.ID, "answers", "web", "test")
+					sess, err = f.svc.StartInit(f.workspace.ID, "answers", "web", "test", confirmedFixtureInput(f.account.ID))
 				default:
 					off := false
 					in := StartSessionIn{MissionID: f.mission.ID, Adapter: adapter, Inject: &off}
@@ -356,7 +356,7 @@ func TestOfficialUnsupportedAdaptersDoNotLaunch(t *testing.T) {
 					sess, err = f.svc.StartSession(in)
 				}
 				if mode == "init" {
-					if code, ok := ReadinessFailure(err); !ok || code != "authenticated_account_required" {
+					if code, ok := ReadinessFailure(err); !ok || code != "adapter_unsupported" {
 						t.Errorf("init without a supported authenticated account: %v", err)
 					}
 				} else if !errors.Is(err, adapters.ErrUnsupportedCommand) {

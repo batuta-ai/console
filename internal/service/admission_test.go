@@ -266,7 +266,7 @@ func TestConcurrentLoginInitReuse(t *testing.T) {
 					if mode == "login" {
 						s, err = f.svc.StartLogin(f.account.ID, "web", "test")
 					} else {
-						s, err = f.svc.StartInit(f.workspace.ID, "brief", "web", "test")
+						s, err = f.svc.StartInit(f.workspace.ID, "brief", "web", "test", confirmedFixtureInput(f.account.ID))
 					}
 					out <- result{s, err}
 				}()
@@ -325,7 +325,7 @@ func TestStartFailuresRecoverAllPaths(t *testing.T) {
 					case "login":
 						return f.svc.StartLogin(f.account.ID, "web", "test")
 					case "init":
-						return f.svc.StartInit(f.workspace.ID, "brief", "web", "test")
+						return f.svc.StartInit(f.workspace.ID, "brief", "web", "test", confirmedFixtureInput(f.account.ID))
 					default:
 						return f.start()
 					}

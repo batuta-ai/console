@@ -235,7 +235,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 				case "direct":
 					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
 				default:
-					sess, err = svc.StartInit(ws.ID, "synthetic init", "web", "test")
+					sess, err = svc.StartInit(ws.ID, "synthetic init", "web", "test", confirmedFixtureInput(account.ID))
 				}
 				if mode == "fallback-init" {
 					if code, ok := ReadinessFailure(err); !ok || code != "credential_missing" {
@@ -483,7 +483,7 @@ func TestSameProviderAccountIdentitiesStayIndependent(t *testing.T) {
 			if err := os.Remove(file); err != nil {
 				t.Fatal(err)
 			}
-			init, err := svc.StartInit(ws.ID, "synthetic init", "web", "test")
+			init, err := svc.StartInit(ws.ID, "synthetic init", "web", "test", confirmedFixtureInput(b.ID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -631,7 +631,7 @@ func TestInitRejectsBrokenSelectedIdentityWithoutFallback(t *testing.T) {
 	if err := os.WriteFile(config, []byte("blocking fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.StartInit(ws.ID, "synthetic init", "web", "test"); err == nil {
+	if _, err := svc.StartInit(ws.ID, "synthetic init", "web", "test", confirmedFixtureInput(account.ID)); err == nil {
 		t.Fatal("broken selected identity silently started a fallback")
 	}
 	if _, err := os.Stat(out); !os.IsNotExist(err) {

@@ -49,7 +49,11 @@ func TestReadinessErrorsAreRecoverableBeforeLaunch(t *testing.T) {
 			}
 			path, body, code := "/v0/sessions", `{"mission_id":"`+m.ID+`","account_id":"`+a.ID+`","batuta":false}`, "credential_missing"
 			if mode == "init" {
-				path, body, code = "/v0/workspaces/"+w.ID+"/init", `{"brief":"synthetic"}`, "credential_missing"
+				payload, err := json.Marshal(setupBody(a.ID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				path, body, code = "/v0/workspaces/"+w.ID+"/init", string(payload), "credential_missing"
 			}
 			got := post(t, h, path, json.RawMessage(body), http.StatusConflict)
 			if got["error"] != code {

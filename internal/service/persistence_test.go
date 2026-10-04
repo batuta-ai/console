@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -246,7 +247,7 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			case "login":
 				live, err = svc.StartLogin(a.ID, "web", "c")
 			case "init":
-				live, err = svc.StartInit(w.ID, "brief", "web", "c")
+				live, err = svc.StartInit(w.ID, "brief", "web", "c", confirmedFixtureInput(a.ID))
 			}
 			if live.PID == 0 {
 				t.Fatalf("no process started: %v", err)
@@ -274,7 +275,19 @@ func TestReusePersistenceFailureReturned(t *testing.T) {
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
-			live, err := svc.Session.Start(domain.Session{ID: "reuse", AccountID: a.ID, WorkspaceID: w.ID, Work: mode, Owner: "old", Argv: []string{"/bin/cat"}}, nil, t.TempDir())
+			argv := []string{"/bin/cat"}
+			if mode == "init" {
+				answers, err := confirmedInitAnswers(confirmedFixtureInput(a.ID).Config, "brief")
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, command, _, _, err := svc.initCLI(context.Background(), initPrompt(answers), a.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				argv = command.Argv
+			}
+			live, err := svc.Session.Start(domain.Session{ID: "reuse", AccountID: a.ID, WorkspaceID: w.ID, Work: mode, Owner: "old", Argv: argv}, nil, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +299,7 @@ func TestReusePersistenceFailureReturned(t *testing.T) {
 			if mode == "login" {
 				_, err = svc.StartLogin(a.ID, "web", "new")
 			} else {
-				_, err = svc.StartInit(w.ID, "brief", "web", "new")
+				_, err = svc.StartInit(w.ID, "brief", "web", "new", confirmedFixtureInput(a.ID))
 			}
 			if err == nil || !strings.Contains(err.Error(), "session rejected") {
 				t.Fatalf("reuse error missing: %v", err)

@@ -19,7 +19,7 @@ func TestReadinessIsRecheckedBeforeReuse(t *testing.T) {
 				if mode == "login" {
 					return f.svc.StartLogin(f.account.ID, "web", client)
 				}
-				return f.svc.StartInit(f.workspace.ID, "synthetic", "web", client)
+				return f.svc.StartInit(f.workspace.ID, "synthetic", "web", client, confirmedFixtureInput(f.account.ID))
 			}
 			live, err := start("original")
 			if err != nil {
@@ -93,7 +93,7 @@ func TestSlowReadinessDoesNotBlockUnrelatedCanceledRequest(t *testing.T) {
 				if mode == "login" {
 					live, err = f.svc.StartLogin(f.account.ID, "web", "first")
 				} else {
-					live, err = f.svc.StartInit(f.workspace.ID, "synthetic", "web", "first")
+					live, err = f.svc.StartInit(f.workspace.ID, "synthetic", "web", "first", confirmedFixtureInput(f.account.ID))
 				}
 				first <- result{live, err}
 			}()
@@ -116,7 +116,7 @@ func TestSlowReadinessDoesNotBlockUnrelatedCanceledRequest(t *testing.T) {
 				if mode == "login" {
 					live, err = f.svc.StartLoginContext(ctx, b.ID, "web", "second")
 				} else {
-					live, err = f.svc.StartInitContext(ctx, w.ID, "synthetic", "web", "second")
+					live, err = f.svc.StartInitContext(ctx, w.ID, "synthetic", "web", "second", confirmedFixtureInput(b.ID))
 				}
 				second <- result{live, err}
 			}()
@@ -160,7 +160,7 @@ func TestInitSharesSelectedAccountCapacity(t *testing.T) {
 	}
 	defer f.svc.StopSession(live.ID)
 	readyProcess(t, f.svc, live)
-	if extra, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "init"); err == nil {
+	if extra, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "init", confirmedFixtureInput(f.account.ID)); err == nil {
 		f.svc.StopSession(extra.ID)
 		t.Fatal("init bypassed selected account capacity")
 	} else if !strings.Contains(err.Error(), "capacity") {
@@ -181,7 +181,7 @@ func TestInitSkipsUnusableUnselectedAccount(t *testing.T) {
 	if _, err := f.svc.ConnectAccount(other.ID); err != nil {
 		t.Fatal(err)
 	}
-	live, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "test")
+	live, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "test", confirmedFixtureInput(f.account.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestInitKeepsExistingIdentityWhenAccountOrderChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	authenticateFixtureAccount(t, f.svc, other, "B")
-	live, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "original")
+	live, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "original", confirmedFixtureInput(f.account.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestInitKeepsExistingIdentityWhenAccountOrderChanges(t *testing.T) {
 	if _, err := f.svc.RenameAccount(other.ID, "0-first"); err != nil {
 		t.Fatal(err)
 	}
-	again, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "new")
+	again, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "new", confirmedFixtureInput(f.account.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

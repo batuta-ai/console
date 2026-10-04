@@ -132,7 +132,7 @@ func TestImmediateExitStartPaths(t *testing.T) {
 				case "login":
 					live, err = f.svc.StartLogin(f.account.ID, "web", "test")
 				case "init":
-					live, err = f.svc.StartInit(f.workspace.ID, "brief", "web", "test")
+					live, err = f.svc.StartInit(f.workspace.ID, "brief", "web", "test", confirmedFixtureInput(f.account.ID))
 				default:
 					live, err = f.start()
 				}

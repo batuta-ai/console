@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/batuta-ai/console/internal/adapters"
@@ -44,22 +45,25 @@ func ReadinessFailure(err error) (string, bool) {
 
 // Structural draft state is durable; authentication and provider availability
 // are fresh observations used by validation and official starts only.
-func (s *Service) validateStructure(q domain.Squad) domain.Validation {
+func (s *Service) validateStructure(q domain.Squad) (domain.Validation, error) {
 	v := domain.ValidateSquad(q)
 	if !v.Ready {
-		return v
+		return v, nil
 	}
 	for _, member := range q.Members {
 		a, err := s.Store.GetAccount(member.AccountID)
 		if err != nil {
-			return domain.Validation{Tone: "warning", Title: "Validation: unknown account", Text: "Select an account from the catalog.", Ready: false}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return domain.Validation{}, err
+			}
+			return domain.Validation{Tone: "warning", Title: "Validation: unknown account", Text: "Select an account from the catalog.", Ready: false}, nil
 		}
 		if a.Adapter != member.CLI {
-			return domain.Validation{Tone: "warning", Title: "Validation: account adapter mismatch", Text: "Select an account for this member's CLI.", Ready: false}
+			return domain.Validation{Tone: "warning", Title: "Validation: account adapter mismatch", Text: "Select an account for this member's CLI.", Ready: false}, nil
 		}
 		if member.CLI != "codex" && member.CLI != "claude" {
-			return domain.Validation{Tone: "warning", Title: "Validation: adapter_unsupported", Text: "Select Codex or Claude.", Ready: false}
+			return domain.Validation{Tone: "warning", Title: "Validation: adapter_unsupported", Text: "Select Codex or Claude.", Ready: false}, nil
 		}
 	}
-	return v
+	return v, nil
 }

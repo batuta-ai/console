@@ -403,3 +403,11 @@ func IsNotFound(err error) bool {
 }
 
 func Errf(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+// HasSessionStopRequest uses durable exact-session intent, not event recency or
+// process termination as a proxy. Invalid/legacy payloads cannot prove intent.
+func (s *Store) HasSessionStopRequest(id string) (bool, error) {
+	var found bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM events WHERE kind='session.stopped' AND CASE WHEN json_valid(payload) THEN json_type(payload, '$.id')='text' AND json_extract(payload, '$.id')=? ELSE 0 END)`, id).Scan(&found)
+	return found, err
+}

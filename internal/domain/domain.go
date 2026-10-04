@@ -38,11 +38,12 @@ const (
 )
 
 type Workspace struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Root      string    `json:"root"`
-	CreatedAt time.Time `json:"created_at"`
-	Profile   bool      `json:"profile"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Root      string         `json:"root"`
+	CreatedAt time.Time      `json:"created_at"`
+	Profile   bool           `json:"profile"`
+	Setup     WorkspaceSetup `json:"setup"`
 }
 
 type Member struct {
@@ -161,6 +162,7 @@ type LimitSnapshot struct {
 }
 
 type Validation struct {
+	Code  string `json:"code,omitempty"`
 	Tone  string `json:"tone"`
 	Title string `json:"title"`
 	Text  string `json:"text"`

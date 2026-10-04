@@ -108,7 +108,11 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range list {
-		list[i] = s.Svc.DecorateWorkspace(list[i])
+		list[i], err = s.Svc.DecorateWorkspaceChecked(list[i])
+		if err != nil {
+			writeErr(w, 500, "store", err.Error())
+			return
+		}
 	}
 	writeJSON(w, list)
 }
@@ -141,10 +145,15 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, err := s.Svc.CreateWorkspace(in.Name, in.Root)
 	if err != nil {
-		writeErr(w, 400, "workspace", err.Error())
+		writeErr(w, referenceStatus(err), "workspace", err.Error())
 		return
 	}
-	writeJSON(w, s.Svc.DecorateWorkspace(ws))
+	ws, err = s.Svc.DecorateWorkspaceChecked(ws)
+	if err != nil {
+		writeErr(w, 500, "store", err.Error())
+		return
+	}
+	writeJSON(w, ws)
 }
 
 func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +181,7 @@ func (s *Server) saveSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := s.Svc.SaveSquadContext(r.Context(), q)
 	if err != nil {
-		writeErr(w, 400, "squad", err.Error())
+		writeErr(w, referenceStatus(err), "squad", err.Error())
 		return
 	}
 	writeJSON(w, q)
@@ -181,12 +190,16 @@ func (s *Server) saveSquad(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveSquadID(w http.ResponseWriter, r *http.Request) {
 	q, err := s.Svc.Store.GetSquad(r.PathValue("id"))
 	if err != nil {
-		writeErr(w, 404, "not_found", err.Error())
+		status := 500
+		if errors.Is(err, sql.ErrNoRows) {
+			status = 404
+		}
+		writeErr(w, status, "not_found", err.Error())
 		return
 	}
 	q, err = s.Svc.SaveSquadContext(r.Context(), q)
 	if err != nil {
-		writeErr(w, 400, "squad", err.Error())
+		writeErr(w, referenceStatus(err), "squad", err.Error())
 		return
 	}
 	writeJSON(w, q)
@@ -205,7 +218,11 @@ func (s *Server) validateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	v, q, err := s.Svc.ValidateSquadContext(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, 404, "not_found", err.Error())
+		status := 500
+		if errors.Is(err, sql.ErrNoRows) {
+			status = 404
+		}
+		writeErr(w, status, "not_found", err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"validation": v, "squad": q})
@@ -332,20 +349,25 @@ func (s *Server) loginAccount(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) initWorkspace(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		service.InitInput
 		Brief  string `json:"brief"`
 		Owner  string `json:"owner"`
 		Client string `json:"client"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	sess, err := s.Svc.StartInitContext(r.Context(), r.PathValue("id"), in.Brief, in.Owner, in.Client)
+	sess, err := s.Svc.StartInitContext(r.Context(), r.PathValue("id"), in.Brief, in.Owner, in.Client, in.InitInput)
 	if err != nil {
 		if writeReadinessError(w, err) {
 			return
 		}
-		writeErr(w, 400, "init", err.Error())
+		status := referenceStatus(err)
+		if errors.Is(err, service.ErrInitConflict) {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, "init", err.Error())
 		return
 	}
 	writeJSON(w, sess)

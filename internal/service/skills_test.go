@@ -292,7 +292,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				var sess domain.Session
 				switch mode {
 				case "init":
-					sess, err = svc.StartInit(ws.ID, "synthetic answers", "web", "test")
+					sess, err = svc.StartInit(ws.ID, "synthetic answers", "web", "test", confirmedFixtureInput(account.ID))
 				case "login":
 					sess, err = svc.StartLogin(account.ID, "web", "test")
 				default:
@@ -349,7 +349,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				}
 				if mode == "init" {
 					commandEvent(t, svc.Store, sess, "workspace.init", wantCommandReport("init", "prompt", "", ""))
-					again, err := svc.StartInit(ws.ID, "synthetic answers", "web", "test")
+					again, err := svc.StartInit(ws.ID, "synthetic answers", "web", "test", confirmedFixtureInput(account.ID))
 					if err != nil || again.ID != sess.ID {
 						t.Fatalf("init reuse changed: %+v %v", again, err)
 					}
@@ -445,7 +445,7 @@ func TestServiceInitSkillsRejectBeforeSpawn(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				sess, err := svc.StartInit(ws.ID, "synthetic answers", "web", "test")
+				sess, err := svc.StartInit(ws.ID, "synthetic answers", "web", "test", confirmedFixtureInput(account.ID))
 				if err == nil {
 					svc.StopSession(sess.ID)
 					t.Fatalf("invalid init skills accepted: %+v", sess)

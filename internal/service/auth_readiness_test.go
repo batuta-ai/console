@@ -150,7 +150,7 @@ func TestInvalidCredentialsRefuseActualOfficialLaunch(t *testing.T) {
 func TestInitPreservesProviderFailureDiagnostic(t *testing.T) {
 	f, _, out := commandFixture(t, "codex")
 	authenticateFixtureAccountWithStatus(t, f.svc, f.account, "A", http.StatusServiceUnavailable)
-	if _, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "test"); err == nil {
+	if _, err := f.svc.StartInit(f.workspace.ID, "synthetic", "web", "test", confirmedFixtureInput(f.account.ID)); err == nil {
 		t.Fatal("provider outage authorized init")
 	} else if code, ok := ReadinessFailure(err); !ok || code != "provider_unavailable" || !strings.Contains(err.Error(), f.account.ID) {
 		t.Fatalf("provider outage or selected account was misreported: %v", err)

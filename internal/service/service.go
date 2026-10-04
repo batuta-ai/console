@@ -47,12 +47,13 @@ func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
 }
 
 func (s *Service) DecorateWorkspace(w domain.Workspace) domain.Workspace {
-	if w.Root == "" {
+	decorated, err := s.DecorateWorkspaceChecked(w)
+	if err != nil {
+		w.Profile = false
+		w.Setup = domain.WorkspaceSetup{State: "partial", Code: "catalog_failure"}
 		return w
 	}
-	st, err := os.Stat(filepath.Join(w.Root, ".batuta", "profile.md"))
-	w.Profile = err == nil && !st.IsDir()
-	return w
+	return decorated
 }
 
 func (s *Service) DecorateAccount(a domain.Account) domain.Account {
@@ -76,10 +77,12 @@ func (s *Service) CreateWorkspace(name, root string) (domain.Workspace, error) {
 	}
 	if existing, err := s.Store.GetWorkspaceByRoot(abs); err == nil {
 		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.Workspace{}, catalogReferenceError{err}
 	}
 	w := domain.Workspace{ID: domain.NewID("ws_"), Name: name, Root: abs, CreatedAt: domain.Now()}
 	if err := s.Store.PutWorkspaceWithEvent(w, "workspace.created", map[string]any{"id": w.ID, "name": w.Name}); err != nil {
-		return w, err
+		return w, catalogReferenceError{err}
 	}
 	return w, nil
 }
@@ -91,7 +94,11 @@ func (s *Service) EnsureBatutaCatalog() error {
 		} else if !store.IsNotFound(err) {
 			return err
 		}
-		q.Draft = !s.validateStructure(q).Ready
+		v, err := s.validateStructure(q)
+		if err != nil {
+			return err
+		}
+		q.Draft = !v.Ready
 		if err := s.Store.PutSquadWithEvent(q, "squad.seeded", map[string]any{"id": q.ID, "origin": q.Origin}); err != nil {
 			return err
 		}
@@ -118,7 +125,7 @@ func (s *Service) SaveSquadContext(ctx context.Context, q domain.Squad) (domain.
 				q.Origin = prev.Origin
 			}
 		} else if !store.IsNotFound(err) {
-			return q, err
+			return q, catalogReferenceError{err}
 		} else if q.Version == 0 {
 			q.Version = 1
 			if q.Origin == "" {
@@ -131,9 +138,13 @@ func (s *Service) SaveSquadContext(ctx context.Context, q domain.Squad) (domain.
 			q.Members[i].ID = domain.NewID("mb_")
 		}
 	}
-	q.Draft = !s.validateStructure(q).Ready
+	v, err := s.validateStructure(q)
+	if err != nil {
+		return q, catalogReferenceError{err}
+	}
+	q.Draft = !v.Ready
 	if err := s.Store.PutSquadWithEvent(q, "squad.saved", map[string]any{"id": q.ID, "version": q.Version}); err != nil {
-		return q, err
+		return q, catalogReferenceError{err}
 	}
 	return q, nil
 }
@@ -145,7 +156,7 @@ func (s *Service) ValidateSquad(id string) (domain.Validation, domain.Squad, err
 func (s *Service) ValidateSquadContext(ctx context.Context, id string) (domain.Validation, domain.Squad, error) {
 	q, err := s.Store.GetSquad(id)
 	if err != nil {
-		return domain.Validation{}, q, err
+		return domain.Validation{}, q, catalogReferenceError{err}
 	}
 	return s.ValidateDraftContext(ctx, q), q, nil
 }
@@ -157,7 +168,10 @@ func (s *Service) ValidateDraft(q domain.Squad) domain.Validation {
 func (s *Service) ValidateDraftContext(ctx context.Context, q domain.Squad) domain.Validation {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	v := s.validateStructure(q)
+	v, err := s.validateStructure(q)
+	if err != nil {
+		return catalogValidation(err)
+	}
 	if !v.Ready {
 		return v
 	}
@@ -165,6 +179,9 @@ func (s *Service) ValidateDraftContext(ctx context.Context, q domain.Squad) doma
 	for _, m := range q.Members {
 		a, err := s.Store.GetAccount(m.AccountID)
 		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return catalogValidation(err)
+			}
 			return domain.Validation{Tone: "warning", Title: "Validation: unknown account", Text: "A member points at an account that is not in the catalog. No model was invoked.", Ready: false}
 		}
 		if a.Adapter != m.CLI {
@@ -571,7 +588,7 @@ func (s *Service) reuseLive(match func(domain.Session) bool, owner, client strin
 		}
 		live = taken
 		if err := s.Store.PutSession(live); err != nil {
-			return live, false, err
+			return live, false, catalogReferenceError{err}
 		}
 	}
 	return live, true, nil
@@ -580,7 +597,7 @@ func (s *Service) reuseLive(match func(domain.Session) bool, owner, client strin
 func (s *Service) findLive(match func(domain.Session) bool) (domain.Session, bool, error) {
 	list, err := s.Store.ListSessions()
 	if err != nil {
-		return domain.Session{}, false, err
+		return domain.Session{}, false, catalogReferenceError{err}
 	}
 	for _, sess := range list {
 		if !match(sess) {
@@ -588,7 +605,7 @@ func (s *Service) findLive(match func(domain.Session) bool) (domain.Session, boo
 		}
 		live, err := s.ReconcileSession(sess)
 		if err != nil {
-			return live, false, err
+			return live, false, catalogReferenceError{err}
 		}
 		if live.Process != "running" {
 			continue
@@ -649,40 +666,38 @@ func (s *Service) StartLoginContext(ctx context.Context, accountID, owner, clien
 	return s.startAndPersist(sess, env, ad.IsolateDir(s.Home, a.ID), a.SessionCap, "account.login", map[string]any{"id": a.ID, "session": sess.ID, "command": command.Report})
 }
 
-func (s *Service) StartInit(workspaceID, brief, owner, client string) (domain.Session, error) {
-	return s.StartInitContext(context.Background(), workspaceID, brief, owner, client)
+func (s *Service) StartInit(workspaceID, brief, owner, client string, input ...InitInput) (domain.Session, error) {
+	return s.StartInitContext(context.Background(), workspaceID, brief, owner, client, input...)
 }
 
-func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owner, client string) (domain.Session, error) {
+func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owner, client string, input ...InitInput) (domain.Session, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	ws, err := s.Store.GetWorkspace(workspaceID)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, catalogReferenceError{err}
 	}
-	ws = s.DecorateWorkspace(ws)
-	if ws.Profile {
-		return domain.Session{}, fmt.Errorf("this project already has a Batuta profile")
+	if err := batuta.ValidateSetupRoot(ws.Root); err != nil {
+		return domain.Session{}, invalidReference("%s", err)
 	}
-	brief = strings.TrimSpace(brief)
-	if brief == "" {
-		return domain.Session{}, fmt.Errorf("setup answers are required")
+	if len(input) == 0 || strings.TrimSpace(input[0].AccountID) == "" {
+		return domain.Session{}, ReadinessError{Code: "authenticated_account_required"}
 	}
-	existing, active, err := s.findLive(func(sess domain.Session) bool { return sess.WorkspaceID == ws.ID && sess.Work == "init" })
-	if err != nil {
-		return existing, err
+	if len(input) != 1 {
+		return domain.Session{}, invalidReference("exactly one confirmed setup input is required")
 	}
-	accountID := ""
-	if active {
-		accountID = existing.AccountID
-		if accountID == "" {
-			return domain.Session{}, ReadinessError{Code: "authenticated_account_required"}
-		}
-	}
-	ad, command, extra, selected, err := s.initCLI(ctx, initPrompt(brief), accountID)
+	answers, err := confirmedInitAnswers(input[0].Config, brief)
 	if err != nil {
 		return domain.Session{}, err
 	}
+	if ctx.Err() != nil {
+		return domain.Session{}, ReadinessError{Code: "check_cancelled", AccountID: input[0].AccountID}
+	}
+	ad, command, extra, selected, err := s.initCLI(ctx, initPrompt(answers), input[0].AccountID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+
 	s.reuseMu.Lock()
 	defer s.reuseMu.Unlock()
 	if ctx.Err() != nil {
@@ -692,8 +707,8 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	if err != nil {
 		return current, err
 	}
-	if active && current.AccountID != selected.ID {
-		return domain.Session{}, ReadinessError{Code: "init_account_changed", AccountID: current.AccountID}
+	if active && !sameInit(current, selected.ID, command.Argv) {
+		return domain.Session{}, ErrInitConflict
 	}
 	if live, ok, err := s.reuseLive(func(sess domain.Session) bool {
 		return sess.WorkspaceID == ws.ID && sess.Work == "init" && sess.AccountID == selected.ID
@@ -701,6 +716,9 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 		return live, err
 	} else if ok {
 		return live, nil
+	}
+	if batuta.ReadSetup(ws.Root).Ready {
+		return domain.Session{}, fmt.Errorf("%w: workspace configuration is already complete", ErrInitConflict)
 	}
 	profile, err := prepareSessionSkills(ws.Root, true, ad.ID, extra, []string{"batuta-init"})
 	if err != nil {
@@ -717,7 +735,13 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	if sess.Owner == "" {
 		sess.Owner = "web"
 	}
-	return s.startAndPersist(sess, env, ws.Root, selected.SessionCap, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID, "command": command.Report})
+	if ctx.Err() != nil {
+		return domain.Session{}, ReadinessError{Code: "check_cancelled", AccountID: selected.ID}
+	}
+	if err := batuta.ValidateSetupRoot(ws.Root); err != nil {
+		return domain.Session{}, invalidReference("%s", err)
+	}
+	return s.startAndPersist(sess, env, ws.Root, selected.SessionCap, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID, "account_id": selected.ID, "command": command.Report})
 }
 
 func sessionPrompt(inject bool, brief string) string {
@@ -732,54 +756,31 @@ func sessionPrompt(inject bool, brief string) string {
 }
 
 func initPrompt(brief string) string {
-	return "Run batuta-init for this project. Write .batuta/profile.md and .batuta/routing.md from these answers, then stop.\n\n" + strings.TrimSpace(brief)
+	return "Run batuta-init for this project. Write .batuta/profile.md, .batuta/routing.md and WORK.md from these confirmed answers, preserving existing user content, then stop.\n\n" + strings.TrimSpace(brief)
 }
 
 func (s *Service) initCLI(ctx context.Context, prompt, accountID string) (adapters.Adapter, adapters.Command, []string, domain.Account, error) {
-	accounts, err := s.Store.ListAccounts()
+	if accountID == "" {
+		return adapters.Adapter{}, adapters.Command{}, nil, domain.Account{}, ReadinessError{Code: "authenticated_account_required"}
+	}
+	a, err := s.Store.GetAccount(accountID)
 	if err != nil {
-		return adapters.Adapter{}, adapters.Command{}, nil, domain.Account{}, err
+		return adapters.Adapter{}, adapters.Command{}, nil, a, catalogReferenceError{err}
 	}
-	request := adapters.CommandRequest{Mode: "init", Prompt: prompt}
-	var firstFailure error
-	for _, a := range accounts {
-		if !a.Connected || (accountID != "" && a.ID != accountID) {
-			continue
-		}
-		ad, err := adapters.Get(a.Adapter)
-		if err != nil || (a.Adapter != "codex" && a.Adapter != "claude") {
-			continue
-		}
-		command, err := ad.Command(request)
-		if err != nil {
-			if errors.Is(err, adapters.ErrInvalidCommand) {
-				return ad, command, nil, a, err
-			}
-			if firstFailure == nil {
-				firstFailure = err
-			}
-			continue
-		}
-		r := s.readinessChecker().Check(ctx, s.Home, a)
-		if !r.Ready {
-			if r.Code == "check_cancelled" {
-				return ad, command, nil, a, ReadinessError{Code: r.Code, AccountID: a.ID}
-			}
-			if firstFailure == nil {
-				firstFailure = ReadinessError{Code: r.Code, AccountID: a.ID}
-			}
-			continue
-		}
-		env, err := ad.IsolateEnv(s.Home, a)
-		if err != nil {
-			return ad, command, nil, a, err
-		}
-		return ad, command, env, a, nil
+	ad, err := adapters.Get(a.Adapter)
+	if err != nil || (a.Adapter != "codex" && a.Adapter != "claude") {
+		return ad, adapters.Command{}, nil, a, ReadinessError{Code: "adapter_unsupported", AccountID: a.ID}
 	}
-	if firstFailure != nil {
-		return adapters.Adapter{}, adapters.Command{}, nil, domain.Account{}, firstFailure
+	command, err := ad.Command(adapters.CommandRequest{Mode: "init", Prompt: prompt})
+	if err != nil {
+		return ad, command, nil, a, err
 	}
-	return adapters.Adapter{}, adapters.Command{}, nil, domain.Account{}, ReadinessError{Code: "authenticated_account_required"}
+	r := s.readinessChecker().Check(ctx, s.Home, a)
+	if !r.Ready {
+		return ad, command, nil, a, ReadinessError{Code: r.Code, AccountID: a.ID}
+	}
+	env, err := ad.IsolateEnv(s.Home, a)
+	return ad, command, env, a, err
 }
 
 func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) {
@@ -851,7 +852,10 @@ func (s *Service) startAndPersist(sess domain.Session, env []string, dir string,
 		return sess, err
 	}
 	live, err := pending.Persist(func(latest domain.Session) error {
-		return s.Store.PutSessionWithEvent(latest, kind, payload)
+		if err := s.Store.PutSessionWithEvent(latest, kind, payload); err != nil {
+			return catalogReferenceError{err}
+		}
+		return nil
 	})
 	if err != nil {
 		return live, s.stopAfterFailure(live.ID, err)

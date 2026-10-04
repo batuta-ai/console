@@ -23,7 +23,7 @@ func TestFreshStartOwnsPTYWithoutTake(t *testing.T) {
 				case "login":
 					live, err = f.svc.StartLogin(f.account.ID, owner, client)
 				case "init":
-					live, err = f.svc.StartInit(f.workspace.ID, "brief", owner, client)
+					live, err = f.svc.StartInit(f.workspace.ID, "brief", owner, client, confirmedFixtureInput(f.account.ID))
 				default:
 					off := false
 					live, err = f.svc.StartSession(StartSessionIn{MissionID: f.mission.ID, AccountID: f.account.ID, Inject: &off, Owner: owner, Client: client})
