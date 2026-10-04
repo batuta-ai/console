@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,7 @@ func TestProbeProcessHelper(t *testing.T) {
 		fmt.Fprint(os.Stdout, strings.Repeat("s", 20<<10))
 		fmt.Fprint(os.Stderr, strings.Repeat("s", 20<<10))
 	case "escaped-holder":
-		if err := os.WriteFile(args[1], []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		if err := publishProbePID(args); err != nil {
 			os.Exit(91)
 		}
 		time.Sleep(1500 * time.Millisecond)
@@ -68,15 +69,13 @@ func TestProbeProcessHelper(t *testing.T) {
 		if err := child.Start(); err != nil {
 			os.Exit(92)
 		}
-		for {
-			if _, err := os.Stat(args[1]); err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond)
+		if err := waitProbePublication(args[1]); err != nil {
+			drainFailedProbeChild(child)
+			os.Exit(91)
 		}
 		os.Exit(0)
 	case "hold":
-		if err := os.WriteFile(args[1], []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		if err := publishProbePID(args); err != nil {
 			os.Exit(91)
 		}
 		for {
@@ -88,11 +87,9 @@ func TestProbeProcessHelper(t *testing.T) {
 		if err := child.Start(); err != nil {
 			os.Exit(92)
 		}
-		for {
-			if _, err := os.Stat(args[1]); err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond)
+		if err := waitProbePublication(args[1]); err != nil {
+			drainFailedProbeChild(child)
+			os.Exit(91)
 		}
 		if args[0] == "natural-tree" {
 			os.Exit(0)
@@ -105,6 +102,134 @@ func TestProbeProcessHelper(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+// The optional pipe barrier holds the real producer before it commits readiness.
+func publishProbePID(args []string) error {
+	file, err := os.CreateTemp(filepath.Dir(args[1]), ".probe-pid-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if len(args) > 2 && args[2] == "publication-barrier" {
+		if _, err := os.Stdout.Write([]byte{1}); err != nil {
+			return err
+		}
+		var release [1]byte
+		if _, err := io.ReadFull(os.Stdin, release[:]); err != nil {
+			return err
+		}
+	}
+	return os.Rename(file.Name(), args[1])
+}
+
+func drainFailedProbeChild(child *exec.Cmd) {
+	done := make(chan struct{})
+	go func() { _ = child.Wait(); close(done) }()
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		_ = child.Process.Kill()
+		<-done
+	}
+}
+
+func waitProbePublication(marker string) error {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(marker)
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("invalid fixture marker: %s", marker)
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return fmt.Errorf("probe child did not publish readiness")
+}
+
+func TestProbePIDPublicationFailure(t *testing.T) {
+	for _, mode := range []string{"hold", "escaped-holder", "tree", "natural-tree", "overflow-tree", "escaped-tree"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "pid")
+			if err := os.Mkdir(marker, 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			argv := probeArgs(t, mode, marker)
+			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			err := cmd.Run()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 91 {
+				t.Fatalf("publication failure: %v", err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "pid" {
+				t.Fatalf("failed publication artifacts: %v %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestProbePIDPublication(t *testing.T) {
+	for _, mode := range []string{"hold", "escaped-holder"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "pid")
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			argv := probeArgs(t, mode, marker, "publication-barrier")
+			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			input, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = input.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			var ready [1]byte
+			if _, err := io.ReadFull(output, ready[:]); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := os.ReadFile(marker); !os.IsNotExist(err) {
+				t.Fatalf("marker visible before publication commit: %q %v", data, err)
+			}
+			if _, err := input.Write([]byte{1}); err != nil {
+				t.Fatal(err)
+			}
+			if pid := waitProbePID(t, marker); pid != cmd.Process.Pid {
+				t.Fatalf("published PID %d differs from owned producer %d", pid, cmd.Process.Pid)
+			}
+			info, err := os.Stat(marker)
+			if err != nil || info.Mode().Perm() != 0600 {
+				t.Fatalf("marker permissions: %v %v", info, err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("publication artifacts: %v %v", entries, err)
+			}
+		})
+	}
 }
 
 func probeManager(t *testing.T) (*Manager, string, *atomic.Int32) {
