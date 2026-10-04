@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/batuta-ai/console/integrations/batuta"
@@ -168,7 +170,7 @@ func (s *Server) saveSquad(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	q, err := s.Svc.SaveSquad(q)
+	q, err := s.Svc.SaveSquadContext(r.Context(), q)
 	if err != nil {
 		writeErr(w, 400, "squad", err.Error())
 		return
@@ -182,7 +184,7 @@ func (s *Server) saveSquadID(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not_found", err.Error())
 		return
 	}
-	q, err = s.Svc.SaveSquad(q)
+	q, err = s.Svc.SaveSquadContext(r.Context(), q)
 	if err != nil {
 		writeErr(w, 400, "squad", err.Error())
 		return
@@ -197,11 +199,11 @@ func (s *Server) validateSquad(w http.ResponseWriter, r *http.Request) {
 		if draft.ID == "" {
 			draft.ID = r.PathValue("id")
 		}
-		v := s.Svc.ValidateDraft(draft)
+		v := s.Svc.ValidateDraftContext(r.Context(), draft)
 		writeJSON(w, map[string]any{"validation": v, "squad": draft})
 		return
 	}
-	v, q, err := s.Svc.ValidateSquad(r.PathValue("id"))
+	v, q, err := s.Svc.ValidateSquadContext(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 404, "not_found", err.Error())
 		return
@@ -243,9 +245,22 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "store", err.Error())
 		return
 	}
-	for i := range list {
-		list[i] = s.Svc.DecorateAccount(list[i])
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	jobs := make(chan int)
+	var checks sync.WaitGroup
+	for range min(4, len(list)) {
+		checks.Go(func() {
+			for i := range jobs {
+				list[i] = s.Svc.DecorateAccountContext(ctx, list[i])
+			}
+		})
 	}
+	for i := range list {
+		jobs <- i
+	}
+	close(jobs)
+	checks.Wait()
 	writeJSON(w, list)
 }
 
@@ -287,12 +302,12 @@ func (s *Server) renameAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) connectAccount(w http.ResponseWriter, r *http.Request) {
-	a, err := s.Svc.ConnectAccount(r.PathValue("id"))
+	a, err := s.Svc.ConnectAccountContext(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 400, "account", err.Error())
 		return
 	}
-	writeJSON(w, s.Svc.DecorateAccount(a))
+	writeJSON(w, s.Svc.DecorateAccountContext(r.Context(), a))
 }
 
 func (s *Server) loginAccount(w http.ResponseWriter, r *http.Request) {
@@ -304,8 +319,11 @@ func (s *Server) loginAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	sess, err := s.Svc.StartLogin(r.PathValue("id"), in.Owner, in.Client)
+	sess, err := s.Svc.StartLoginContext(r.Context(), r.PathValue("id"), in.Owner, in.Client)
 	if err != nil {
+		if writeReadinessError(w, err) {
+			return
+		}
 		writeErr(w, 400, "login", err.Error())
 		return
 	}
@@ -322,8 +340,11 @@ func (s *Server) initWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	sess, err := s.Svc.StartInit(r.PathValue("id"), in.Brief, in.Owner, in.Client)
+	sess, err := s.Svc.StartInitContext(r.Context(), r.PathValue("id"), in.Brief, in.Owner, in.Client)
 	if err != nil {
+		if writeReadinessError(w, err) {
+			return
+		}
 		writeErr(w, 400, "init", err.Error())
 		return
 	}
@@ -354,8 +375,11 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "json", err.Error())
 		return
 	}
-	sess, err := s.Svc.StartSession(in)
+	sess, err := s.Svc.StartSessionContext(r.Context(), in)
 	if err != nil {
+		if writeReadinessError(w, err) {
+			return
+		}
 		writeErr(w, referenceStatus(err), "session", err.Error())
 		return
 	}
@@ -548,6 +572,32 @@ func writeErr(w http.ResponseWriter, code int, codeName, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": codeName, "message": msg})
+}
+
+func writeReadinessError(w http.ResponseWriter, err error) bool {
+	code, ok := service.ReadinessFailure(err)
+	if !ok && errors.Is(err, exec.ErrNotFound) {
+		code, ok = "cli_missing", true
+	}
+	if !ok && errors.Is(err, adapters.ErrUnsupportedCommand) {
+		code, ok = "adapter_unsupported", true
+	}
+	if !ok {
+		return false
+	}
+	status := http.StatusConflict
+	if code == "provider_unavailable" || code == "provider_response_invalid" || code == "provider_forbidden" || code == "check_cancelled" || code == "probe_unavailable" || code == "cli_probe_failed" {
+		status = http.StatusServiceUnavailable
+	}
+	response := map[string]string{"error": code, "message": err.Error()}
+	var failure service.ReadinessError
+	if errors.As(err, &failure) && failure.AccountID != "" {
+		response["account_id"] = failure.AccountID
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response)
+	return true
 }
 
 var _ = adapters.All

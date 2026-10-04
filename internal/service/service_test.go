@@ -148,8 +148,8 @@ func TestConnectBindsVacantBatutaMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend, err := svc.Store.GetSquad("sq_batuta_backend")
-	if err != nil || backend.Draft {
-		t.Fatalf("backend should leave draft after unique Codex: %+v %v", backend, err)
+	if err != nil || backend.Draft || backend.Members[0].AccountID != codex.ID {
+		t.Fatalf("unique connected Codex should complete structural binding: %+v %v", backend, err)
 	}
 	ciclo, err = svc.Store.GetSquad("sq_batuta_ciclo")
 	if err != nil || !ciclo.Draft {
@@ -164,11 +164,20 @@ func TestConnectBindsVacantBatutaMembers(t *testing.T) {
 	}
 	ciclo, err = svc.Store.GetSquad("sq_batuta_ciclo")
 	if err != nil || ciclo.Draft {
-		t.Fatalf("ciclo should leave draft: %+v %v", ciclo, err)
+		t.Fatalf("connected accounts should complete structural binding: %+v %v", ciclo, err)
+	}
+	for _, member := range ciclo.Members {
+		want := codex.ID
+		if member.CLI == "claude" {
+			want = claude.ID
+		}
+		if member.AccountID != want {
+			t.Fatalf("connected member not bound: %+v", member)
+		}
 	}
 	v := svc.ValidateDraft(ciclo)
-	if !v.Ready || v.Tone != "warning" {
-		t.Fatalf("claude isolation should warn but stay ready: %+v", v)
+	if v.Ready || v.Tone != "warning" {
+		t.Fatalf("unverified accounts must not be ready: %+v", v)
 	}
 }
 

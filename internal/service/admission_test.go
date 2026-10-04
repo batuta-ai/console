@@ -28,7 +28,7 @@ func admissionSetup(t *testing.T, cap int) admissionFixture {
 	t.Setenv("BATUTA_SKILLS", t.TempDir())
 	cli := t.TempDir()
 	launches := filepath.Join(cli, "launches")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$$\" >> '" + launches + "'\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nprintf '%s\\n' \"$$\" >> '" + launches + "'\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
 	if err := os.WriteFile(filepath.Join(cli, "codex"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +57,7 @@ func admissionSetup(t *testing.T, cap int) admissionFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	authenticateFixtureAccount(t, svc, a, "A")
 	return admissionFixture{svc, db, a, w, m, launches}
 }
 
@@ -238,6 +239,7 @@ func TestIndependentAccountAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.account = a
+	authenticateFixtureAccount(t, f.svc, a, "B")
 	second, err := f.start()
 	if err != nil {
 		t.Fatal(err)

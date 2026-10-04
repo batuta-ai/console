@@ -1,10 +1,11 @@
 package adapters
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
 )
@@ -52,29 +53,21 @@ func (a Adapter) Lookup() (string, error) {
 	return exec.LookPath(a.CLI)
 }
 
-// LoggedIn reports whether this account's isolate directory already holds a CLI
-// credential file. A connected folder without that file is not a login.
+// LoggedIn verifies an isolated file credential with its provider. CLI support
+// and execution readiness are separate checks, performed by ReadinessChecker.
 func (a Adapter) LoggedIn(consoleHome string, account domain.Account) bool {
-	dir := a.IsolateDir(consoleHome, account.ID)
-	if dir == "" {
+	if !account.Connected || (a.ID != "codex" && a.ID != "claude") {
 		return false
 	}
-	var paths []string
-	switch a.ID {
-	case "codex":
-		paths = []string{filepath.Join(dir, ".codex", "auth.json")}
-	case "claude":
-		paths = []string{filepath.Join(dir, ".claude", ".credentials.json")}
-	default:
+	if account.Adapter != "" && account.Adapter != a.ID {
 		return false
 	}
-	for _, path := range paths {
-		st, err := os.Stat(path)
-		if err == nil && !st.IsDir() && st.Size() > 0 {
-			return true
-		}
-	}
-	return false
+	account.Adapter = a.ID
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := NewReadinessChecker(nil, nil)
+	defer c.client.CloseIdleConnections()
+	return c.authenticate(ctx, consoleHome, account, domain.AccountReadiness{Connected: true}).Authenticated
 }
 
 func (a Adapter) IsolateDir(consoleHome, accountID string) string {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestNormalizedSnapshotMemberPersistence(t *testing.T) {
 				off := false
 				inject = &off
 			}
-			sess, err := f.svc.StartSession(StartSessionIn{MissionID: m.ID, MemberID: tc.explicit, Inject: inject})
+			sess, err := f.svc.StartSession(StartSessionIn{MissionID: m.ID, MemberID: tc.explicit, AccountID: f.account.ID, Inject: inject})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +244,11 @@ func TestSnapshotInheritanceAndHistoricalLaunch(t *testing.T) {
 				sqlExec(t, f.db, "DELETE FROM squads")
 			}
 			off := false
-			sess, err := f.svc.StartSession(StartSessionIn{MissionID: m.ID, Inject: &off})
+			in := StartSessionIn{MissionID: m.ID, Inject: &off}
+			if wantAccount == "" {
+				in.Argv = []string{filepath.Join(filepath.Dir(f.launches), "codex")}
+			}
+			sess, err := f.svc.StartSession(in)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -362,6 +367,11 @@ func TestMatchingAccountAdapterOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	other, err = f.svc.ConnectAccount(other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticateFixtureAccount(t, f.svc, other, "B")
 	m := f.mission
 	m.SquadSnapshot.Members = []domain.Member{{ID: "history", CLI: "claude", AccountID: "missing-original"}}
 	if err := f.svc.Store.PutMission(m); err != nil {

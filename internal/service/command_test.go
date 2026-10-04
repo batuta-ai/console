@@ -34,7 +34,11 @@ func commandFixture(t *testing.T, adapter string) (admissionFixture, string, str
 	cli := filepath.Join(cliDir, adapter)
 	out := filepath.Join(cliDir, "argv")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\n[ -t 0 ] && [ -t 1 ] || exit 91\nprintf '%s\\0' \"$0\" \"$@\" > " + quote(out) + "\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
+	banner := "codex-cli 0.160.0"
+	if adapter == "claude" {
+		banner = "2.1.289 (Claude Code)"
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\n[ -t 0 ] && [ -t 1 ] || exit 91\nprintf '%s\\0' \"$0\" \"$@\" > " + quote(out) + "\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
 	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +46,7 @@ func commandFixture(t *testing.T, adapter string) (admissionFixture, string, str
 	if err := f.svc.Store.PutAccount(f.account); err != nil {
 		t.Fatal(err)
 	}
+	authenticateFixtureAccount(t, f.svc, f.account, "A")
 	return f, cli, out
 }
 
@@ -351,8 +356,8 @@ func TestOfficialUnsupportedAdaptersDoNotLaunch(t *testing.T) {
 					sess, err = f.svc.StartSession(in)
 				}
 				if mode == "init" {
-					if !errors.Is(err, exec.ErrNotFound) {
-						t.Errorf("init without supported CLI: %v", err)
+					if code, ok := ReadinessFailure(err); !ok || code != "authenticated_account_required" {
+						t.Errorf("init without a supported authenticated account: %v", err)
 					}
 				} else if !errors.Is(err, adapters.ErrUnsupportedCommand) {
 					t.Errorf("unsupported command classification: %v", err)
@@ -366,4 +371,28 @@ func TestOfficialUnsupportedAdaptersDoNotLaunch(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestQualifiedClaudeRejectsPurgeSubcommand(t *testing.T) {
+	f, cli, out := commandFixture(t, "claude")
+	script, err := os.ReadFile(cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cli, []byte(strings.ReplaceAll(string(script), "2.1.286", "2.1.289")), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f.mission.Brief = "purge"
+	if err := f.svc.Store.PutMission(f.mission); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	live, err := f.svc.StartSession(StartSessionIn{MissionID: f.mission.ID, AccountID: f.account.ID, Adapter: "claude", Inject: &off})
+	if live.PID != 0 {
+		f.svc.StopSession(live.ID)
+	}
+	if !errors.Is(err, adapters.ErrInvalidCommand) {
+		t.Errorf("Claude289 destructive subcommand accepted as goal: %v", err)
+	}
+	assertNoCommandLaunch(t, f, out)
 }

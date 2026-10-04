@@ -133,7 +133,11 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\nexec " + quote(executable) + " -test.run '^TestCredentialRecordChild$' -- console-credential-fixture " + quote(out) + " " + quote(root) + " " + quote(adapter) + " \"$@\"\n"
+	banner := "codex-cli 0.160.0"
+	if adapter == "claude" {
+		banner = "2.1.289 (Claude Code)"
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\nexec " + quote(executable) + " -test.run '^TestCredentialRecordChild$' -- console-credential-fixture " + quote(out) + " " + quote(root) + " " + quote(adapter) + " \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(cli, adapter), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -201,16 +205,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 				svc, ws, mission, account, out, root := isolationFixture(t, adapter)
 				accountHome := filepath.Join(svc.Home, "accounts", account.ID)
 				if mode == "authenticated-init" || mode == "session" || mode == "login" {
-					config, file := filepath.Join(accountHome, ".codex"), "auth.json"
-					if adapter == "claude" {
-						config, file = filepath.Join(accountHome, ".claude"), ".credentials.json"
-					}
-					if err := os.MkdirAll(config, 0700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(config, file), []byte(`{"synthetic_identity":"A"}`), 0600); err != nil {
-						t.Fatal(err)
-					}
+					authenticateFixtureAccount(t, svc, account, "A")
 				}
 				var sess domain.Session
 				var err error
@@ -223,6 +218,19 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
 				default:
 					sess, err = svc.StartInit(ws.ID, "synthetic init", "web", "test")
+				}
+				if mode == "fallback-init" {
+					if code, ok := ReadinessFailure(err); !ok || code != "credential_missing" {
+						t.Fatalf("init without authentication: %v", err)
+					}
+					if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("unbound init executed: %v", err)
+					}
+					rows, err := svc.Store.ListSessions()
+					if err != nil || len(rows) != 0 {
+						t.Fatalf("unbound init persisted: %v %v", rows, err)
+					}
+					return
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -247,14 +255,14 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 						t.Errorf("required runtime variable changed: %s", key)
 					}
 				}
-				if mode == "fallback-init" || mode == "direct" {
+				if mode == "direct" {
 					if record.Env["HOME"] == os.Getenv("HOME") || record.Env["HOME"] == accountHome || record.Identity != "" {
 						t.Error("unbound fallback inherited an existing identity")
 					}
 				} else if record.Env["HOME"] != accountHome {
 					t.Error("selected account home changed")
 				}
-				if mode != "fallback-init" && mode != "direct" && record.Identity != "A" {
+				if mode != "direct" && record.Identity != "A" {
 					t.Error("authenticated init did not use selected synthetic identity")
 				}
 				metadata := map[string]string{}
@@ -389,18 +397,15 @@ func TestSameProviderAccountIdentitiesStayIndependent(t *testing.T) {
 			var sessions []domain.Session
 			for _, account := range []domain.Account{a, b} {
 				home := filepath.Join(svc.Home, "accounts", account.ID)
-				config, file := filepath.Join(home, ".codex"), "auth.json"
+				config := filepath.Join(home, ".codex")
 				key := "CODEX_HOME"
 				if adapter == "claude" {
-					config, file, key = filepath.Join(home, ".claude"), ".credentials.json", "CLAUDE_CONFIG_DIR"
+					config, key = filepath.Join(home, ".claude"), "CLAUDE_CONFIG_DIR"
 				}
 				if err := os.MkdirAll(config, 0700); err != nil {
 					t.Fatal(err)
 				}
-				data, _ := json.Marshal(map[string]string{"synthetic_identity": account.Label})
-				if err := os.WriteFile(filepath.Join(config, file), data, 0600); err != nil {
-					t.Fatal(err)
-				}
+				authenticateFixtureAccount(t, svc, account, account.Label)
 				sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter})
 				if err != nil {
 					t.Fatal(err)
@@ -596,9 +601,7 @@ func TestAccountSetupKeepsExistingConsoleHomePermissions(t *testing.T) {
 func TestInitRejectsBrokenSelectedIdentityWithoutFallback(t *testing.T) {
 	svc, ws, _, account, out, _ := isolationFixture(t, "codex")
 	home := filepath.Join(svc.Home, "accounts", account.ID)
-	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"synthetic_identity":"A"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	authenticateFixtureAccount(t, svc, account, "A")
 	config := filepath.Join(home, ".config")
 	if err := os.Remove(config); err != nil {
 		t.Fatal(err)

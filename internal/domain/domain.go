@@ -66,7 +66,7 @@ type Squad struct {
 	Name    string   `json:"name"`
 	Purpose string   `json:"purpose"`
 	Version int      `json:"version"`
-	Draft   bool     `json:"draft"`
+	Draft   bool     `json:"draft"` // Structural catalog completeness, not authentication.
 	Origin  string   `json:"origin"`
 	Members []Member `json:"members"`
 }
@@ -91,16 +91,30 @@ type PlanRef struct {
 }
 
 type Account struct {
-	ID         string    `json:"id"`
-	Label      string    `json:"label"`
-	Provider   string    `json:"provider"`
-	Adapter    string    `json:"adapter"`
-	Isolation  Isolation `json:"isolation"`
-	Connected  bool      `json:"connected"`
-	Authed     bool      `json:"authed"`
-	SessionCap int       `json:"session_cap"`
-	AuthMethod string    `json:"auth_method"`
-	VaultRef   string    `json:"vault_ref,omitempty"`
+	ID         string            `json:"id"`
+	Label      string            `json:"label"`
+	Provider   string            `json:"provider"`
+	Adapter    string            `json:"adapter"`
+	Isolation  Isolation         `json:"isolation"`
+	Connected  bool              `json:"connected"`
+	Authed     bool              `json:"authed"`
+	SessionCap int               `json:"session_cap"`
+	AuthMethod string            `json:"auth_method"`
+	VaultRef   string            `json:"vault_ref,omitempty"`
+	Readiness  *AccountReadiness `json:"readiness,omitempty"`
+}
+
+type AccountReadiness struct {
+	Supported            bool      `json:"supported"`
+	Available            bool      `json:"available"`
+	CLICompatible        bool      `json:"cli_compatible"`
+	Connected            bool      `json:"connected"`
+	CredentialConfigured bool      `json:"credential_configured"`
+	Authenticated        bool      `json:"authenticated"`
+	Ready                bool      `json:"ready"`
+	Code                 string    `json:"code"`
+	CredentialSource     string    `json:"credential_source,omitempty"`
+	CheckedAt            time.Time `json:"checked_at"`
 }
 
 type Session struct {

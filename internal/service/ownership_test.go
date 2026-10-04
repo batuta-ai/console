@@ -45,9 +45,6 @@ func TestFreshStartOwnsPTYWithoutTake(t *testing.T) {
 						t.Fatalf("fresh ownership: %+v; want %s/%s", s, owner, client)
 					}
 					wantAccount := f.account.ID
-					if mode == "init" {
-						wantAccount = "" // Legacy init is explicitly unbound.
-					}
 					if s.AccountID != wantAccount {
 						t.Fatalf("account binding: %q; want %q", s.AccountID, wantAccount)
 					}

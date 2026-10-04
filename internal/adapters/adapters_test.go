@@ -78,7 +78,7 @@ func TestIsolateEnvCursorAgent(t *testing.T) {
 	}
 }
 
-func TestLoggedInReadsCodexAuthFile(t *testing.T) {
+func TestLoggedInRejectsUnverifiedCodexAuthFile(t *testing.T) {
 	home := t.TempDir()
 	a, err := Get("codex")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestLoggedInReadsCodexAuthFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".codex", "auth.json"), []byte(`{"token":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !a.LoggedIn(home, acct) {
-		t.Fatal("auth.json should count as login")
+	if a.LoggedIn(home, acct) {
+		t.Fatal("an unverified token field must not count as authenticated")
 	}
 }

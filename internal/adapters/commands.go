@@ -40,7 +40,7 @@ type CommandSetting struct {
 }
 
 // Command supports interactive PTY syntax qualified against Codex 0.160.0 and
-// Claude 2.1.286. Effort validation is syntactic; model compatibility is the CLI's
+// Claude 2.1.286/2.1.289. Effort validation is syntactic; model compatibility is the CLI's
 // responsibility. Model names deliberately do not use registry catalog metadata.
 func (a Adapter) Command(in CommandRequest) (Command, error) {
 	if a.ID != "codex" && a.ID != "claude" {
@@ -154,7 +154,7 @@ func (a Adapter) reservedPrompt(prompt string) bool {
 	} else {
 		switch prompt {
 		case "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import",
-			"install", "logs", "mcp", "plugin", "plugins", "project", "respawn", "rm",
+			"install", "logs", "mcp", "plugin", "plugins", "project", "purge", "respawn", "rm",
 			"setup-token", "stop", "kill", "ultrareview", "update", "upgrade":
 			return true
 		}

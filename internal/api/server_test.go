@@ -84,12 +84,12 @@ func TestCatalogDoesNotStartSession(t *testing.T) {
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "purpose": "p", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
-	if sq["draft"] == true {
-		t.Fatalf("ready squad marked draft: %v", sq)
+	if sq["draft"] != false {
+		t.Fatalf("structurally complete squad marked draft: %v", sq)
 	}
 	val := post(t, h, "/v0/squads/"+sq["id"].(string)+"/validate", map[string]any{}, 200)
 	v := val["validation"].(map[string]any)
-	if v["ready"] != true {
+	if v["ready"] != false {
 		t.Fatalf("validate %+v", val)
 	}
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)

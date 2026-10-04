@@ -209,7 +209,7 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("BATUTA_SKILLS", t.TempDir())
 			cli := t.TempDir()
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nexec /bin/cat\n"), 0755); err != nil {
+			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
@@ -229,9 +229,11 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := svc.ConnectAccount(a.ID); err != nil {
+			a, err = svc.ConnectAccount(a.ID)
+			if err != nil {
 				t.Fatal(err)
 			}
+			authenticateFixtureAccount(t, svc, a, "A")
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
@@ -267,18 +269,8 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 func TestReusePersistenceFailureReturned(t *testing.T) {
 	for _, mode := range []string{"login", "init"} {
 		t.Run(mode, func(t *testing.T) {
-			svc, db := persistenceSvc(t)
-			a, err := svc.CreateAccount("a", "codex")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := svc.ConnectAccount(a.ID); err != nil {
-				t.Fatal(err)
-			}
-			w, err := svc.CreateWorkspace("w", t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			f := admissionSetup(t, 0)
+			svc, db, a, w := f.svc, f.db, f.account, f.workspace
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }

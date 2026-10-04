@@ -7,7 +7,8 @@ providers or modes; `ErrInvalidCommand` identifies invalid configuration. Execut
 lookup failures wrap the original `exec.LookPath` error.
 
 The syntax baseline is the conductor's captured Codex 0.160.0 and Claude Code
-2.1.286 help (2026-10-04):
+2.1.286 and 2.1.289 help (2026-10-04). The 2.1.289 command list adds `purge`,
+which is also refused as a positional goal:
 
 | Input | Codex | Claude |
 | --- | --- | --- |

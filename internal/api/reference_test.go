@@ -59,7 +59,7 @@ func TestReferenceHTTPStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", cli)
-	control := post(t, h, "/v0/sessions", map[string]any{"mission_id": m.ID, "batuta": false, "owner": "web", "client": "test"}, 200)
+	control := post(t, h, "/v0/sessions", map[string]any{"mission_id": m.ID, "batuta": false, "argv": []string{filepath.Join(cli, "codex")}, "owner": "web", "client": "test"}, 200)
 	if member, ok := control["member_id"]; ok && member != "" {
 		t.Fatalf("fictional generic member: %v", member)
 	}

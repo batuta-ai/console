@@ -25,6 +25,9 @@ func checkedDirectory(path string) (os.FileInfo, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("isolation path must be a directory without symlinks: %s", path)
 	}
+	if !credentialOwner(info) {
+		return nil, fmt.Errorf("isolation directory must belong to the current user: %s", path)
+	}
 	return info, nil
 }
 
