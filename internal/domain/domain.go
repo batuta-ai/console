@@ -73,15 +73,16 @@ type Squad struct {
 }
 
 type Mission struct {
-	ID            string    `json:"id"`
-	WorkspaceID   string    `json:"workspace_id"`
-	Title         string    `json:"title"`
-	Brief         string    `json:"brief,omitempty"`
-	SquadID       string    `json:"squad_id"`
-	SquadSnapshot Squad     `json:"squad_snapshot"`
-	Status        string    `json:"status"`
-	Attention     string    `json:"attention,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	Binding       *MissionBinding `json:"binding,omitempty"`
+	ID            string          `json:"id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	Title         string          `json:"title"`
+	Brief         string          `json:"brief,omitempty"`
+	SquadID       string          `json:"squad_id"`
+	SquadSnapshot Squad           `json:"squad_snapshot"`
+	Status        string          `json:"status"`
+	Attention     string          `json:"attention,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // PlanRef is a Batuta plan file already on disk. The Console reads it; it does not write the plan.
@@ -170,21 +171,25 @@ type Validation struct {
 }
 
 type WatchView struct {
-	API       string           `json:"api"`
-	Workspace string           `json:"workspace"`
-	Delivery  string           `json:"delivery,omitempty"`
-	Header    map[string]any   `json:"header"`
-	Attention map[string]any   `json:"attention"`
-	Context   map[string]any   `json:"context"`
-	Progress  map[string]any   `json:"progress"`
-	Detail    map[string]any   `json:"detail"`
-	Waves     []map[string]any `json:"waves"`
-	Health    map[string]any   `json:"health"`
-	LogTitle  string           `json:"log_title,omitempty"`
-	LogLines  []string         `json:"log_lines,omitempty"`
-	Plans     []PlanRef        `json:"plans,omitempty"`
-	Available bool             `json:"available"`
-	Message   string           `json:"message,omitempty"`
+	MissionID   string           `json:"mission_id,omitempty"`
+	WorkspaceID string           `json:"workspace_id,omitempty"`
+	Scope       string           `json:"scope"`
+	Source      SourceState      `json:"source"`
+	API         string           `json:"api"`
+	Workspace   string           `json:"workspace"`
+	Delivery    string           `json:"delivery,omitempty"`
+	Header      map[string]any   `json:"header"`
+	Attention   map[string]any   `json:"attention"`
+	Context     map[string]any   `json:"context"`
+	Progress    map[string]any   `json:"progress"`
+	Detail      map[string]any   `json:"detail"`
+	Waves       []map[string]any `json:"waves"`
+	Health      map[string]any   `json:"health"`
+	LogTitle    string           `json:"log_title,omitempty"`
+	LogLines    []string         `json:"log_lines,omitempty"`
+	Plans       []PlanRef        `json:"plans,omitempty"`
+	Available   bool             `json:"available"`
+	Message     string           `json:"message,omitempty"`
 }
 
 func ValidateSquad(s Squad) Validation {

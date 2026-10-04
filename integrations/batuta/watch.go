@@ -2,13 +2,12 @@ package batuta
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
-	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
 )
 
@@ -27,34 +26,18 @@ func Project(workspace, delivery string) (domain.WatchView, error) {
 	if err != nil {
 		return out, err
 	}
-	if _, err := os.Stat(filepath.Join(abs, ".batuta", "journal")); err != nil {
-		out.Message = "no batuta journal in this workspace"
+	if delivery == "" {
+		out.Message = "delivery_unassigned"
+		out.Source = domain.SourceUnavailable
 		return out, nil
 	}
-	store, err := journal.Open(abs)
+	records, err := readJournal(abs, delivery)
 	if err != nil {
-		return out, err
-	}
-	if delivery == "" {
-		ids, err := store.List()
-		if err != nil {
-			return out, err
+		if errors.Is(err, ErrArtifactMissing) {
+			out.Message = "journal_unavailable"
+			out.Source = domain.SourceUnavailable
+			return out, nil
 		}
-		for _, id := range ids {
-			records, err := store.Read(id)
-			if err != nil || len(records) == 0 {
-				continue
-			}
-			delivery = id
-			break
-		}
-	}
-	if delivery == "" {
-		out.Message = "no deliveries"
-		return out, nil
-	}
-	records, err := store.Read(delivery)
-	if err != nil {
 		return out, err
 	}
 	now := time.Now().UTC()
@@ -85,7 +68,7 @@ func dto(workspace, delivery string, view loop.PanelView) domain.WatchView {
 		})
 	}
 	return domain.WatchView{
-		API: API, Workspace: workspace, Delivery: delivery, Available: true,
+		API: API, Workspace: workspace, Delivery: delivery, Available: true, Source: domain.SourceCurrent,
 		Header: map[string]any{
 			"presence": view.Header.Presence, "loops": view.Header.Loops, "delivery": view.Header.Delivery,
 			"project": view.Header.Project, "branch": view.Header.Branch, "head": view.Header.Head,

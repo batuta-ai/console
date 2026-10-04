@@ -46,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/squads/{id}/save", s.auth(s.saveSquadID))
 	mux.HandleFunc("GET /v0/missions", s.auth(s.listMissions))
 	mux.HandleFunc("POST /v0/missions", s.auth(s.createMission))
+	mux.HandleFunc("PUT /v0/missions/{id}/binding", s.auth(s.bindMission))
+	mux.HandleFunc("GET /v0/missions/{id}/watch", s.auth(s.watchMission))
 	mux.HandleFunc("GET /v0/accounts", s.auth(s.listAccounts))
 	mux.HandleFunc("POST /v0/accounts", s.auth(s.createAccount))
 	mux.HandleFunc("PATCH /v0/accounts/{id}", s.auth(s.renameAccount))
@@ -505,6 +507,10 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("mission") {
+		s.writeMissionWatch(w, r, r.URL.Query().Get("mission"))
+		return
+	}
 	view, err := s.Svc.Watch(r.URL.Query().Get("workspace"), r.URL.Query().Get("delivery"))
 	if err != nil {
 		writeErr(w, 400, "watch", err.Error())

@@ -107,8 +107,8 @@ func TestLegacyMigrationLossless(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := version(t, s.db); got != 3 {
-					t.Errorf("schema version = %d, want 3", got)
+				if got := version(t, s.db); got != 4 {
+					t.Errorf("schema version = %d, want 4", got)
 				}
 				for table, query := range queries {
 					if got := rawRows(t, s.db, query); !reflect.DeepEqual(got, before[table]) {
@@ -152,7 +152,7 @@ func TestEmptyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if got := version(t, s.db); got != 3 {
+	if got := version(t, s.db); got != 4 {
 		t.Fatalf("version %d", got)
 	}
 }
@@ -183,7 +183,7 @@ func TestMigrationFailureRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if version(t, s.db) != 3 {
+	if version(t, s.db) != 4 {
 		t.Fatal("recovery did not advance")
 	}
 }
@@ -222,8 +222,8 @@ func TestSchema2RecoveryMetadataMigration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version(t, st.db) != 3 {
-			t.Errorf("schema2 did not upgrade to 3")
+		if version(t, st.db) != 4 {
+			t.Errorf("schema2 did not upgrade to 4")
 		}
 		if !reflect.DeepEqual(before, rawRows(t, st.db, "SELECT "+oldColumns+" FROM sessions")) || !reflect.DeepEqual(events, rawRows(t, st.db, "SELECT * FROM events")) {
 			t.Fatal("migration changed history")
@@ -260,7 +260,7 @@ func TestRecoveryMigrationRollsBackFirstColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if version(t, st.db) != 3 {
+	if version(t, st.db) != 4 {
 		t.Fatal("retry did not migrate")
 	}
 }

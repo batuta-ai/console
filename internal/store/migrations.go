@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 func (s *Store) migrate() error {
 	var version int
@@ -65,6 +65,18 @@ CREATE TABLE IF NOT EXISTS events (
 		if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN process_identity TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN recovery_reason TEXT NOT NULL DEFAULT '';`); err != nil {
 			return fmt.Errorf("migration 3 add session recovery metadata: %w", err)
+		}
+	case 4:
+		if _, err := tx.Exec(`ALTER TABLE missions ADD COLUMN binding_root TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN binding_canonical_root TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN plan_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN plan_slug TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN plan_digest TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN delivery_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE missions ADD COLUMN opened_digest TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX mission_delivery_owner ON missions(workspace_id,delivery_id) WHERE delivery_id <> '';
+CREATE UNIQUE INDEX mission_delivery_root_owner ON missions(binding_canonical_root,delivery_id) WHERE delivery_id <> '';`); err != nil {
+			return fmt.Errorf("migration 4 add mission binding: %w", err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {

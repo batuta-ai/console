@@ -143,23 +143,38 @@ func (s *Store) ListSquads() ([]domain.Squad, error) {
 	return out, rows.Err()
 }
 
+// PutMission preserves binding columns; only BindMission may change ownership.
 func (s catalogWriter) PutMission(m domain.Mission) error {
 	b, err := json.Marshal(m.SquadSnapshot)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO missions(id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief) VALUES(?,?,?,?,?,?,?,?,?)`,
+	result, err := s.db.Exec(`INSERT INTO missions(id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief) VALUES(?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,title=excluded.title,squad_id=excluded.squad_id,snapshot=excluded.snapshot,status=excluded.status,attention=excluded.attention,created_at=excluded.created_at,brief=excluded.brief
+WHERE missions.plan_path='' OR missions.workspace_id=excluded.workspace_id`,
 		m.ID, m.WorkspaceID, m.Title, m.SquadID, string(b), m.Status, m.Attention, m.CreatedAt.Format(time.RFC3339Nano), m.Brief)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n == 0 {
+		return domain.ErrBindingConflict
+	}
 	return err
 }
 
 func (s *Store) GetMission(id string) (domain.Mission, error) {
 	var m domain.Mission
 	var snap, at string
-	err := s.db.QueryRow(`SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief FROM missions WHERE id=?`, id).
-		Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief)
+	var binding domain.MissionBinding
+	err := s.db.QueryRow(`SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief,binding_root,binding_canonical_root,plan_path,plan_slug,plan_digest,delivery_id,opened_digest FROM missions WHERE id=?`, id).
+		Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief, &binding.WorkspaceRoot, &binding.CanonicalRoot, &binding.PlanPath, &binding.PlanSlug, &binding.PlanDigest, &binding.DeliveryID, &binding.OpenedDigest)
 	if err != nil {
 		return m, err
+	}
+	if binding.PlanPath != "" {
+		binding.WorkspaceID = m.WorkspaceID
+		m.Binding = &binding
 	}
 	_ = json.Unmarshal([]byte(snap), &m.SquadSnapshot)
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)
@@ -167,7 +182,7 @@ func (s *Store) GetMission(id string) (domain.Mission, error) {
 }
 
 func (s *Store) ListMissions(workspaceID string) ([]domain.Mission, error) {
-	q := `SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief FROM missions`
+	q := `SELECT id,workspace_id,title,squad_id,snapshot,status,attention,created_at,brief,binding_root,binding_canonical_root,plan_path,plan_slug,plan_digest,delivery_id,opened_digest FROM missions`
 	args := []any{}
 	if workspaceID != "" {
 		q += ` WHERE workspace_id=?`
@@ -183,8 +198,13 @@ func (s *Store) ListMissions(workspaceID string) ([]domain.Mission, error) {
 	for rows.Next() {
 		var m domain.Mission
 		var snap, at string
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief); err != nil {
+		var binding domain.MissionBinding
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Title, &m.SquadID, &snap, &m.Status, &m.Attention, &at, &m.Brief, &binding.WorkspaceRoot, &binding.CanonicalRoot, &binding.PlanPath, &binding.PlanSlug, &binding.PlanDigest, &binding.DeliveryID, &binding.OpenedDigest); err != nil {
 			return nil, err
+		}
+		if binding.PlanPath != "" {
+			binding.WorkspaceID = m.WorkspaceID
+			m.Binding = &binding
 		}
 		_ = json.Unmarshal([]byte(snap), &m.SquadSnapshot)
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)

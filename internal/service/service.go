@@ -802,6 +802,8 @@ func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) 
 		return view, err
 	}
 	view.Plans = batuta.ListPlans(root)
+	view.Scope = "workspace"
+	view.WorkspaceID = workspaceID
 	return view, nil
 }
 
