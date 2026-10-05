@@ -807,37 +807,10 @@ func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) 
 	return view, nil
 }
 
+// Answer retains the delivery/error contract for existing Go callers.
 func (s *Service) Answer(req batuta.AnswerRequest) (string, error) {
-	root, err := s.authorizedRoot(req.Workspace)
-	if err != nil {
-		return "", err
-	}
-	req.Workspace = root
-	id, err := batuta.Answer(req)
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.Store.AppendEvent("watch.answered", map[string]any{"delivery": id, "task": req.Task}); err != nil {
-		return id, fmt.Errorf("answer recorded for delivery %s, but catalog event failed: %w", id, err)
-	}
-	return id, nil
-}
-
-func (s *Service) authorizedRoot(ref string) (string, error) {
-	if ref == "" {
-		return "", fmt.Errorf("workspace is required")
-	}
-	if ws, err := s.Store.GetWorkspace(ref); err == nil {
-		return ws.Root, nil
-	}
-	abs, err := filepath.Abs(ref)
-	if err != nil {
-		return "", err
-	}
-	if ws, err := s.Store.GetWorkspaceByRoot(abs); err == nil {
-		return ws.Root, nil
-	}
-	return "", fmt.Errorf("workspace not in catalog")
+	result, err := s.AnswerQuestion(context.Background(), req)
+	return result.Delivery, err
 }
 
 func (s *Service) Limits() ([]domain.LimitSnapshot, error) {

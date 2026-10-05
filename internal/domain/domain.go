@@ -171,25 +171,26 @@ type Validation struct {
 }
 
 type WatchView struct {
-	MissionID   string           `json:"mission_id,omitempty"`
-	WorkspaceID string           `json:"workspace_id,omitempty"`
-	Scope       string           `json:"scope"`
-	Source      SourceState      `json:"source"`
-	API         string           `json:"api"`
-	Workspace   string           `json:"workspace"`
-	Delivery    string           `json:"delivery,omitempty"`
-	Header      map[string]any   `json:"header"`
-	Attention   map[string]any   `json:"attention"`
-	Context     map[string]any   `json:"context"`
-	Progress    map[string]any   `json:"progress"`
-	Detail      map[string]any   `json:"detail"`
-	Waves       []map[string]any `json:"waves"`
-	Health      map[string]any   `json:"health"`
-	LogTitle    string           `json:"log_title,omitempty"`
-	LogLines    []string         `json:"log_lines,omitempty"`
-	Plans       []PlanRef        `json:"plans,omitempty"`
-	Available   bool             `json:"available"`
-	Message     string           `json:"message,omitempty"`
+	PendingQuestion *PendingQuestion `json:"pending_question,omitempty"`
+	MissionID       string           `json:"mission_id,omitempty"`
+	WorkspaceID     string           `json:"workspace_id,omitempty"`
+	Scope           string           `json:"scope"`
+	Source          SourceState      `json:"source"`
+	API             string           `json:"api"`
+	Workspace       string           `json:"workspace"`
+	Delivery        string           `json:"delivery,omitempty"`
+	Header          map[string]any   `json:"header"`
+	Attention       map[string]any   `json:"attention"`
+	Context         map[string]any   `json:"context"`
+	Progress        map[string]any   `json:"progress"`
+	Detail          map[string]any   `json:"detail"`
+	Waves           []map[string]any `json:"waves"`
+	Health          map[string]any   `json:"health"`
+	LogTitle        string           `json:"log_title,omitempty"`
+	LogLines        []string         `json:"log_lines,omitempty"`
+	Plans           []PlanRef        `json:"plans,omitempty"`
+	Available       bool             `json:"available"`
+	Message         string           `json:"message,omitempty"`
 }
 
 func ValidateSquad(s Squad) Validation {

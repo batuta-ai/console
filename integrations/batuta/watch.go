@@ -3,7 +3,6 @@ package batuta
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"time"
 
@@ -98,29 +97,7 @@ func dto(workspace, delivery string, view loop.PanelView) domain.WatchView {
 	}
 }
 
-type AnswerRequest struct {
-	Workspace  string `json:"workspace"`
-	Delivery   string `json:"delivery,omitempty"`
-	Task       string `json:"task"`
-	QuestionID string `json:"question_id,omitempty"`
-	Text       string `json:"text"`
-}
-
-// Answer delegates to loop.Answer / loop.AnswerDelivery. It never writes
-// journal files itself; core remains the delivery authority.
-func Answer(req AnswerRequest) (string, error) {
-	if req.Workspace == "" || req.Text == "" {
-		return "", fmt.Errorf("workspace and text are required")
-	}
-	abs, err := filepath.Abs(req.Workspace)
-	if err != nil {
-		return "", err
-	}
-	if req.Delivery != "" && req.QuestionID != "" {
-		return loop.AnswerDelivery(abs, req.Delivery, req.Task, req.QuestionID, req.Text)
-	}
-	return loop.Answer(abs, req.Task, req.Text)
-}
+type AnswerRequest = domain.AnswerRequest
 
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)

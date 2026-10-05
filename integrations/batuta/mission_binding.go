@@ -223,6 +223,7 @@ func ProjectMission(workspace string, b domain.MissionBinding) (domain.WatchView
 		return out, err
 	}
 	projected := dto(workspace, b.DeliveryID, loop.PanelModel(records, time.Now().UTC(), ""))
+	projected.PendingQuestion = pendingQuestion(records, projected)
 	projected.Plans = out.Plans
 	projected.Source = domain.SourceCurrent
 	return projected, nil

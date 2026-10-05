@@ -528,20 +528,6 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
-func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
-	var req batuta.AnswerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "json", err.Error())
-		return
-	}
-	id, err := s.Svc.Answer(req)
-	if err != nil {
-		writeErr(w, 400, "answer", err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"delivery": id})
-}
-
 func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 	list, err := s.Svc.Limits()
 	if err != nil {

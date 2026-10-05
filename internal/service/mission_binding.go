@@ -102,6 +102,10 @@ func (s *Service) WatchMission(id, workspaceID, deliveryID string) (domain.Watch
 	view.MissionID = m.ID
 	view.WorkspaceID = ws.ID
 	view.Scope = "mission"
+	if view.PendingQuestion != nil {
+		view.PendingQuestion.Target.MissionID = m.ID
+		view.PendingQuestion.Target.WorkspaceID = ws.ID
+	}
 	if errors.Is(err, batuta.ErrArtifactMissing) {
 		view.Message = "artifact_missing"
 		return view, nil

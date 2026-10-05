@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,13 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
-	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
-	"github.com/batuta-ai/core/routing"
 )
 
 func persistenceSvc(t *testing.T) (*Service, *sql.DB) {
@@ -317,27 +313,12 @@ func TestAnswerEventFailureAcknowledgesExternalEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			journalStore, err := journal.Open(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			questionID := "sha256:" + strings.Repeat("a", 64)
-			graph, err := json.Marshal(routing.DeliveryGraph{Tasks: []routing.GraphTask{{
-				TaskID: "task_1", State: routing.GraphTaskWaitingInput, Attempts: []routing.GraphTaskAttempt{{
-					Execution: 1, State: routing.GraphTaskWaitingInput, ChildRunID: "run", WorktreeID: "worktree", WorktreeRoot: root,
-					BaseHeadSHA: strings.Repeat("b", 40), Runtime: routing.RuntimeValue{Provider: "codex", Model: "fixture", Reasoning: "medium"},
-					Question: &routing.TaskQuestion{RequestID: questionID, Prompt: "Choose", ContextDigest: "sha256:" + strings.Repeat("c", 64)},
-				}}}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := journalStore.Append("delivery", journal.Record{Kind: loop.KindOpened, Graph: graph, Detail: []byte(`{"slug":"test"}`)}); err != nil {
-				t.Fatal(err)
-			}
+			journalStore, values := questionFixture(t, svc, root, w.ID, "mission", "delivery")
+
 			if fail {
 				rejectEvents(t, db)
 			}
-			id, err := svc.Answer(batuta.AnswerRequest{Workspace: w.ID, Delivery: "delivery", Task: "task_1", QuestionID: questionID, Text: "answer"})
+			id, err := svc.Answer(questionRequest(t, values))
 			if id != "delivery" {
 				t.Fatalf("external answer failed: %q %v", id, err)
 			}
@@ -349,7 +330,7 @@ func TestAnswerEventFailureAcknowledgesExternalEffect(t *testing.T) {
 				t.Fatal(err)
 			}
 			records, err := journalStore.Read("delivery")
-			if err != nil || len(records) != 2 || records[1].Kind != loop.KindAnswer {
+			if err != nil || len(records) != 3 || records[2].Kind != loop.KindAnswer {
 				t.Fatalf("external effect: %v %v", records, err)
 			}
 			events, err := svc.Store.EventsSince(0, 100)
@@ -357,10 +338,10 @@ func TestAnswerEventFailureAcknowledgesExternalEffect(t *testing.T) {
 				t.Fatal(err)
 			}
 			if fail {
-				if len(events) != 1 {
+				if len(events) != 2 {
 					t.Fatalf("failed event persisted: %+v", events)
 				}
-			} else if len(events) != 2 || events[1].Kind != "watch.answered" || !reflect.DeepEqual(events[1].Payload, map[string]any{"delivery": "delivery", "task": "task_1"}) {
+			} else if len(events) != 3 || events[2].Kind != "watch.answered" || !reflect.DeepEqual(events[2].Payload, map[string]any{"mission_id": "mission", "workspace_id": w.ID, "delivery": "delivery", "task": "task_1", "execution": float64(1), "question_id": values["question_id"], "opened_digest": values["opened_digest"]}) {
 				t.Fatalf("event contract: %+v", events)
 			}
 		})
