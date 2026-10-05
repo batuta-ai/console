@@ -201,7 +201,7 @@ func FormatLimit(snap LimitSnapshot) string {
 		}
 		return fmt.Sprintf("unknown · %s · %s · %s", src, origin, age)
 	}
-	return fmt.Sprintf("%.0f%% · %s · %s", *snap.Percent, src, age)
+	return fmt.Sprintf("%.0f%% · %s · %s · %s", *snap.Percent, src, snap.Origin, age)
 }
 
 func asString(v any) string {

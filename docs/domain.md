@@ -51,16 +51,114 @@ generic session (B2) instead of failing.
 
 ## Isolation and limits
 
-Isolation and usage are `supported`, `unsupported`, or `not_yet_qualified`
-per adapter. Missing measurements stay `unknown`. They are never coerced
-to `0%`. The accounts table shows source, origin and last attempt alongside
-the percentage when one exists. Account limit, session tokens, and monetary
-cost are distinct.
+Isolation and native quota collection are qualified separately per adapter.
+No native provider quota collector is currently qualified. Missing quota
+measurements are never coerced to `0%`. Provider account quota, session
+concurrency capacity (`SessionCap`), session tokens, and monetary cost are
+distinct. A nonzero session capacity does not supply a quota percentage.
 
 Each connected account gets a directory under the Console home. Session
 PTYs set `HOME` (and `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `CURSOR_CONFIG_DIR`
 when relevant) so two accounts of the same CLI do not share credentials.
-Limit collection reads `rate_limit.json` under the isolate `.codex` or
-`.claude` directory when present. Missing files stay unknown. Results for
-the same account set are cached for 15 seconds so clients do not double
-the probe.
+
+### Imported quota observations
+
+The limits plugin can read an externally supplied `rate_limit.json` from
+the account's isolated `.codex` or `.claude` directory. This is a Console
+import format, not a claim that Codex or Claude officially writes this
+schema. Reading an import does not call a provider, access credentials,
+or start a generation. Other adapters, including an empty adapter, Cursor,
+OpenCode, and Gemini, return `unsupported`.
+
+Imports must resolve to regular files of at most **16 KiB (16,384 bytes)**,
+including JSON whitespace. This bound accommodates the small observation
+schema and limits memory used for an external import. Exactly 16,384 bytes
+is accepted if the contents are valid; larger files are `unknown` even when
+their JSON would otherwise be valid. The read is bounded even if the file
+grows during collection.
+
+Directories, named pipes, and other nonregular files are `unknown`, including
+symlinks to those file kinds. A pipe is rejected without waiting for a writer.
+Symlinks to regular files are accepted under the same size and schema rules;
+the opened file is checked as well as the path. Missing or unreadable regular
+files remain `unavailable`. Rejected file kinds and oversized imports clear
+last-good data just like invalid JSON.
+
+An example import, using an illustrative measurement time:
+
+```json
+{
+  "percent": 41,
+  "window": "5h",
+  "scope": "account",
+  "observed_at": "2026-10-05T10:00:00Z",
+  "reset_at": "2026-10-05T14:00:00Z",
+  "origin": "external-exporter"
+}
+```
+
+The same schema applies to both providers. `percent` is a required JSON
+number in the inclusive range 0–100; an explicit `0` is a measurement,
+whereas absence or `null` is not. `window` is a required nonblank string
+describing the measured quota window. `scope` must be exactly `account`;
+session, organization, and provider-name scopes are rejected.
+`observed_at` is required, nonzero, and an RFC 3339 timestamp (fractional
+seconds and timezone offsets are accepted). It must not be in the future
+relative to the collection time.
+
+`reset_at` may be absent or `null`. When provided, it must be a nonzero
+RFC 3339 timestamp at or after `observed_at`. It is informational and does
+not extend freshness. `origin` is an optional string naming the external
+supplier. Unknown fields, invalid field types, malformed JSON, and trailing
+JSON or other non-whitespace content invalidate the whole observation.
+
+A minimal valid import is:
+
+```json
+{"percent":0,"window":"5h","scope":"account","observed_at":"2026-10-05T10:00:00Z"}
+```
+
+The example timestamps are not refreshed when the files are read. The
+explicit freshness policy is **current for ages from zero up to, but not
+including, five minutes; stale at five minutes or older**. This is a
+Console display policy, not a provider guarantee or a quota reset schedule.
+
+| State | Meaning |
+|---|---|
+| `current` | Valid import less than five minutes old; original value and measurement time retained |
+| `stale` | Valid import at least five minutes old, or last good observation retained after collection becomes unavailable |
+| `unknown` | Present import is invalid; no percentage, measurement time, or reset time is reported |
+| `unavailable` | Supported adapter has no readable observation and no retained valid measurement |
+| `unsupported` | Adapter is outside the supported Codex/Claude import contract |
+
+Invalid imports clear the cached previous measurement. If that invalid
+file later disappears, it remains unavailable instead of resurrecting an
+older value. A genuinely unavailable collector may retain a previous valid
+value as stale, with its original measurement time, reset time, and origin.
+
+Imported results always identify their provenance as `imported:codex` or
+`imported:claude`, optionally followed by `:<origin>` from the file.
+Invalid imports also retain the provider's import marker. These markers
+identify external observations, not official or independently verified
+provider measurements.
+
+`observed_at` is the supplier's measurement time. `last_attempt` is the
+Console collection attempt time; neither rereading nor a cache hit replaces
+the measurement time with the attempt time. Domain formatting shows the
+source and provenance with the measurement time when a percentage exists,
+and with the last attempt time when the measurement is unknown.
+
+`All` caches collection results for 15 seconds for the same ordered account
+IDs, adapters, and labels. File changes may take up to that interval to be
+collected. Freshness is reevaluated even on cache hits, without advancing
+`last_attempt`. `Snapshot` collects immediately and invalidates that batch
+cache when collection completes. Last-good measurements are keyed by account
+ID and adapter, so an account changing providers cannot inherit the previous
+provider's quota.
+
+Collectors run outside the plugin's shared cache lock, so a delayed collection
+does not hold up other accounts. When attempts for the same account and adapter
+overlap, only the most recently started attempt may update its last-good cache.
+Each caller still receives its own collection result. A batch interleaved with
+another completed collection is not installed in the `All` cache, preventing
+a delayed batch from restoring an observation invalidated by a newer attempt.
