@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:7670cdb4b055 routing.md@sha256:c35538ce1b32 -->
+<!-- inputs: profile.md@sha256:12b155b86788 routing.md@sha256:ccc42392f48a -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -78,7 +78,7 @@
       Depends on: 18
       Scope: internal/domain/**, integrations/batuta/**, internal/service/**, internal/api/**, internal/client/**
       Accept: Resposta exige missão, delivery e question_id corretos, recusa pergunta antiga ou de outra missão e cobre duplicação → go test ./integrations/batuta ./internal/service ./internal/api ./internal/client -count=1; A falta de identidade não dispara busca global de journal nem responde outra pergunta com task_id coincidente
-- [ ] 20. Expor detalhe e aprovação de um plano específico — backend/high
+- [x] 20. Expor detalhe e aprovação de um plano específico — backend/high
       Depends on: 1, 16, 18
       Scope: integrations/batuta/**, internal/domain/**, internal/store/**, internal/service/**, internal/api/**, internal/client/**
       Accept: Detalhe mostra conteúdo integral/tarefas/escopo/dependências/aceites; aprovação identifica e persiste snapshot imutável dos bytes lidos e recibo, com digest integral → go test ./integrations/batuta ./internal/store ./internal/service ./internal/api ./internal/client -count=1; Conteúdo alterado antes da aprovação, path traversal ou plano de outra missão/workspace é recusado; concorrência não substitui o snapshot aprovado nem sobrescreve edições externas; reinício preserva recibo/conteúdo e a ação autenticada deixa evidência atômica
@@ -146,12 +146,12 @@
       Scope: cmd/console/**, cmd/consoled/**, internal/buildinfo/**, internal/api/**, docs/release.md
       Accept: console e consoled reportam versão/commit/toolchain e API expõe o contrato compatível de Console/core/plugin → go test ./cmd/console ./cmd/consoled ./internal/api ./internal/buildinfo; Builds de desenvolvimento têm valores explícitos e release injeta os metadados sem inventar a versão estável do core
 - [ ] 37. Automatizar checks e pacote com os dois binários — infra/high
-      Depends on: 2, 1, 8, 9, 11, 3, 26, 35, 36
+      Depends on: 2, 1, 8, 9, 11, 3, 26, 35, 36, 42, 43
       Scope: .github/workflows/**, scripts/**, Makefile, .goreleaser.yaml, docs/release.md, README.md, internal/webui/dist/**
       Accept: Pipeline reproduz install/typecheck/web build/Go tests/vet/race/scan e verifica assets sem drift → sh scripts/check-release.sh; Pacote local inclui console, consoled, web embarcado, licenças e checksums para cada alvo suportado → sh scripts/package-release.sh
 - [ ] 38. Automatizar a jornada completa com contas e CLIs descartáveis — testing/high
       Depends on: 8, 9, 11, 15, 17, 21, 22, 24, 25, 33, 37
-      Scope: web/tests/**, internal/tui/*_test.go, scripts/qualify-release.sh, docs/release-qualification.md
+      Scope: web/tests/**, internal/tui/*_test.go, scripts/qualify-release.sh, scripts/qualify-release.ps1, docs/release-qualification.md
       Accept: Jornada web cobre duas missões, pergunta, stop e restart com daemon/contas/CLIs temporários → npm --prefix web run test:e2e; Jornada TUI cobre os mesmos contratos desde instalação vazia e o bundle local encontra seu consoled → sh scripts/qualify-release.sh --fixtures
 - [ ] 39. Qualificar Codex e Claude em macOS real — testing/critical
       Depends on: 38
@@ -162,9 +162,22 @@
       Scope: docs/release-qualification.md, docs/release-readiness-evidence.md, scripts/qualify-release.sh
       Accept: Linux executa login oficial isolado de Codex e Claude, init, modelo/skills e missão completa no web e na TUI, com versões e resultados registrados; Bundle instala em diretório limpo, inicia seu daemon e passa stop/restart/controle interativo, com browser e terminal reais ou ambiente equivalente documentado
 - [ ] 41. Fechar os achados e autorizar a passagem para revisão visual — docs/medium
-      Depends on: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40
+      Depends on: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44
       Scope: docs/release-readiness.md, docs/release-readiness-evidence.md, docs/release-qualification.md, docs/release.md
       Accept: Cada R01–R28 tem disposição, evidência e limite explícito, sem P0 funcional aberto e sem P1 aberto de recurso anunciado, com provas de publicação externa separadas na fase 3; O fechamento distingue preparação funcional de publicação final e registra R27 para a fase visual; Checks finais passam sobre o candidato funcional → sh scripts/check-release.sh
+
+- [ ] 42. Fechar a portabilidade e build nativo Windows — backend/high
+      Depends on: 4, 19, 20
+      Scope: cmd/console/**, cmd/consoled/**, internal/runtime/**, internal/accounts/**, internal/adapters/**, internal/session/**, internal/service/**, internal/api/**, internal/store/**, internal/hostfs/**, internal/tui/**, integrations/batuta/**, scripts/**, docs/release-qualification.md
+      Accept: Fonte e testes compilam e os testes de portabilidade/backend independentes de PTY e o perfil web executam no Windows amd64 com SDKs oficiais registrados; Caminhos/setup/SQLite/snapshot e interfaces de daemon/arquivos têm provas nativas e falhas observáveis; Nenhum caso obrigatório é descartado por skip de plataforma: a suíte completa, lifecycle/PTY/credenciais e proteção efetiva ficam obrigatórios em43 antes de anunciar operação
+- [ ] 43. Qualificar PTY, processos e isolamento no Windows nativo — backend/critical
+      Depends on: 42, 8, 9, 10, 11, 13, 14, 15, 16, 28
+      Scope: internal/session/**, internal/runtime/**, internal/accounts/**, internal/adapters/**, internal/service/**, integrations/batuta/**, cmd/console/**, cmd/consoled/**, internal/api/**, scripts/**, docs/release-qualification.md, docs/session-lifecycle.md, docs/account-isolation.md, go.mod, go.sum
+      Accept: ConPTY real sustenta input/resize/replay/stop/exit/shutdown e árvore de processos possuída sem atingir processos alheios; Token/homes/locks têm proteção Windows efetiva, variáveis e credenciais de Codex/Claude ficam isoladas sem fallback pessoal, e login/init/readiness/skills oficiais preservam cancelamento/recuperação; TDD, provas de kernel/ACL/processos reais e revisão independente, sem substituir por cross-build/WSL; Dependência Windows dedicada, se necessária, deve ser publicada/atual/fixada e qualificada
+- [ ] 44. Qualificar Codex e Claude em Windows nativo real — testing/critical
+      Depends on: 38, 42, 43
+      Scope: docs/release-qualification.md, docs/release-readiness-evidence.md, scripts/qualify-release.ps1, scripts/**
+      Accept: Windows amd64 executa login isolado, init, modelo/skills e missão completa no web e na TUI com ambos os provedores e contas de teste selecionadas; Bundle instala em diretório limpo e prova daemon, browser/terminal nativos, interação, duas missões, aprovação exata/pergunta/retomada/stop/restart, com versões e evidência registradas; WSL2/cross-build não fecham o aceite Windows
 
 ## Decisions and context
 
@@ -172,9 +185,9 @@ Este plano decorre da auditoria de 2026-10-02, Console 0461003, registrada em do
 
 O commit inicial autorizado registra .batuta/profile.md, .batuta/routing.md, .batuta/roadmap.md, este plano, WORK.md e os dois relatórios de auditoria, usando chore(batuta): set up console stabilization. Isso prepara o preflight sem apagar ou incorporar mudanças alheias. As tarefas de implementação seguem depois, com testes e commits por entrega.
 
-A matriz selecionada pelo usuário em 2026-10-03 é Codex e Claude, macOS e Linux, com operação completa no web e na TUI. A TUI precisa permitir onboarding, conta/login isolado, workspace/init, configuração de squad, objetivo de missão, leitura/aprovação de plano, execução, pergunta, retomada e terminal interativo. Ambos os adapters precisam passar pelos mesmos testes de isolamento/modelo/skills e por login/jornada reais nas duas plataformas. Outros adapters e Windows ficam fora da promessa estável até qualificação própria. As arquiteturas candidatas são macOS arm64 e Linux amd64, e somente arquiteturas com evidência de runtime podem ser anunciadas.
+A matriz selecionada inicialmente em2026-10-03 é Codex e Claude, macOS e Linux; em2026-10-05 o usuário acrescentou Windows nativo, mantendo operação completa no web e na TUI. A TUI precisa permitir onboarding, conta/login isolado, workspace/init, configuração de squad, objetivo de missão, leitura/aprovação de plano, execução, pergunta, retomada e terminal interativo. Ambos os adapters precisam passar pelos mesmos testes de isolamento/modelo/skills e por login/jornada reais nas três plataformas. Outros adapters ficam fora da promessa estável até qualificação própria. As arquiteturas candidatas são macOS arm64, Linux amd64 e Windows amd64, e somente arquiteturas com evidência de runtime podem ser anunciadas.
 
-Execução sequential, com worktrees para medium+ conforme profile e roteamento vigente. Medium vai para codex/gpt-6.1-sol, high para codex/gpt-6-astra com reasoning high, critical para o condutor self. As tarefas 10, 11, 14, 21, 28, 39 e 40 exigem o condutor e impedem tratar este plano como um loop totalmente autônomo. Antes de delegar, congelar executor/model/effort, conferir disponibilidade e seguir a escalada do routing. O inventário local de executores do desenvolvimento não certifica os adapters do produto.
+Execução sequential, com worktrees para medium+ conforme profile e roteamento vigente. Medium vai para codex/gpt-6.1-sol, high para codex/gpt-6-astra com reasoning high, critical para o condutor self. As tarefas 10, 11, 14, 21, 28, 39, 40, 43 e 44 exigem o condutor e impedem tratar este plano como um loop totalmente autônomo. Antes de delegar, congelar executor/model/effort, conferir disponibilidade e seguir a escalada do routing. O inventário local de executores do desenvolvimento não certifica os adapters do produto.
 
 Cada checkbox representa uma entrega que verifica e é commitada sozinha. Em toda mudança de comportamento aplicar TDD: primeiro escrever o caso relevante, observar a falha pelo motivo esperado, implementar e comprovar o green antes de refatorar. Registrar comandos, resultados e ordem red/green na evidência do executor e na revisão. Documentação/configuração sem novo comportamento usa provas executáveis ou revisão, sem inventar testes que espelham arquivos. Os comandos de aceitação são resultados futuros, não checks já executados. Passar uma suite sem o caso de regressão não fecha o critério.
 
@@ -204,11 +217,11 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 
 **Tasks 22–25.** Manter o desenho existente enquanto o fluxo é corrigido. Usar polling limitado de watch como alternativa explícita se o journal não gerar eventos catalogados; websocket do catálogo por si só não é prova de progresso ao vivo. Cancelar requests/intervalos/reconnects em unmount e troca de seleção. A resposta sempre usa delivery e question_id recebidos do backend.
 
-**Tasks 26–33.** A TUI é uma interface de operação completa por escolha explícita do usuário, sem obrigar passagem pelo web. Seu default precisa conduzir a uma missão funcional desde uma instalação vazia. Emulação de terminal e contratos do cliente precedem os formulários/fluxos. Codex e Claude precisam funcionar com foco, input e sinais corretos no macOS/Linux. Se essa qualificação falhar, registrar o bloqueador e corrigir: reduzir a TUI a monitor exige nova decisão do usuário, não uma mudança silenciosa de escopo. Usar a apresentação existente até a revisão visual da fase 2.
+**Tasks 26–33.** A TUI é uma interface de operação completa por escolha explícita do usuário, sem obrigar passagem pelo web. Seu default precisa conduzir a uma missão funcional desde uma instalação vazia. Emulação de terminal e contratos do cliente precedem os formulários/fluxos. Codex e Claude precisam funcionar com foco, input e sinais corretos no macOS/Linux/Windows nativo. Se essa qualificação falhar, registrar o bloqueador e corrigir: reduzir a TUI a monitor exige nova decisão do usuário, não uma mudança silenciosa de escopo. Usar a apresentação existente até a revisão visual da fase 2.
 
 **Task 34.** Quotas são observações importadas ou desconhecidas enquanto não houver coletor real qualificado. Não prometer porcentagem de uso do provedor a partir do cap de sessões, nem usar timestamp da leitura como timestamp da coleta.
 
-**Tasks 36–40.** Não existe remoto Git configurado neste checkout. Preparar workflows e bundles locais é autorizado após aprovação do plano; enviar arquivos a um remoto, criar release/tag pública e publicar não fazem parte desta fase. O destino, o versionamento do Console e a versão estável exata do core/plugin precisam estar definidos na fase 3. Compilar Linux não equivale a qualificar seu runtime. Autenticação e modelo reais precisam de conta de teste explicitamente selecionada na ocasião; não usar automaticamente as credenciais presentes no computador. Tarefas 39 e 40 registram provas no sistema operacional correspondente, sem substituir resultados reais por cross-build. Se faltar ambiente Linux ou conta de teste, registrar o requisito ainda pendente e continuar o trabalho independente.
+**Tasks 36–40.** Não existe remoto Git configurado neste checkout. Preparar workflows e bundles locais é autorizado após aprovação do plano; enviar arquivos a um remoto, criar release/tag pública e publicar não fazem parte desta fase. O destino, o versionamento do Console e a versão estável exata do core/plugin precisam estar definidos na fase 3. Compilar Linux não equivale a qualificar seu runtime. Autenticação e modelo reais precisam de conta de teste explicitamente selecionada na ocasião; não usar automaticamente as credenciais presentes no computador. Tarefas 39, 40 e 44 registram provas no sistema operacional correspondente, sem substituir resultados reais por cross-build. Se faltar ambiente Linux ou conta de teste, registrar o requisito ainda pendente e continuar o trabalho independente.
 
 **Task 41.** Rework continua válido até provas de fechamento. R27 permanece deliberadamente para a fase visual; os demais P2 podem ser explicitamente limitados apenas quando sua ausência não invalida uma funcionalidade anunciada e a disposição é revisada. Não encerrar o marco funcional por apenas buildar a aplicação.
 
@@ -247,7 +260,7 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 | R15 | 14, 17, 26, 30, 38–40 |
 | R16 | 23–24, 33 |
 | R17 | 16–17, 31 |
-| R18 | 26, 37–40; Windows fora da matriz selecionada |
+| R18 | 26, 37–40, 42–44; Windows nativo incluído pelo usuário em2026-10-05 |
 | R19 | 36–40; remoto/tag/publicação na fase 3 |
 | R20 | 27–33, 38–40; TUI com operação completa, conforme escolha do usuário |
 | R21 | 34 |
@@ -341,3 +354,9 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 **Core artifact qualification, 2026-10-05.** Official beta47 Macarm64 CLI metadata shows Go1.26.4 and VCS76ecb31(modified=true); public module source remains byte-identical to qualified API files and Console builds useGo1.27.1. Binary-mode govulncheck JSON scan reports known standard-library advisories; its exit0 is not a clean security gate. This separate Core CLI distribution gate must be corrected/qualified before selecting an official binary for stable native execution/37–41. No assets overwritten/re-tagged and no personalCLI/plugins updated. Exact advisory IDs/scanner metadata and rawprimarydatabase events preserved in .batuta/runs/2026-10-05-core-beta47-publication/binary-vuln.*. Binary findings are not proof of runtime exploitability. Task19 library integration may continue; stable release remains unqualified.
 
 **Task19, 2026-10-05.** Fonte6262409 aprovada: identidade completa de missão/workspace/delivery/opening/task/execution/question, writer público beta47, efeitos recorded/uncertain preservados até cliente e evento com sete campos. TDD real preservado; Mac/Linux UID1000 fullGo/vet/bins/web43/types/build/assets, full affected race5 inicial296 e raceQuestion|Answer5 final626 após remoção de função sem uso/cobertura de sucesso isolado. Sonnet5/5, um retry high sem escalação, todos os achados julgados. Faults nativos de cleanup/append não forçados; limites explícitos. Tarefa20 usa decisão snapshot imutável já autorizada;21/jornadas/UI/TUI/provedores/EPERM/gate do binário Core/release estável continuam pendentes. Trilha .batuta/runs/2026-10-05-mission-questions.md.
+
+**Windows — ampliação explícita do usuário, 2026-10-05.** Windows passa a fazer parte da operação completa Codex/Claude × web/TUI. Premissa operacional: Windows nativo amd64, distinto de WSL2/Linux. Host SSH server observado como Windows11Pro 10.0.26200 x64; Node/npm, Git, Codex e Claude resolvidos no PATH PowerShell, sem prova de versão/autenticação/funcionalidade; Go não foi encontrado nessa consulta. O plano recebe42–44 e fechamento41 depende deles; pacote/CI37 inclui os alvos nativos qualificados e38 inclui runner PowerShell. Verificar portabilidade/ConPTY/ownership/ACL/ambiente e contas antes de prometer suporte. A tarefa20 já delegada mantém o brief original e provas Mac/Linux; isso não qualifica Windows. Biblioteca/artefato Core/plugin e destino/publicação estável seguem gates separados.
+
+**Windows — mapa de bloqueadores verificado, 2026-10-05.** Pesquisa readonly em fonteadfc470, dois low sem relatório válido (HTTP429/timeout), escalação para codex/gpt-6.1-sol low e um retry de caminho parcial. Guard limpo; relatório final tem72âncoras/50símbolos conferidos. Portabilidade42 cobre Unix sem build-tag em runtime/auth.go:12 e runtime.go:101/140, setup_open_unsupported.go:12 utilizado por mission_binding.go:56, paths/daemon/CLI e seleção de plataforma;43 cobre pty_windows.go:14, owned_other.go:13/process_other.go:7, credential_other.go:10, case/env environment.go:14 e skills.go:110 com requisitos nativos de proteção/ownership/isolamento. selectedPlatform atual restringe Darwin/Linux (internal/adapters/capabilities.go:10–11, conferido pelo condutor); CLI direto manager.go:130 e fallback /bin/sh também precisam qualificação. Não foi compilado/executado no Windows, nenhum provider acessado, e a dependência Core ficou fora do scout: interfaces e distribuição nativas Core/plugin continuam obrigatórias em42–44. Trilha .batuta/scout/2026-10-05-windows-support.md e .verified.json; preflight Windows registrado separadamente.
+
+**Task20, 2026-10-05.** Fonte1066340 aprovada: detalhe integral lossless1MiB/base64, SHA256 integral separado do taskdigest, identidade completa, recibo/snapshotSQLite imutáveis com eventoatômico e migração5 sem aprovação legado. Fonte/header/mode preservados; externos mudam versão, nunca bytes históricos. API/cliente exatos e efeitos incertos sem retry automático; TCP nativo real qualificado. TDD original contemporâneo preservado e reds reais query/REPLACE; Mac/Linux fullGo/vet/bins/web43/types/build/assets, race5 inicialsixpkgsMac e finalsixpkgsLinux/StoreMac. Sonnet5/5, retry1 deimportgrouping, sem escalação, nenhum finding aceito pendente. FlakecwdLinux/EPERM permanecem38/40/41;21 depende contrato nativo exactbytes ausentebeta47. Windows42–44/qualificação completa/visual/estável pendentes. Plano44tarefas,24concluídas/20pendentes. Trilha .batuta/runs/2026-10-05-immutable-plan.md.

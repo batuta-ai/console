@@ -187,7 +187,7 @@ INSERT INTO events VALUES(42,'2020-01-02T03:04:05Z','old.kind','{ "value": [1,2]
 		if err != nil || m.Binding != nil {
 			t.Fatalf("legacy binding %+v %v", m, err)
 		}
-		if version(t, s.db) != 4 {
+		if version(t, s.db) != 5 {
 			t.Fatal("schema not advanced")
 		}
 		s.Close()

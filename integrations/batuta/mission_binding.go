@@ -72,6 +72,12 @@ func openArtifact(root *os.Root, path string, limit int64) (*os.File, error) {
 // ExactPlan accepts an explicit core plan location, including done/, and never
 // searches for a replacement. Parsing and identity digests belong to core.
 func ExactPlan(workspace, path string) (routing.Plan, error) {
+	plan, _, err := ExactPlanContent(workspace, path)
+	return plan, err
+}
+
+// ExactPlanContent returns the bytes parsed by Core from the same bounded read.
+func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 	slug := strings.TrimSuffix(filepath.Base(path), ".md")
 	if strings.HasPrefix(path, ".batuta/plan-") {
 		slug = strings.TrimPrefix(slug, "plan-")
@@ -79,25 +85,36 @@ func ExactPlan(workspace, path string) (routing.Plan, error) {
 	active := routing.PlanLocations(slug)
 	archived := filepath.ToSlash(filepath.Join(".batuta", "plans", "done", slug+".md"))
 	if path != active[0] && path != active[1] && path != archived {
-		return routing.Plan{}, domain.ErrInvalidReference
+		return routing.Plan{}, nil, domain.ErrInvalidReference
 	}
 	root, err := os.OpenRoot(workspace)
 	if err != nil {
-		return routing.Plan{}, artifactError(err)
+		return routing.Plan{}, nil, artifactError(err)
 	}
 	defer root.Close()
 	f, err := openArtifact(root, path, 1<<20)
 	if err != nil {
-		return routing.Plan{}, err
+		return routing.Plan{}, nil, err
 	}
 	defer f.Close()
-	body, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	before, err := f.Stat()
 	if err != nil {
-		return routing.Plan{}, artifactError(err)
+		return routing.Plan{}, nil, artifactError(err)
+	}
+	body, err := io.ReadAll(io.LimitReader(f, domain.MaxPlanBytes+1))
+	if err != nil {
+		return routing.Plan{}, nil, artifactError(err)
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return routing.Plan{}, nil, artifactError(err)
+	}
+	if len(body) > domain.MaxPlanBytes || int64(len(body)) != before.Size() || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		return routing.Plan{}, nil, ErrArtifactInvalid
 	}
 	plan, err := routing.ParsePlan(slug, body)
 	if err != nil {
-		return routing.Plan{}, ErrArtifactInvalid
+		return routing.Plan{}, nil, ErrArtifactInvalid
 	}
 	// Active and legacy sources must not offer competing identities. Archived
 	// paths remain explicit even when a same-named active replacement exists.
@@ -109,15 +126,15 @@ func ExactPlan(workspace, path string) (routing.Plan, error) {
 			alt, err := openArtifact(root, other, 1<<20)
 			if err == nil {
 				alt.Close()
-				return routing.Plan{}, ErrArtifactInvalid
+				return routing.Plan{}, nil, ErrArtifactInvalid
 			}
 			if !errors.Is(err, ErrArtifactMissing) {
-				return routing.Plan{}, err
+				return routing.Plan{}, nil, err
 			}
 		}
 	}
 	plan.Path = path
-	return plan, nil
+	return plan, body, nil
 }
 
 // readJournal uses core's chain verifier on an anchored, bounded descriptor.

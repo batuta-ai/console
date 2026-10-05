@@ -4,7 +4,7 @@
 - [ ] 2. Revisitar a distribuição visual do painel web e da TUI
 - [ ] 3. Qualificar o candidato final e preparar a publicação coordenada com o Batuta
 
-Matriz escolhida: Codex e Claude, macOS e Linux, operação completa no web e na TUI.
+Matriz escolhida: Codex e Claude, macOS, Linux e Windows nativo, operação completa no web e na TUI. Windows foi incluído pelo usuário em2026-10-05; WSL2 permanece evidência Linux.
 
 Ordem solicitada em 2026-10-03: inicialização, planejamento dos bloqueadores, estabilização funcional e depois revisão visual. A fase 1 tem um plano aprovado, em execução com TDD e versões publicadas atuais; as fases 2 e 3 serão detalhadas a partir das evidências e decisões da fase anterior. O usuário aprovou a execução do plano em 2026-10-03; publicação estável do Console ainda não foi autorizada. A publicação intermediária da API Core/PR145 foi autorizada explicitamente em2026-10-05 e resultou em beta47, sem alterar os gates finais.
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 func (s *Store) migrate() error {
 	var version int
@@ -77,6 +77,19 @@ ALTER TABLE missions ADD COLUMN opened_digest TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX mission_delivery_owner ON missions(workspace_id,delivery_id) WHERE delivery_id <> '';
 CREATE UNIQUE INDEX mission_delivery_root_owner ON missions(binding_canonical_root,delivery_id) WHERE delivery_id <> '';`); err != nil {
 			return fmt.Errorf("migration 4 add mission binding: %w", err)
+		}
+	case 5:
+		if _, err := tx.Exec(`CREATE TABLE plan_approvals (
+ id TEXT PRIMARY KEY, mission_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+ identity TEXT NOT NULL UNIQUE, content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 1048576), approved_at TEXT NOT NULL
+);
+CREATE INDEX plan_approval_mission ON plan_approvals(mission_id,workspace_id);
+CREATE TRIGGER plan_approval_immutable_replace BEFORE INSERT ON plan_approvals
+WHEN EXISTS(SELECT 1 FROM plan_approvals WHERE id=NEW.id OR identity=NEW.identity)
+BEGIN SELECT RAISE(ABORT,'immutable plan approval'); END;
+CREATE TRIGGER plan_approval_immutable_update BEFORE UPDATE ON plan_approvals BEGIN SELECT RAISE(ABORT,'immutable plan approval'); END;
+CREATE TRIGGER plan_approval_immutable_delete BEFORE DELETE ON plan_approvals BEGIN SELECT RAISE(ABORT,'immutable plan approval'); END;`); err != nil {
+			return fmt.Errorf("migration 5 add immutable plan approvals: %w", err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
