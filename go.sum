@@ -12,6 +12,8 @@ github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ
 github.com/aymanbagabas/go-udiff v0.4.1/go.mod h1:0L9PGwj20lrtmEMeyw4WKJ/TMyDtvAoK9bf2u/mNo3w=
 github.com/batuta-ai/core v1.1.0-beta.46 h1:BL336vCG8WmWG9kCBtAtie8y48nVJiYIyyAuC2GRYgU=
 github.com/batuta-ai/core v1.1.0-beta.46/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
+github.com/batuta-ai/core v1.1.0-beta.47 h1:y5l1B96NyLcUEWJ8DX0hvViojmpeaj+RAEhkFhnkyl0=
+github.com/batuta-ai/core v1.1.0-beta.47/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
 github.com/charmbracelet/colorprofile v0.4.3 h1:QPa1IWkYI+AOB+fE+mg/5/4HRMZcaXex9t5KX76i20Q=
 github.com/charmbracelet/colorprofile v0.4.3/go.mod h1:/zT4BhpD5aGFpqQQqw7a+VtHCzu+zrQtt1zhMt9mR4Q=
 github.com/charmbracelet/ultraviolet v0.0.0-20261001125412-878653296cfd h1:W0HOPGkwRaAmV20plE/f+Rk6Xn+IdR8G0qHsGXcOnF8=

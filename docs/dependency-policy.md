@@ -9,7 +9,7 @@ and Go module checks; never use floating installs for qualification or disable
 checksum, peer, type, test or vulnerability checks. Keep migrations separate
 from product redesign.
 
-Development tracks `github.com/batuta-ai/core v1.1.0-beta.46` without `replace`.
+Development tracks `github.com/batuta-ai/core v1.1.0-beta.47` without `replace`.
 Go's `@latest` selects older stable v1.0.1; do not downgrade to it. Stable Console
 publication requires a qualified stable core/plugin contract. Source checks
 below do not establish release readiness or completion of the stabilization plan.
@@ -130,3 +130,67 @@ Native development watcher behavior, interactive TUI operation, official
 Codex/Claude login/model execution and Linux runtime remain unqualified.
 CI, binary release and the stable core/plugin publication contract need their
 own qualification. No Console stable release or remote publication is claimed.
+
+## Published Core API adoption — 2026-10-05
+
+Console now pins the officially published
+[Core v1.1.0-beta.47](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.47),
+released from commit `76ecb31eaf3814e050c0e2d8733f726e991ab39a`.
+The conductor verified the public Go proxy and checksum database download;
+local qualification used that published module in an isolated module cache,
+with `GOWORK=off`, no replacement and no sibling Core checkout. Only the Core
+pin and its checksums changed; the 2026-10-03 version tables and qualification
+above remain historical evidence.
+
+The public consumption test `TestPublishedQuestionInvalidTargetDoesNotMutateJournal`
+uses `loop.QuestionTarget` and `loop.AnswerQuestion` directly. It first failed
+to compile against beta46 because those public symbols were absent, then passed
+against beta47. Malformed delivery, task, execution, question and opening
+identities return an error matching `loop.ErrInvalidQuestionTarget`, return no
+delivery ID, and leave journal bytes and directory entries unchanged. The
+original test-only patch and red/green logs remain intact in the archived worker
+evidence; this documentation follow-up does not replace that behavioral proof.
+
+With Go 1.27.1 on macOS arm64, `go list -m -json github.com/batuta-ai/core`
+resolved exactly beta47 without a replacement and `go mod verify` passed.
+The public consumption test and existing integration package tests passed.
+`go test ./...` could not pass in the executor sandbox: local TCP listener
+creation failed with `bind: operation not permitted` in existing HTTP/daemon
+tests. Qualification stopped at that environmental boundary as required;
+`go build ./cmd/console ./cmd/consoled` and `sh scripts/check-standalone.sh`
+were not run by that executor. This was an environmental limitation of the
+earlier submission, not the final qualification state.
+
+The conductor independently qualified exact candidate
+`fe7af126113f3ee2d7b3f711626c6069e53d7c42` on native macOS arm64 and Linux
+amd64 (WSL, Ubuntu 26.04, UID 1000), using Go 1.27.1. Both passed the affected
+integration tests, five race-detector iterations, `go test ./...`,
+`go vet ./...`, both command builds, all 43 web tests, TypeScript checking and
+the web build. Rebuilt embedded assets were byte-identical. macOS also passed
+`go mod verify` and `sh scripts/check-standalone.sh`, including isolated
+published beta47 source tests, builds and installs of both commands without a
+sibling Core checkout.
+
+The independent proofs are archived under the conductor repository root,
+not this worktree:
+
+- `.batuta/runs/2026-10-05-core-api-pin.green-native-mac-fe7af12.log`
+  and `.json` record the macOS commands, successful exits and asset comparison.
+- `.batuta/runs/2026-10-03-wsl-preflight/core-api-pin-fe7af12.log`
+  records the Linux source revision, archive digest, commands and final exit 0;
+  the supplied `.snapshot.json` records the archived source revision.
+
+The conductor also reported successful ReleaseCI and release-binaries runs,
+matching checksums for all five published archives against GitHub digests and
+`checksums.txt`, and beta47 in the published macOS binary version. Official
+Lyra npm versions remain 1.1.0. These independent results are recorded here
+without rerunning the sandbox-blocked commands. The API proof establishes
+consumption and invalid-target rejection without journal mutation; it does not
+qualify stale-question or ownership behavior in Console.
+
+Task19's native exact-question production integration remains pending. Console
+still uses its existing legacy answer calls. Full native Linux/PTY product
+qualification, stable Core/plugin publication, real provider operation and the
+other runtime qualification limits above remain pending. The historical
+qualification limits above describe the earlier state; the source and release
+checks completed here do not establish stable release readiness.
