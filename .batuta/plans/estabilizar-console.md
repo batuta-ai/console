@@ -134,7 +134,7 @@
       Depends on: 19, 20, 21, 23, 27, 29, 31, 32
       Scope: internal/tui/**, internal/i18n/**, internal/client/*_test.go
       Accept: TUI lê e aprova plano exato, executa, responde delivery/question_id corretos, retoma e mostra gates/evidências de duas missões sem mistura → go test ./internal/tui ./internal/i18n ./internal/client -count=1; Journal externo, restart do daemon e reconexão restauram progresso, preservam seleção e recusam resposta atrasada
-- [ ] 34. Distinguir observações de quota atuais, antigas e desconhecidas — backend/medium
+- [x] 34. Distinguir observações de quota atuais, antigas e desconhecidas — backend/medium
       Scope: plugins/limits/**, internal/domain/view.go, docs/domain.md
       Accept: Fixture antiga vira stale, tempo da medição não é substituído pelo tempo de leitura e valores/schema inválidos viram unknown → go test ./plugins/limits -count=1; Limite de sessões não vira quota do provedor e o modo importado/desconhecido está documentado
 - [ ] 35. Atualizar documentação de produto e textos PT/EN — docs/medium
