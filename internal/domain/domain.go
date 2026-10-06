@@ -171,6 +171,7 @@ type Validation struct {
 }
 
 type WatchView struct {
+	Progression     *ExecutionGate   `json:"progression,omitempty"`
 	PendingQuestion *PendingQuestion `json:"pending_question,omitempty"`
 	MissionID       string           `json:"mission_id,omitempty"`
 	WorkspaceID     string           `json:"workspace_id,omitempty"`

@@ -34,7 +34,7 @@ func (s *Service) AnswerQuestion(ctx context.Context, req domain.AnswerRequest) 
 		return result, domain.ErrInvalidReference
 	}
 	// Unlike WatchMission, mutation preflight must preserve artifact failures.
-	if _, err := batuta.ProjectMission(canonical, *b); err != nil {
+	if _, err := s.projectMission(ctx, m.ID, ws.ID, *b); err != nil {
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {

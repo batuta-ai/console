@@ -20,7 +20,7 @@ func TestVersionWithoutInitialization(t *testing.T) {
 	home := filepath.Join(dir, "nonexistent")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "--version", "--home", home, "--listen", "invalid")
+	cmd := exec.CommandContext(ctx, binary, "--version", "--home", home, "--listen", "invalid", "--core", filepath.Join(dir, "missing-core"))
 	cmd.Env = []string{"HOME=" + home, "PATH=" + dir}
 	output, err := cmd.CombinedOutput()
 	if err != nil {

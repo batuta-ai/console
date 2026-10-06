@@ -21,20 +21,23 @@ import (
 )
 
 type Service struct {
-	Store      *store.Store
-	Session    *session.Manager
-	Quota      *limits.Plugin
-	Home       string
-	Readiness  *adapters.ReadinessChecker
-	reuseMu    sync.Mutex
-	recoveryMu sync.Mutex
+	Store                    *store.Store
+	Session                  *session.Manager
+	Quota                    *limits.Plugin
+	Home                     string
+	Readiness                *adapters.ReadinessChecker
+	CoreExecutable           string
+	NativeExecutorExecutable string
+	native                   *nativeExecutions
+	reuseMu                  sync.Mutex
+	recoveryMu               sync.Mutex
 }
 
 func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
 	if lim == nil {
 		lim = limits.New(nil)
 	}
-	s := &Service{Store: st, Session: sess, Quota: lim}
+	s := &Service{Store: st, Session: sess, Quota: lim, native: newNativeExecutions()}
 	s.Readiness = adapters.NewReadinessChecker(s.diagnosticProbe(), nil)
 	if sess != nil {
 		sess.OnExit = func(live domain.Session) {

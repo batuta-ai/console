@@ -52,14 +52,17 @@ func (s *Service) PlanDetail(ctx context.Context, mission, workspace string) (do
 	if err != nil {
 		return out, err
 	}
+	if b.DeliveryID != "" {
+		detail, native, err := s.nativePlanDetail(ctx, mission, workspace, b)
+		if native || err != nil {
+			return detail, err
+		}
+	}
 	p, content, err := readBoundPlan(b)
 	if err != nil {
 		return out, err
 	}
-	out = domain.PlanDetail{Identity: domain.PlanIdentity{MissionID: mission, Binding: b, Version: domain.PlanVersion(content)}, Content: content, Title: p.Title, Goal: p.Goal, Context: p.Context, Created: p.Created, Inputs: p.Inputs, Status: string(p.Status), Tasks: make([]domain.PlanTask, 0, len(p.Tasks))}
-	for _, t := range p.Tasks {
-		out.Tasks = append(out.Tasks, domain.PlanTask{ID: t.ID, Number: t.Number, Title: t.Title, Status: t.Status, Domain: string(t.Domain), Complexity: string(t.Complexity), Dependencies: t.Dependencies, Executor: t.Executor, Model: t.Model, Scope: t.Scope, Accept: t.Accept, Line: t.Line})
-	}
+	out = describePlan(domain.PlanIdentity{MissionID: mission, Binding: b, Version: domain.PlanVersion(content)}, p, content)
 	receipt, err := s.Store.FindPlanApproval(ctx, out.Identity)
 	if err == nil {
 		out.Approval = &receipt
@@ -67,6 +70,14 @@ func (s *Service) PlanDetail(ctx context.Context, mission, workspace string) (do
 		return domain.PlanDetail{}, err
 	}
 	return out, nil
+}
+
+func describePlan(identity domain.PlanIdentity, p routing.Plan, content []byte) domain.PlanDetail {
+	out := domain.PlanDetail{Identity: identity, Content: content, Title: p.Title, Goal: p.Goal, Context: p.Context, Created: p.Created, Inputs: p.Inputs, Status: string(p.Status), Tasks: make([]domain.PlanTask, 0, len(p.Tasks))}
+	for _, t := range p.Tasks {
+		out.Tasks = append(out.Tasks, domain.PlanTask{ID: t.ID, Number: t.Number, Title: t.Title, Status: t.Status, Domain: string(t.Domain), Complexity: string(t.Complexity), Dependencies: t.Dependencies, Executor: t.Executor, Model: t.Model, Scope: t.Scope, Accept: t.Accept, Line: t.Line})
+	}
+	return out
 }
 
 func (s *Service) ApprovePlan(ctx context.Context, identity domain.PlanIdentity) (domain.PlanApproval, error) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 
 	"github.com/batuta-ai/console/integrations/batuta"
@@ -97,7 +98,7 @@ func (s *Service) WatchMission(id, workspaceID, deliveryID string) (domain.Watch
 		out.Message = "workspace_changed"
 		return out, nil
 	}
-	view, err := batuta.ProjectMission(canonical, *m.Binding)
+	view, err := s.projectMission(context.Background(), m.ID, ws.ID, *m.Binding)
 	view.Workspace = ws.Root
 	view.MissionID = m.ID
 	view.WorkspaceID = ws.ID
