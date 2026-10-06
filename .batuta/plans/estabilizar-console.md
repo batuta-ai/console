@@ -1,8 +1,10 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:12b155b86788 routing.md@sha256:ccc42392f48a -->
+<!-- inputs: profile.md@sha256:007e2ce0c8b9 routing.md@sha256:c3d5dd7cafa7 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
+
+**Pré-requisito21b concluído em2026-10-06:** Core público `v1.1.0-beta.49` adotado sem replace/sibling, Sum `h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=`, com teste nativo de validação snapshot red no47/green49, metadados de pacotes e docs atualizados atomicamente. Fonte8ee201f: fullcheck/race5/standalone/Macpackages/HTTPassets0 e LinuxUID1000 fullGo/web/race5/vet/bins/assets0; readonlySonnet3/3/guardclean. Próximo: integração21. O plano permanece25/45 concluídas e20 pendentes; adoção do módulo não fecha execução nativa, jornadas web/TUI, Windows ou QA de provedores. Todas as worktrees preservadas. Usuário reiterou autorização de todas as pendências: "pode seguir com as demais entao".
 
 **Estado confirmado em2026-10-06:**25 das45 tarefas concluídas;20 pendentes. O usuário aceitou `v0.1.0-beta.1` como a primeira beta publicada do Console, com numeração própria `v0.1.0-beta.N`. O manifesto `beta.0` permanece seed interno não publicado. Destino/visibilidade GitHub ainda não definidos. A infraestrutura da tarefa45 está qualificada localmente; integração de execução nativa21, jornadas completas web/TUI, Windows e qualificação final continuam abertas. O próximo pré-requisito é adotar o módulo público Corebeta49, já publicado e qualificado, para implementar21. A revisão visual permanece posterior ao fechamento funcional.
 

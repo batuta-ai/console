@@ -27,7 +27,7 @@ for (const archive of expected) {
       assert.match(metadata, /go1\.27\.1/);
       // The TUI may not link Core; never invent a dependency for diagnostics.
       if (binary === 'consoled' || metadata.includes('github.com/batuta-ai/core')) {
-        assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.47\s/);
+        assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.49\s/);
       }
       assert.ok(metadata.includes(`ReleaseVersion=${version}`));
       assert.ok(metadata.includes(`ReleaseRevision=${revision}`));

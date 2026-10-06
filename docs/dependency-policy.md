@@ -9,7 +9,7 @@ and Go module checks; never use floating installs for qualification or disable
 checksum, peer, type, test or vulnerability checks. Keep migrations separate
 from product redesign.
 
-Development tracks `github.com/batuta-ai/core v1.1.0-beta.47` without `replace`.
+Development tracks `github.com/batuta-ai/core v1.1.0-beta.49` without `replace`.
 Go's `@latest` selects older stable v1.0.1; do not downgrade to it. Stable Console
 publication requires a qualified stable core/plugin contract. Source checks
 below do not establish release readiness or completion of the stabilization plan.
@@ -197,16 +197,35 @@ checks completed here do not establish stable release readiness.
 
 ## Console beta infrastructure preparation — 2026-10-06
 
-The independent Console version proposal is `v0.1.0-beta.N`; its unpublished
-manifest seed is `0.1.0-beta.0`. It does not change the linked Core beta47 graph.
-Core beta49 adoption remains separate. The language/check tools for this
-preparation are Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
-govulncheck 1.8.0 and actionlint 1.7.12. Only packageManager metadata changes;
-product npm dependencies and the lockfile graph remain unchanged. Earlier
-qualification tables above retain their original dates and authority.
+The accepted independent Console numbering is `v0.1.0-beta.N`, with
+`v0.1.0-beta.1` as the first published version and `0.1.0-beta.0` only an
+unpublished manifest seed. No Console release has been published; destination
+and visibility remain undefined. The current linked Core graph is beta49.
+The language/check tools for this preparation are Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
+govulncheck 1.8.0 and actionlint 1.7.12. That infrastructure preparation changed
+only packageManager metadata; product npm dependencies and the lockfile graph
+remain unchanged. Earlier qualification tables above retain their original dates and authority.
 
 See [release.md](release.md) for the shared checks, local snapshots, reviewed
 release-PR pipeline, exact action pins and local sandbox limitations. The workflow
 configuration has not run on GitHub. Native Windows Tasks42–44, full Codex/Claude
 provider/web/TUI QA, Core official CLI binary security, stable Core/plugin contract
 and Task37's final full release matrix remain pending. WSL qualifies Linux only.
+
+## Published Core approved-snapshot API adoption — 2026-10-06
+
+The current pin is [Core v1.1.0-beta.49](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.49),
+published from `90290592cc7279c86b219a311d0ebde872fa41aa`. The public module
+checksum is `h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=`;
+there is no replacement or private checksum-database bypass. Other dependency
+pins remain unchanged. Earlier beta47 qualification above is historical.
+
+`TestPublishedApprovedSnapshotValidation` first fails to compile on beta47,
+then exercises beta49's native snapshot identity, receipt, path, size and exact
+content-digest validation. It uses owned temporary source bytes and stops before
+workspace preparation with an invalid delivery identity for valid snapshots;
+it does not submit an executor or qualify full New/Resume lifecycle behavior.
+Console does not yet call native `loop.New` or `loop.Resume`. Task21 must bind
+the immutable Console receipt and snapshot to native delivery ownership.
+Official Core CLI binary qualification, full provider/web/TUI operation, native
+Windows and stable Core/plugin publication remain separate open gates.

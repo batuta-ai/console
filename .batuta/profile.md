@@ -16,7 +16,7 @@ Configured on 2026-10-03 using the defaults proposed during the audit and the us
 ## Project map
 
 This map was first verified against Console HEAD 0461003 on 2026-10-03; dependency and test entries were refreshed after tasks 1–4. Start from source, not generated assets.
-The root go.mod/go.sum define the Go module and pin published core v1.1.0-beta.47; there is no local core replacement. scripts/check-standalone.sh verifies an isolated test/build/install of both commands.
+The root go.mod/go.sum define the Go module and pin published core v1.1.0-beta.49; the adoption was qualified on2026-10-06 and there is no local core replacement. scripts/check-standalone.sh verifies an isolated test/build/install of both commands.
 cmd/console/main.go is the user CLI entry point and selects web or Bubble Tea mode.
 cmd/console/ensure.go starts/finds consoled; daemon/open platform files handle process detachment and browser launching.
 cmd/consoled/main.go wires runtime paths, store, sessions, limits, service and HTTP server.

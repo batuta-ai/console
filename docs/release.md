@@ -51,13 +51,14 @@ not promote PATH installation, account/model readiness or provider banners to
 verified compatibility. Existing provider/PTY observations retain their own
 separate authorities and guards.
 
-## Independent beta proposal and bootstrap
+## Independent beta numbering and bootstrap
 
-Console proposes `v0.1.0-beta.N`, independent of the linked Core version.
+Console uses the accepted `v0.1.0-beta.N` sequence, independent of the linked
+Core version.
 `.release-please-manifest.json` starts at `0.1.0-beta.0` as **unpublished
-bookkeeping**, not an existing release. The first proposed release is
-`v0.1.0-beta.1`. Numbering, destination and visibility still await the owner's
-choice; no remote, tag or release has been created by this preparation.
+bookkeeping**, not an existing release. The first published release will be
+`v0.1.0-beta.1`. Destination and visibility remain undefined; no Console
+release has been published and this preparation creates no remote or tag.
 
 The bootstrap boundary is commit `3485c1ca1f02f70ba0101422ee41d4d6fafb2ddb`.
 Release-please considers subsequent Conventional Commits; older history is
@@ -127,7 +128,7 @@ Only `consoled` currently links Core; `console` may truthfully report it missing
 
 ## Repository setup and reviewed release flow
 
-After the owner chooses the destination and numbering, retain the bootstrap
+After the owner chooses the destination and visibility, retain the bootstrap
 history, configure the chosen repository's default branch, and enable Actions.
 All owner/repository references come from GitHub context; no destination or
 visibility is hard-coded. Protect the default branch and require both native
@@ -201,8 +202,10 @@ then independent read-only review. The earlier reviewer's denied reads of
 proofs outside its working directory were a host-access issue, not a failed
 source check. No completed Sonnet review or successful GitHub run is claimed.
 
-The current graph pins **Core v1.1.0-beta.47** without replacement and Lyra
-React/styles **1.1.0**. Published Core beta49 adoption is a separate deliverable.
+The current graph pins **Core v1.1.0-beta.49** without replacement and Lyra
+React/styles **1.1.0**. The public approved-plan snapshot API is available to
+the next Task21; Console
+does not yet use native `loop.New`/`loop.Resume` execution.
 Linker labels never replace actual toolchain, VCS, dependency or compatibility
 authorities. Existing `compatibility.native` and `compatibility.stable` remain
 pending, and the historical native authority string still names macOS/Linux.

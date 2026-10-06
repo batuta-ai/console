@@ -32,7 +32,7 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 Use Go 1.27.1 or newer and run these commands from a checkout of the desired
 Console revision. `go.mod` and `go.sum` pin the dependency graph, including
-Batuta core `v1.1.0-beta.47`. The tracked embedded web assets are sufficient
+Batuta core `v1.1.0-beta.49`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 
 ```bash
@@ -73,11 +73,12 @@ Console tag (`go install ...@<tag>`) remains pending publication and verificatio
 The core pre-release is selected for development; stable publication still
 requires qualification against a stable core/plugin contract.
 
-## Beta infrastructure (local proposal)
+## Beta infrastructure
 
-Console proposes its own `v0.1.0-beta.N` sequence, independent of the linked
-Core version. The manifest seed `0.1.0-beta.0` is unpublished bookkeeping;
-numbering and repository destination/visibility await confirmation.
+Console uses its own `v0.1.0-beta.N` sequence, independent of the linked
+Core version. The first published version will be `v0.1.0-beta.1`; the manifest
+seed `0.1.0-beta.0` is unpublished bookkeeping. No Console release has been
+published; repository destination/visibility remain undefined.
 
 With Go 1.27.1, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
 

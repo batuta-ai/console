@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	charm.land/bubbletea/v2 v2.0.10
-	github.com/batuta-ai/core v1.1.0-beta.47
+	github.com/batuta-ai/core v1.1.0-beta.49
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/mattn/go-isatty v0.0.24

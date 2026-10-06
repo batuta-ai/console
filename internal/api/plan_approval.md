@@ -98,14 +98,24 @@ does not require today's source to match. There is no global receipt lookup.
 
 Task21 can consume these exact snapshot bytes and immutable binding/version, but
 must independently validate execution eligibility. Task20 uses only Core's public
-`routing.ParsePlan` and `routing.PlanLocations` interfaces. Core beta.47's `loop.Options.Plan` accepts a workspace plan reference; its
-`loadPlan` resolves the reference back to a slug and reloads via `PlanLoader`.
-`loop.New` requires the native header to be `approved`. That path does not accept
-Console snapshot bytes or a Console receipt, so it cannot directly consume a
-receipt for an unchanged `proposed` snapshot. No native snapshot-execution/approval
-adapter is assumed or qualified here. Any native adapter
-or proposed-header transformation must preserve the original approved identity and
-requires a separate task21 contract; this receipt alone cannot start execution.
+`routing.ParsePlan` and `routing.PlanLocations` interfaces. The linked Core
+`v1.1.0-beta.49` exports `loop.ApprovedPlanSnapshot` with `Slug`, `Path`,
+`ReceiptID`, `ContentDigest` and `Content`, accepted through
+`loop.Options.ApprovedSnapshot`. Core owns a copy of the bytes and validates the
+canonical plan path, receipt and lowercase SHA-256 content digest. The snapshot
+path accepts proposed or approved plan headers without rewriting the source;
+the caller owns authenticated authorization and durable receipt storage.
+
+`loop.New` prepares a fresh delivery but does not journal it until `Run`. A
+caller-selected `DeliveryID` must be valid and cannot reopen an existing
+delivery. `loop.Resume` checks the original workspace, slug, path, receipt,
+content digest and task-set identity before acquiring delivery ownership;
+missing or differing approvals return `ErrSnapshotRequired` or
+`ErrSnapshotMismatch`, while invalid snapshots return `ErrSnapshotInvalid`.
+Successful Resume ownership must be released, including after a dry run.
+Console does not yet use native New/Resume. Task21 must integrate this contract;
+this receipt alone cannot start execution, and no provider/runtime qualification
+is implied by adopting the public module.
 
 ## Errors and client behavior
 
