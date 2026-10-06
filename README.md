@@ -32,7 +32,7 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 Use Go 1.27.1 or newer and run these commands from a checkout of the desired
 Console revision. `go.mod` and `go.sum` pin the dependency graph, including
-Batuta core `v1.1.0-beta.46`. The tracked embedded web assets are sufficient
+Batuta core `v1.1.0-beta.47`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 
 ```bash
@@ -73,13 +73,35 @@ Console tag (`go install ...@<tag>`) remains pending publication and verificatio
 The core pre-release is selected for development; stable publication still
 requires qualification against a stable core/plugin contract.
 
+## Beta infrastructure (local proposal)
+
+Console proposes its own `v0.1.0-beta.N` sequence, independent of the linked
+Core version. The manifest seed `0.1.0-beta.0` is unpublished bookkeeping;
+numbering and repository destination/visibility await confirmation.
+
+With Go 1.27.1, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
+
+```sh
+sh scripts/check-release.sh       # non-root source checks; failures stop the run
+sh scripts/package-release.sh     # also requires GoReleaser 2.18.2; snapshots only
+```
+
+Packages in `dist/` contain both commands, embedded web assets, LICENSE and
+README, with SHA256 checksums, for darwin/linux on amd64/arm64. Cross-builds
+are not native runtime qualification. See [release setup and authority](docs/release.md)
+for frozen tools, the reviewed release-PR/tag pipeline, and current proof limits.
+No successful GitHub run or Console publication is claimed. Task37's complete
+release matrix, stable Core/plugin contract and Core official CLI binary security
+qualification remain pending.
+
 ## Selected platform and provider matrix
 
-The selected release matrix is **Codex and Claude on macOS and Linux**.
-Selection describes the intended product scope; native operational and full
-provider, mission, browser and TUI qualification remain pending. Windows is
-excluded: its PTY start/resize implementation rejects operations. Other adapter
-catalog entries remain visible for compatibility but are outside this matrix.
+The intended product matrix is **Codex and Claude on macOS, Linux and native
+Windows**. The current beta packaging configuration covers macOS/Linux only.
+Native operational and full provider, mission, browser and TUI qualification
+remain pending. Native Windows portability and ConPTY/provider QA are Tasks42–44;
+the current PTY start/resize implementation rejects Windows operations. WSL
+proves Linux only. Other adapter catalog entries remain outside this matrix.
 Sporadic WSL fork `EPERM` and stable core/plugin publication evidence remain open.
 Source installation or component cross-compilation does not qualify a release.
 

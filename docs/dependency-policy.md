@@ -118,8 +118,8 @@ The conductor independently verified candidate `88107db` on 2026-10-03:
 | `npm --prefix web audit --json` | Exit 0; zero vulnerabilities in every severity. |
 | `go list -m -u -json all` | Passed; direct/consumed targets verified against live proxy metadata. |
 
-Production builds generate `internal/webui/dist`; both binaries embed it through
-`//go:embed all:dist`. Never edit those assets manually. Vulnerability results
+Production builds generate `internal/webui/dist`; the daemon embeds it through
+`//go:embed all:dist` and serves it to clients. Never edit those assets manually. Vulnerability results
 are dated observations, not guarantees against later advisories.
 
 ## Qualification limits
@@ -194,3 +194,19 @@ qualification, stable Core/plugin publication, real provider operation and the
 other runtime qualification limits above remain pending. The historical
 qualification limits above describe the earlier state; the source and release
 checks completed here do not establish stable release readiness.
+
+## Console beta infrastructure preparation — 2026-10-06
+
+The independent Console version proposal is `v0.1.0-beta.N`; its unpublished
+manifest seed is `0.1.0-beta.0`. It does not change the linked Core beta47 graph.
+Core beta49 adoption remains separate. The language/check tools for this
+preparation are Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
+govulncheck 1.8.0 and actionlint 1.7.12. Only packageManager metadata changes;
+product npm dependencies and the lockfile graph remain unchanged. Earlier
+qualification tables above retain their original dates and authority.
+
+See [release.md](release.md) for the shared checks, local snapshots, reviewed
+release-PR pipeline, exact action pins and local sandbox limitations. The workflow
+configuration has not run on GitHub. Native Windows Tasks42–44, full Codex/Claude
+provider/web/TUI QA, Core official CLI binary security, stable Core/plugin contract
+and Task37's final full release matrix remain pending. WSL qualifies Linux only.

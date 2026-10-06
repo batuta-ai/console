@@ -51,29 +51,166 @@ not promote PATH installation, account/model readiness or provider banners to
 verified compatibility. Existing provider/PTY observations retain their own
 separate authorities and guards.
 
-## Metadata injection
+## Independent beta proposal and bootstrap
 
-Use the selected native Go 1.27.1 SDK, not the shell's Go 1.24 default. Build each
-binary with the same desired labels, for example:
+Console proposes `v0.1.0-beta.N`, independent of the linked Core version.
+`.release-please-manifest.json` starts at `0.1.0-beta.0` as **unpublished
+bookkeeping**, not an existing release. The first proposed release is
+`v0.1.0-beta.1`. Numbering, destination and visibility still await the owner's
+choice; no remote, tag or release has been created by this preparation.
+
+The bootstrap boundary is commit `3485c1ca1f02f70ba0101422ee41d4d6fafb2ddb`.
+Release-please considers subsequent Conventional Commits; older history is
+intentionally excluded from the initial changelog. Keep that boundary in the
+repository history. The `go` strategy has no version file: it updates the
+manifest and `docs/CHANGELOG.md`, not Core dependencies or runtime metadata.
+The prerelease strategy increments beta versions. The vendored schema in
+`scripts/release-please-schema.json` is from release-please v17.11.2, commit
+`05c6a4f71022304d4edad24ea90c1c16324503d5`, at
+[the official schema](https://raw.githubusercontent.com/googleapis/release-please/05c6a4f71022304d4edad24ea90c1c16324503d5/schemas/config.json).
+
+## Frozen local commands
+
+Put these exact installed tools on PATH: Go **1.27.1**, Node **26.10.0**, npm
+**12.2.0**, govulncheck **1.8.0**, GoReleaser **2.18.2**, actionlint **1.7.12**.
+The preparation reused isolated tools; it did not update personal installations.
+`.node-version` and `web/package.json#packageManager` record the web tooling.
+No web library graph or `go.mod`/`go.sum` upgrade is part of this work.
+If the shell exports an older `GOROOT`, unset it before using the selected SDK;
+the preflight verifies both the Go command and compiler versions.
+
+From the checkout root as a non-root user:
 
 ```sh
-export GOTOOLCHAIN=local
-/path/to/go1.27.1/bin/go build -ldflags='-X github.com/batuta-ai/console/internal/buildinfo.ReleaseVersion=1.2.3 -X github.com/batuta-ai/console/internal/buildinfo.ReleaseRevision=abcdef' -o bin/console ./cmd/console
-/path/to/go1.27.1/bin/go build -ldflags='-X github.com/batuta-ai/console/internal/buildinfo.ReleaseVersion=1.2.3 -X github.com/batuta-ai/console/internal/buildinfo.ReleaseRevision=abcdef' -o bin/consoled ./cmd/consoled
+sh scripts/check-release.sh
+sh scripts/package-release.sh
+# Equivalent convenience targets: make check-release; make package-release
+node scripts/check-release-config.mjs
+node --test scripts/release-contract.test.mjs
+actionlint
+goreleaser check
 ```
 
-The labels above are illustrative, not published versions. Compare each
-binary's diagnostic with `go version -m binary`. Injection does not change its
-actual toolchain or observed module/VCS metadata. Synthetic labels used in tests
-are test evidence only; they create no tag or publication.
+The shared check performs frozen-tool validation, schema/policy and behavioral
+checks, `npm ci`, web tests, TypeScript checking, web build and asset drift checks,
+module verification, Go tests/vet/race, both command builds and source govulncheck.
+It stops at the first failure. Assets must match HEAD, including staged and
+untracked files; regenerate through Vite and commit deliberate changes before
+qualification. Never edit `internal/webui/dist` manually. The check uses an owned
+`.batuta/runs/console-workflow-versioning/go-cache` unless GOCACHE is supplied.
+Uncached dependencies and the vulnerability database require network reads;
+access failures are failures, not a clean scan. No tests are skipped to package
+an actual release.
 
-## Qualification limits
+The default package command rebuilds the web bundle and checks drift, then
+creates four local snapshots under `dist/`. It does **not** establish the full
+source-check result. Each tar.gz contains `console`, `consoled`, LICENSE and
+README. `checksums.txt` uses SHA256. The targets are darwin/linux × amd64/arm64,
+with CGO disabled. Both binaries receive the same full HEAD revision and a
+`0.1.0-beta.N-snapshot.<full-revision>` label. Dirty source is permitted only for
+snapshots and remains visible in observed VCS metadata. GoReleaser publishing is
+disabled, including for actual-release packaging.
 
-The selected source graph pins Core `v1.1.0-beta.46` and Lyra React/styles `1.1.0`.
-A linked pre-release does not establish stable Core/plugin compatibility.
-Stable selection and publication require a trustworthy versioned Core/plugin
-contract and exact-source qualification, including native macOS/Linux checks,
-independent review, and provider/browser/TUI testing. Draft unpublished Core
-PR145 is not compatibility authority. Task19 and Task20's approval-model decision
-remain independent. Windows is outside full runtime qualification. Version
-labels cannot remove readiness or execution guards or satisfy these requirements.
+For an already existing, reviewed beta tag, the future release job runs:
+
+```sh
+sh scripts/package-release.sh --release v0.1.0-beta.1
+```
+
+This illustrative command requires that exact existing tag to match the manifest
+and HEAD, a clean source tree, and the entire shared check. It then builds with
+the actual `v`-prefixed tag and full revision labels. Stable tags, v1 tags,
+malformed tags, manifest mismatches and the bootstrap seed fail before packaging.
+There is no stable override. `scripts/verify-packages.mjs` verifies archive count,
+contents, documentation bytes, checksums and both binaries' embedded build data.
+Only `consoled` currently links Core; `console` may truthfully report it missing.
+
+## Repository setup and reviewed release flow
+
+After the owner chooses the destination and numbering, retain the bootstrap
+history, configure the chosen repository's default branch, and enable Actions.
+All owner/repository references come from GitHub context; no destination or
+visibility is hard-coded. Protect the default branch and require both native
+macOS/Linux `Console checks` jobs plus ordinary review for release PRs.
+
+Configure a repository secret named `RELEASE_PLEASE_TOKEN` using an owner-approved
+GitHub App installation token or fine-grained token with repository Contents,
+Issues and Pull requests write permissions, matching the pinned release-please
+action's documented requirements and the proposal job. It lets release-please
+open/update PRs and create the prerelease/tag after review and merge. A token that triggers PR CI is
+needed: the default GITHUB_TOKEN does not start workflows from its own PR events.
+Credentials are not provisioned or stored by this preparation. All other jobs
+have read-only contents permission except the narrowly scoped package upload job.
+No workflow auto-merges or uses admin merge privileges.
+
+`ci.yml` runs the shared command on native `macos-15` and `ubuntu-24.04` hosted
+runners without sudo/root. `release.yml` acts only on the repository's default
+branch. After checks pass, release-please opens/updates a version/changelog PR.
+The PR receives normal review and checks. After its merge, release-please creates
+the beta tag and GitHub prerelease. The same workflow consumes its outputs, so
+it does not depend on a token-triggered tag workflow. It checks the exact tagged
+source on both OS runners, then the package job validates the beta guard and
+runs the shared check again before packaging. Upload uses the current repository
+and only an existing, non-draft prerelease whose tag matches. Failed jobs leave
+packages unpublished; an already created prerelease can remain without assets.
+Recovery requires reviewing the failure and explicitly packaging/uploading the
+same verified tag (using the scoped Node `scripts/upload-release.mjs` entry point
+only when separately authorized); no automatic overwrite or stable escape is configured.
+
+Every external action is pinned to its resolved full commit, annotated with its
+selected release version. Runner OS images are hosted rolling images; this is
+frozen language/check tooling, not a claim of bit-for-bit reproducible OS images.
+Normal review must assess any future changes to workflow permissions or guards.
+
+## Local evidence and qualification limits — 2026-10-06
+
+Worker evidence is local and ignored under
+`.batuta/runs/console-workflow-versioning/`; it is not a public CI result.
+See `receipt.md` and `commands.md` there for exact commands, outputs and limits.
+The contract's red/green tests cover tag rejection and tracked/staged/untracked
+asset drift. `schema.log`, `actionlint.log` and `archives-green.log` record the
+corresponding local checks. Snapshots retain the actual source revision and
+observed dirty state; they are not published versions.
+
+The historical worker runs stopped the shared check at Go HTTP tests because
+the worker sandbox forbade local socket binds; packaged daemon startup failed at
+the same boundary. A separate source govulncheck attempt could not resolve
+`vuln.go.dev`, and Go emitted denied shared module stat-cache write warnings.
+Those failed runs remain recorded in `check-release-native-mac.log`,
+`govulncheck-source.log` and `native-proof.log` in the worker evidence directory;
+they did not establish full Go/race, a clean scan or daemon HTTP proof.
+
+The independent conductor follow-up on native macOS arm64 on **2026-10-06**
+passed the full shared check: normal Go tests, race tests, vet, both binary
+builds, npm ci, all 43 web tests, TypeScript checking, web build without asset
+drift, module verification and source govulncheck with no vulnerabilities found.
+Copies of the actual proofs are under `.batuta/runs/conductor-verification/`:
+`verification-status.json` records exit 0 for the checks and packaging, and
+`verify-check-release.log` contains the shared-check output. These proofs apply
+to candidate `ae1571c7669474ca2007213252aa46b2f87a7f28`, tree
+`e35df6c217abadec2363486ceb52b8ddd3a8e10e`, before this permission/documentation
+correction; they are not new-head runs.
+
+`verify-package-release.log` records four verified Mac/Linux snapshot archives,
+including checksums, contents and both binaries' embedded build records.
+`native-package-proof.json` records both packaged macOS arm64 diagnostics and
+exact HTTP index/JS/CSS asset checks; the native follow-up also passed graceful
+daemon shutdown. Other packaged targets have cross-build/metadata proof only.
+The conductor will rerun targeted checks and packaging at the corrected HEAD,
+then independent read-only review. The earlier reviewer's denied reads of
+proofs outside its working directory were a host-access issue, not a failed
+source check. No completed Sonnet review or successful GitHub run is claimed.
+
+The current graph pins **Core v1.1.0-beta.47** without replacement and Lyra
+React/styles **1.1.0**. Published Core beta49 adoption is a separate deliverable.
+Linker labels never replace actual toolchain, VCS, dependency or compatibility
+authorities. Existing `compatibility.native` and `compatibility.stable` remain
+pending, and the historical native authority string still names macOS/Linux.
+
+The intended product scope includes Codex and Claude on macOS, Linux and native
+Windows. Tasks42–44 cover Windows portability/ConPTY/provider QA; WSL proves
+Linux only. macOS/Linux full provider, browser and interactive TUI operation,
+semantic Core/plugin compatibility, Core official CLI binary security, independent
+review and Task37's final full-matrix/native distribution and stable release gates
+remain open. Cross-built Linux/Windows artifacts cannot close runtime gates.
+No stable release, complete native support or successful publication is claimed.

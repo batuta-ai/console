@@ -1,0 +1,34 @@
+version: 2
+project_name: console
+builds:
+  - id: console
+    main: ./cmd/console
+    binary: console
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-mod=readonly, -buildvcs=true]
+    ldflags:
+      - -X github.com/batuta-ai/console/internal/buildinfo.ReleaseVersion={{ .Env.CONSOLE_VERSION }} -X github.com/batuta-ai/console/internal/buildinfo.ReleaseRevision={{ .Env.CONSOLE_REVISION }}
+  - id: consoled
+    main: ./cmd/consoled
+    binary: consoled
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-mod=readonly, -buildvcs=true]
+    ldflags:
+      - -X github.com/batuta-ai/console/internal/buildinfo.ReleaseVersion={{ .Env.CONSOLE_VERSION }} -X github.com/batuta-ai/console/internal/buildinfo.ReleaseRevision={{ .Env.CONSOLE_REVISION }}
+archives:
+  - ids: [console, consoled]
+    formats: [tar.gz]
+    name_template: 'console_{{ .Env.CONSOLE_VERSION }}_{{ .Os }}_{{ .Arch }}'
+    files: [LICENSE, README.md]
+checksum:
+  name_template: checksums.txt
+snapshot:
+  version_template: '{{ .Env.CONSOLE_VERSION }}'
+changelog:
+  disable: true
+release:
+  disable: true

@@ -1,0 +1,78 @@
+name: Console beta release
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: console-beta-release
+  cancel-in-progress: false
+jobs:
+  checks:
+    if: github.ref_name == github.event.repository.default_branch
+    uses: ./.github/workflows/ci.yml
+  proposal:
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+  tagged-checks:
+    needs: proposal
+    if: needs.proposal.outputs.created == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.proposal.outputs.tag }}
+  packages:
+    needs: [proposal, tagged-checks]
+    if: needs.proposal.outputs.created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.proposal.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.proposal.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.10.0'
+          package-manager-cache: false
+      - name: Reject non-beta or mismatched releases before packaging
+        run: node scripts/verify-beta.mjs "$RELEASE_TAG"
+      - name: Install pinned tools on the runner
+        env:
+          GOTOOLCHAIN: local
+          GOBIN: ${{ runner.temp }}/console-tools
+        run: |
+          npm install --global npm@12.2.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "$GOBIN" >> "$GITHUB_PATH"
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: 'v2.18.2'
+          install-only: true
+      - name: Check exact tagged source and create local packages
+        run: sh scripts/package-release.sh --release "$RELEASE_TAG"
+      - name: Upload only to the matching existing prerelease
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/upload-release.mjs "$RELEASE_TAG"
