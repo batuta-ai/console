@@ -50,6 +50,7 @@ export type Skill = {
   path?: string;
 };
 export type Mission = {
+  binding?: MissionBinding;
   id: string;
   title: string;
   brief?: string;
@@ -109,6 +110,12 @@ export type Session = {
   skills_version?: string;
 };
 export type Watch = {
+  scope?: string;
+  source?: string;
+  mission_id?: string;
+  workspace_id?: string;
+  pending_question?: { target: QuestionIdentity; prompt: string };
+  progression?: ExecutionGate;
   available: boolean;
   message?: string;
   delivery?: string;
@@ -161,6 +168,7 @@ export function webClientID() {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
+    redirect: ["GET", "HEAD"].includes((init?.method || "GET").toUpperCase()) ? init?.redirect : "error",
     headers: {
       Authorization: `Bearer ${localStorage.getItem("bt-token") || ""}`,
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -345,4 +353,126 @@ export function clock(at: string) {
   const d = new Date(at);
   if (Number.isNaN(d.getTime())) return at;
   return d.toISOString().slice(11, 19);
+}
+
+export type MissionBinding = {
+  workspace_id: string; workspace_root: string; canonical_root: string;
+  plan_path: string; plan_slug: string; plan_digest: string;
+  delivery_id?: string; opened_digest?: string;
+};
+export type PlanIdentity = { mission_id: string; binding: MissionBinding; version: string };
+export type PlanTask = {
+  id: string; number: number; title: string; status: string; domain: string; complexity: string;
+  dependencies: string[] | null; executor: string; model: string; scope: string[] | null; accept: string[] | null; line: number;
+};
+export type PlanApproval = { id: string; identity: PlanIdentity; content: string; approved_at: string };
+export type PlanDetail = {
+  identity: PlanIdentity; content: string; title: string; goal: string; context: string;
+  created: string; inputs: string; status: string; tasks: PlanTask[]; approval?: PlanApproval;
+};
+export type QuestionIdentity = {
+  mission_id: string; workspace_id: string; delivery: string; task: string;
+  execution: number; question_id: string; opened_digest: string;
+};
+export type ExecutionGate = { required: boolean; cleared: boolean; delivery: string; review_id?: string; evidence_digest?: string; reason?: string };
+export type ExecutionState = {
+  target: PlanIdentity; approval_id: string; delivery: string; opened_digest?: string;
+  active: boolean; bound: boolean; watch?: Watch; gate?: ExecutionGate;
+};
+export type JourneyFailure = { code: string; message: string };
+export type ApprovalResult = { target: PlanIdentity; effect: "recorded" | "rejected" | "uncertain"; receipt?: PlanApproval; error?: JourneyFailure };
+export type ExecutionResult = {
+  target: PlanIdentity; approval_id: string; effect: "started" | "rejected" | "uncertain";
+  delivery?: string; opened_digest?: string; error?: JourneyFailure;
+};
+export type AnswerResult = { target: QuestionIdentity; delivery?: string; effect: "recorded" | "rejected" | "uncertain"; error?: JourneyFailure };
+
+// Mutation errors carry a typed effect even on non-2xx HTTP responses.
+// Missing/malformed replies are uncertain; callers must inspect before retrying.
+export async function journeyMutation<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, { method: "POST", redirect: "error", headers: {
+    Authorization: `Bearer ${localStorage.getItem("bt-token") || ""}`, "Content-Type": "application/json",
+  }, body: JSON.stringify(body) });
+  if (response.status === 401) {
+    localStorage.removeItem("bt-token");
+    throw new Error(T("err_token"));
+  }
+  return response.json();
+}
+
+export function sameBinding(a: MissionBinding, b: MissionBinding, opening = true): boolean {
+  return !!a && !!b && a.workspace_id === b.workspace_id && a.workspace_root === b.workspace_root &&
+    a.canonical_root === b.canonical_root && a.plan_path === b.plan_path && a.plan_slug === b.plan_slug &&
+    a.plan_digest === b.plan_digest && (!opening || ((a.delivery_id || "") === (b.delivery_id || "") && (a.opened_digest || "") === (b.opened_digest || "")));
+}
+
+export function samePlan(a: PlanIdentity, b: PlanIdentity): boolean {
+  return !!a && !!b && a.mission_id === b.mission_id && a.version === b.version && sameBinding(a.binding, b.binding);
+}
+
+export function sameQuestion(a: QuestionIdentity, b: QuestionIdentity): boolean {
+  return !!a && !!b && a.mission_id === b.mission_id && a.workspace_id === b.workspace_id && a.delivery === b.delivery &&
+    a.task === b.task && a.execution === b.execution && a.question_id === b.question_id && a.opened_digest === b.opened_digest;
+}
+
+export async function verifiedPlanText(identity: PlanIdentity, content: string, mission: Mission): Promise<string> {
+  const b = identity?.binding;
+  if (!b || identity.mission_id !== mission.id || b.workspace_id !== mission.workspace_id ||
+      ![b.workspace_root, b.canonical_root, b.plan_path, b.plan_slug, b.plan_digest].every(v => typeof v === "string" && v.length > 0) ||
+      !/^[a-f0-9]{64}$/.test(identity.version) || Boolean(b.delivery_id) !== Boolean(b.opened_digest) ||
+      (mission.binding && !sameBinding(b, mission.binding, false)) || typeof content !== "string" || !content.length) {
+    throw new Error(T("journey_invalid_plan"));
+  }
+  try {
+    const raw = atob(content);
+    if (btoa(raw) !== content || raw.length > 1048576) throw new Error("base64");
+    const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+    const hash = await crypto.subtle.digest("SHA-256", bytes);
+    const version = Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, "0")).join("");
+    if (version !== identity.version) throw new Error("digest");
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error(T("journey_invalid_plan"));
+  }
+}
+
+export async function verifyReceipt(receipt: PlanApproval, identity: PlanIdentity, content: string, mission: Mission): Promise<void> {
+  if (!receipt || typeof receipt.id !== "string" || !receipt.id || !samePlan(receipt.identity, identity) || receipt.content !== content || !!receipt.identity.binding.delivery_id || !!receipt.identity.binding.opened_digest ||
+      typeof receipt.approved_at !== "string" || !Number.isFinite(Date.parse(receipt.approved_at))) throw new Error(T("journey_invalid_plan"));
+  await verifiedPlanText(receipt.identity, receipt.content, mission);
+}
+
+export function verifyExecution(state: ExecutionState, receipt: PlanApproval, previous?: ExecutionState | null): void {
+  if (!state || !samePlan(state.target, receipt.identity) || state.approval_id !== receipt.id ||
+      typeof state.delivery !== "string" || !state.delivery || typeof state.active !== "boolean" || typeof state.bound !== "boolean" ||
+      (previous && (previous.delivery !== state.delivery || (previous.opened_digest && previous.opened_digest !== state.opened_digest)))) {
+    throw new Error(T("journey_invalid_state"));
+  }
+  if (!state.bound && !state.opened_digest && !state.watch) return;
+  const watch = state.watch;
+  const gate = state.gate;
+  const progression = watch?.progression;
+  if (!state.opened_digest || !watch?.available || watch.source !== "current" || watch.scope !== "mission" ||
+      watch.mission_id !== receipt.identity.mission_id || watch.workspace_id !== receipt.identity.binding.workspace_id || watch.delivery !== state.delivery ||
+      typeof watch.header?.state !== "string" || !gate || typeof gate.required !== "boolean" || typeof gate.cleared !== "boolean" || gate.delivery !== state.delivery ||
+      !progression || progression.delivery !== state.delivery || progression.required !== gate.required || progression.cleared !== gate.cleared) {
+    throw new Error(T("journey_invalid_state"));
+  }
+  const q = watch.pending_question?.target;
+  if (watch.pending_question && (!q || q.mission_id !== receipt.identity.mission_id || q.workspace_id !== receipt.identity.binding.workspace_id ||
+      q.delivery !== state.delivery || q.opened_digest !== state.opened_digest || typeof q.task !== "string" || !q.task || typeof q.question_id !== "string" || !q.question_id || !Number.isSafeInteger(q.execution) || q.execution < 1 ||
+      typeof watch.pending_question.prompt !== "string" || !watch.pending_question.prompt)) throw new Error(T("journey_invalid_state"));
+}
+
+export function executionLabel(state: ExecutionState | null, approved: boolean, unavailable: boolean): string {
+  if (unavailable) return T("journey_unavailable");
+  if (!state?.opened_digest) return state?.active ? T("status_running") : approved ? T("journey_approved") : T("journey_proposed");
+  const backend = state.watch?.header?.state;
+  if (state.watch?.pending_question) return T("status_waiting");
+  if (state.active) return T("status_running");
+  if (state.gate?.required && !state.gate.cleared) return T("journey_review_blocked");
+  if (backend === "done") return T("journey_completed");
+  if (backend === "review_blocked") return T("journey_review_blocked");
+  if (backend === "running" || backend === "executing") return T("status_running");
+  return T("status_waiting");
 }

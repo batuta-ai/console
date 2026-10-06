@@ -39,6 +39,8 @@ import {
   plural,
 } from "./lib";
 import { T } from "./i18n";
+import { MissionPlanning } from "./MissionPlanning";
+import { MissionJourney } from "./MissionJourney";
 import { Alert, AppSidebar, Avatar, Badge, BottomNav, Brand, Breadcrumb, Button, Card, Dialog, Drawer, EmptyState, Field, IconButton, Input, PageHeader, Progress, Select, Shell, Stat, Stepper, Tabs, WorkspaceSwitcher } from "./ui";
 
 const webClient = webClientID();
@@ -95,6 +97,8 @@ export function App() {
   const [limits, setLimits] = useState<Limit[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
+  const [missionWatch, setMissionWatch] = useState<Watch | null>(null);
+  const [journeyRefresh, setJourneyRefresh] = useState(0);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsRoot, setSkillsRoot] = useState("");
   const [editing, setEditing] = useState<Squad | null>(null);
@@ -133,6 +137,7 @@ export function App() {
       if (generation !== refreshGeneration.current) return;
       setWorkspaces(ws || []);
       setMissions(msn || []);
+      setActiveMission(selected => selected ? (msn || []).find(m => m.id === selected.id && m.workspace_id === selected.workspace_id) || selected : null);
       setSquads(sq || []);
       setAccounts(ac || []);
       setActivity(ev || []);
@@ -140,6 +145,7 @@ export function App() {
       setLimits(lim || []);
       setSkills(sk?.skills || []);
       setSkillsRoot(sk?.root || "");
+      setJourneyRefresh(n => n + 1);
       setErr("");
       const watchID = activeMission?.workspace_id || (ws || []).find((w) => w.id === wsId)?.id || ws?.[0]?.id;
       if (watchID) {
@@ -338,9 +344,12 @@ export function App() {
         )}
         {screen === "room" && (
           <Room
+            key={activeMission?.id || "none"}
+            refreshVersion={journeyRefresh}
+            onWatch={setMissionWatch}
             mission={activeMission}
             sessions={sessions.filter((s) => !activeMission || s.mission_id === activeMission.id)}
-            watch={watch}
+            watch={missionWatch?.mission_id === activeMission?.id ? missionWatch : null}
             accounts={accounts}
             activity={activity}
             client={webClient}
@@ -461,7 +470,7 @@ export function App() {
           />
         )}
         {screen === "activity" && <ActivityScreen activity={activity} sessions={sessions} missions={missions} onOpenMission={(m) => { setActiveMission(m); go("room"); }} />}
-        {screen === "review" && <Review watch={watch} mission={activeMission} onBack={() => go("room")} />}
+        {screen === "review" && <Review watch={missionWatch?.mission_id === activeMission?.id ? missionWatch : null} mission={activeMission} onBack={() => go("room")} />}
       </Shell>
       {phone ? (
         <BottomNav
@@ -751,15 +760,6 @@ function Missions({
   );
 }
 
-function planIndex(plans?: { status?: string; done?: boolean }[]) {
-  if (!plans || plans.length === 0) return 0;
-  if (plans.every((p) => p.done || p.status === "done")) return 4;
-  const open = plans.find((p) => !p.done) || plans[0];
-  if (open.status === "approved" || open.status === "in progress") return 4;
-  if (open.status === "proposed") return 3;
-  return 2;
-}
-
 function NewMissionDialog({
   open,
   workspace,
@@ -776,6 +776,10 @@ function NewMissionDialog({
   const [objective, setObjective] = useState("");
   const [squadID, setSquadID] = useState(squads[0]?.id || "");
   const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const [error, setError] = useState("");
+  const [matches, setMatches] = useState<Mission[]>([]);
+  const lock = useRef(false);
   useEffect(() => {
     if (open && !squads.some((q) => q.id === squadID)) setSquadID(squads[0]?.id || "");
   }, [open, squads, squadID]);
@@ -791,20 +795,28 @@ function NewMissionDialog({
             {T("cancel")}
           </Button>
           <Button
-            disabled={busy || !objective.trim() || !squadID || !workspace}
+            disabled={busy || blocked || !objective.trim() || !squadID || !workspace}
             onClick={async () => {
-              if (!workspace) return;
+              if (!workspace || lock.current || blocked) return;
+              lock.current = true;
               const text = objective.trim();
               const title = text.split("\n")[0].slice(0, 80);
               setBusy(true);
+              setBlocked(true);
+              setError("");
               try {
                 const m = await api<Mission>("/v0/missions", {
                   method: "POST",
                   body: JSON.stringify({ workspace_id: workspace.id, title, brief: text, squad_id: squadID }),
                 });
+                if (!m?.id || m.workspace_id !== workspace.id || m.squad_id !== squadID || m.brief !== text) throw new Error(T("journey_invalid_state"));
+                setBlocked(false);
                 setObjective("");
                 onCreated(m);
+              } catch (e) {
+                setError(`${T("journey_inspect_first")} ${e instanceof Error ? e.message : String(e)}`);
               } finally {
+                lock.current = false;
                 setBusy(false);
               }
             }}
@@ -814,6 +826,25 @@ function NewMissionDialog({
         </>
       }
     >
+      {error ? <Alert tone="warning">{error}</Alert> : null}
+      {blocked ? <Button variant="secondary" disabled={busy} onClick={async () => {
+        if (!workspace || lock.current) return;
+        lock.current = true;
+        setBusy(true);
+        try {
+          const catalog = await api<Mission[]>("/v0/missions");
+          const found = catalog.filter(m => m.workspace_id === workspace.id && m.squad_id === squadID && m.brief === objective.trim());
+          setMatches(found);
+          setBlocked(found.length > 0);
+          setError(found.length ? T("journey_created_matches") : T("journey_no_matches"));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          lock.current = false;
+          setBusy(false);
+        }
+      }}>{T("journey_inspect_created")}</Button> : null}
+      {matches.map(m => <Button key={m.id} variant="secondary" onClick={() => onCreated(m)}>{m.title} · {m.id}</Button>)}
       <Field label={T("mission_objective")} hint={T("mission_objective_hint")}>
         <textarea className="mission-brief" rows={5} value={objective} onChange={(e) => setObjective(e.target.value)} />
       </Field>
@@ -836,6 +867,8 @@ function activeMissionMatch(m: Mission, watch: Watch | null) {
 
 function Room({
   mission,
+  refreshVersion,
+  onWatch,
   sessions,
   watch,
   accounts,
@@ -846,6 +879,8 @@ function Room({
   onReview,
 }: {
   mission: Mission | null;
+  refreshVersion: number;
+  onWatch: (watch: Watch | null) => void;
   sessions: Session[];
   watch: Watch | null;
   accounts: Account[];
@@ -858,8 +893,6 @@ function Room({
   const [layout, setLayout] = useState<"list" | "grid" | "terminal">("list");
   const [logTab, setLogTab] = useState("log");
   const [sel, setSel] = useState(0);
-  const [answer, setAnswer] = useState("");
-  const [inject, setInject] = useState(true);
   const live = sessions.find((s) => s.process === "running");
   const shown = live || sessions[0];
   const owns = live?.owner === "web" && live.owner_client === client;
@@ -895,7 +928,6 @@ function Room({
       }));
   const selected = tasks[sel] || tasks[0];
   const stageMarks = (selected?.gates || ["pending", "pending", "pending", "pending"]).map((state) => gateMark(state));
-  const starter = members.find((m) => m.id && m.id === selected?.memberId) || members.find((m) => m.maestro) || members[0];
   const crit = criteria(watch);
   const ev = evidence(watch);
   const integrated = rows.filter((r) => /done|pass|integr/i.test(r.state)).length;
@@ -940,31 +972,6 @@ function Room({
                 {T("stop_session")}
               </Button>
             ) : null}
-            {mission && !live ? (
-              <>
-                <label className="inject-toggle">
-                  <input type="checkbox" checked={inject} onChange={(e) => setInject(e.target.checked)} />
-                  {T("inject_batuta")}
-                </label>
-                <Button
-                  onClick={async () => {
-                    await api("/v0/sessions", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        mission_id: mission.id,
-                        member_id: starter?.id,
-                        owner: "web",
-                        client,
-                        batuta: inject,
-                      }),
-                    });
-                    onRefresh();
-                  }}
-                >
-                  {T("start_selected", { role: starter?.role || T("agent_default") })}
-                </Button>
-              </>
-            ) : null}
           </div>
         }
       >
@@ -983,21 +990,11 @@ function Room({
         <div className="plan-body">
           <div className="caps">{T("mission_objective")}</div>
           <p className="mission-objective">{mission?.brief || mission?.title || "—"}</p>
-          <Stepper
-            steps={[T("plan_understand"), T("plan_decompose"), T("plan_write"), T("plan_approve"), T("plan_execute")]}
-            current={planIndex(watch?.plans) + 1}
-          />
-          {(watch?.plans || []).length === 0 ? <p className="muted">{T("plan_none")}</p> : null}
-          {(watch?.plans || []).map((p) => (
-            <div key={p.name} className="hist-grid">
-              <span className="mono">{p.name}</span>
-              <span>{p.status || "—"}</span>
-              <span className="muted">{p.done ? T("status_done") : T("status_open")}</span>
-            </div>
-          ))}
+          {mission ? <MissionPlanning mission={mission} sessions={sessions} client={client} onRefresh={onRefresh} /> : null}
+          {mission ? <MissionJourney mission={mission} refreshVersion={refreshVersion} onWatch={onWatch} /> : null}
         </div>
       </section>
-      {inject && !skillsRoot && !live ? (
+      {!skillsRoot && !live ? (
         <Alert tone="warning" title={T("skills_missing_title")}>
           {T("skills_missing_body")}
         </Alert>
@@ -1104,28 +1101,6 @@ function Room({
               <dt>{T("last_event")}</dt>
               <dd>{watch?.detail?.last || "—"}</dd>
             </dl>
-            {attn ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 10, background: "var(--surface-sunken)", border: "1px solid var(--border-default)" }}>
-                <div style={{ fontSize: 13 }}>{watch?.attention?.text || attn}</div>
-                <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={T("answer_placeholder")} />
-                <div className="inline-actions">
-                  <Button
-                    size="sm"
-                    disabled={!answer || !mission}
-                    onClick={async () => {
-                      await api("/v0/watch/answer", {
-                        method: "POST",
-                        body: JSON.stringify({ workspace: mission?.workspace_id, task: watch?.attention?.task || selected?.task || "", text: answer }),
-                      });
-                      setAnswer("");
-                      onRefresh();
-                    }}
-                  >
-                    {T("send_answer")}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{T("tokens_not_done")}</div>
           </aside>
         </div>
