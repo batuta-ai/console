@@ -4,6 +4,8 @@
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
 
+**Estado confirmado em2026-10-06:**25 das45 tarefas concluídas;20 pendentes. O usuário aceitou `v0.1.0-beta.1` como a primeira beta publicada do Console, com numeração própria `v0.1.0-beta.N`. O manifesto `beta.0` permanece seed interno não publicado. Destino/visibilidade GitHub ainda não definidos. A infraestrutura da tarefa45 está qualificada localmente; integração de execução nativa21, jornadas completas web/TUI, Windows e qualificação final continuam abertas. O próximo pré-requisito é adotar o módulo público Corebeta49, já publicado e qualificado, para implementar21. A revisão visual permanece posterior ao fechamento funcional.
+
 ## Tasks
 - [x] 1. Fixar o Batuta publicado mais recente e remover checkout irmão — infra/medium
       Scope: go.mod, go.sum, scripts/check-standalone.sh, README.md
