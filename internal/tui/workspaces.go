@@ -137,7 +137,7 @@ func (m model) selectWorkspace(w domain.Workspace) model {
 	return m
 }
 func (m model) workspaceMutation(kind string) (model, tea.Cmd) {
-	if m.catalogBusy() || m.exiting || m.workspace.pending != nil || (m.workspace.uncertain != nil && kind != "view") || m.account.pending != nil || m.api == nil {
+	if m.journeyBusy() || m.catalogBusy() || m.exiting || m.workspace.pending != nil || (m.workspace.uncertain != nil && kind != "view") || m.account.pending != nil || m.api == nil {
 		return m, nil
 	}
 	if kind == "create" {

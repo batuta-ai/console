@@ -98,7 +98,7 @@ func (m *model) newCatalogRequest(kind string) *catalogRequest {
 }
 func (m model) catalogBusy() bool { return m.catalog.pending != nil || m.catalog.uncertain != nil }
 func (m model) catalogMutation(kind string) (model, tea.Cmd) {
-	if m.api == nil || m.exiting || m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.workspace.uncertain != nil {
+	if m.api == nil || m.exiting || m.journeyBusy() || m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.workspace.uncertain != nil {
 		return m, nil
 	}
 	for _, out := range m.catalog.receipts {

@@ -30,6 +30,8 @@ const (
 )
 
 type model struct {
+	journey     journeyFlow
+	journeyIO   *terminalLifetime
 	catalog     catalogFlow
 	catalogIO   *terminalLifetime
 	workspace   workspaceFlow
@@ -164,7 +166,7 @@ func (m model) applyData(msg dataMsg) model {
 			m.workspace.problem = "workspace_read_failed"
 			m.workspace.detail = msg.workspacesErr.Error()
 		}
-		if msg.watchErr == nil && (m.workspace.selected.ID == "" || msg.watchWorkspaceID == m.workspace.selected.ID) {
+		if !m.journeyVisible() && msg.watchErr == nil && (m.workspace.selected.ID == "" || msg.watchWorkspaceID == m.workspace.selected.ID) {
 			m.watch = msg.watch
 		}
 		if msg.watchErr != nil {
@@ -184,16 +186,21 @@ func (m model) applyData(msg dataMsg) model {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	current := next.(model)
+	if (m.journeyVisible() && !current.journeyVisible()) || m.missionID != current.missionID || m.roomMission().WorkspaceID != current.roomMission().WorkspaceID {
+		cmd = tea.Batch(cmd, current.cancelJourney())
+	}
 	if (current.screen != m.screen || current.workspace.selected.ID != m.workspace.selected.ID) && current.catalog.epoch == m.catalog.epoch {
 		current.catalog.epoch++
 		current.catalog.validation = nil
 		return current, tea.Batch(cmd, current.cancelCatalogRequests())
 	}
-	return next, cmd
+	return current, cmd
 }
 
 func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case journeyResult:
+		return m.applyJourney(msg)
 	case catalogReadStart:
 		return m, m.readCatalog()
 	case catalogResult:
@@ -213,6 +220,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case accountResult:
 		return m.applyAccountResult(msg)
 	case accountJoined:
+		if msg.journey != nil {
+			m, _ = m.applyJourney(*msg.journey)
+		}
 		for _, result := range msg.catalog {
 			m, _ = m.applyCatalogResult(result)
 		}
@@ -240,6 +250,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.accountIO = &terminalLifetime{}
 		m.workspaceIO = &terminalLifetime{}
 		m.catalogIO = &terminalLifetime{}
+		m.journeyIO = &terminalLifetime{}
 		m.link = nil
 		m.termFrame.disconnected = true
 		m.termFrame.owned = false
@@ -257,7 +268,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyData(msg)
 	case tickMsg:
 		read := m.readAccounts()
-		return m, tea.Batch(m.refresh(), read, m.readCatalog(), m.tick())
+		return m, tea.Batch(m.refresh(), read, m.readCatalog(), m.readJourney("refresh"), m.tick())
 	case statusMsg:
 		m.validMsg = string(msg)
 	case attachedMsg:
@@ -299,6 +310,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitPTY()
 	case tea.PasteMsg:
+		if !m.termMode && m.journeyVisible() && m.journeyRecord().mode != "" {
+			return m.editJourney(msg.Content, false), nil
+		}
 		if !m.termMode && (m.screen == scrEditor || m.screen == scrMissionForm) {
 			return m.editCatalogText(msg.Content, false), nil
 		}
@@ -341,6 +355,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.link.offer(terminalAction{key: &msg})
 			}
 			return m, nil
+		}
+		if m.journeyVisible() {
+			if next, cmd, handled := m.updateJourney(msg); handled {
+				return next, cmd
+			}
 		}
 		if m.screen == scrEditor {
 			return m.updateEditor(msg)
@@ -665,6 +684,9 @@ func (m model) viewMissions(b *strings.Builder) {
 
 func (m model) viewRoom(b *strings.Builder) {
 	m.viewMissionIdentity(b)
+	if m.viewJourney(b) {
+		return
+	}
 	title := i18n.T("room")
 	if msn := m.roomMission(); msn.ID != "" {
 		title = msn.Title
@@ -679,6 +701,9 @@ func (m model) viewRoom(b *strings.Builder) {
 		}
 	}
 	sess := m.roomSession()
+	if sess != nil && sess.MissionID != m.missionID {
+		fmt.Fprintln(b, i18n.T("journey_unrelated"), sess.ID, sess.MissionID)
+	}
 	fmt.Fprintf(b, "\n%s\n", title)
 	if line := m.watch.AttentionLine(); line != "" {
 		fmt.Fprintf(b, "%s  %s\n", i18n.T("needs_you"), line)
@@ -808,6 +833,9 @@ func (m model) viewActivity(b *strings.Builder) {
 }
 
 func (m model) viewReview(b *strings.Builder) {
+	if m.viewJourney(b) {
+		return
+	}
 	fmt.Fprintf(b, "\n%s\n", i18n.T("review"))
 	if m.watch.Available {
 		fmt.Fprintf(b, "delivery %s\n", m.watch.Delivery)

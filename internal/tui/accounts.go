@@ -107,7 +107,7 @@ func (m *model) inspectAccounts() tea.Cmd {
 }
 
 func (m model) accountMutation(kind string) (model, tea.Cmd) {
-	if m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.exiting {
+	if m.journeyBusy() || m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.exiting {
 		return m, nil
 	}
 	if kind == "create" && strings.TrimSpace(m.account.label) == "" {
@@ -450,6 +450,7 @@ func (m *model) cancelAccountRequests() tea.Cmd {
 }
 
 type accountJoined struct {
+	journey    *journeyResult
 	catalog    []catalogResult
 	workspaces []workspaceResult
 	results    []accountResult
@@ -460,6 +461,8 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 	if m.exiting {
 		return m, nil
 	}
+	journeyJoin := m.cancelJourney()
+	journeyIO := m.journeyIO
 	m.account.epoch++
 	m.catalog.epoch++
 	catalogJoin := m.cancelCatalogRequests()
@@ -473,6 +476,7 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 	workspaceIO := m.workspaceIO
 	return m, func() tea.Msg {
 		io.close()
+		journeyIO.close()
 		catalogIO.close()
 		workspaceIO.close()
 		out := accountJoined{}
@@ -484,6 +488,10 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 		}
 		if catalogJoin != nil {
 			out.catalog = catalogJoin().(catalogJoined).results
+		}
+		if journeyJoin != nil {
+			result := journeyJoin().(journeyResult)
+			out.journey = &result
 		}
 		out.exit = terminalExit()
 		return out

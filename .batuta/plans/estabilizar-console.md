@@ -134,7 +134,7 @@
       Depends on: 12, 18, 27, 30, 31
       Scope: internal/tui/**, internal/i18n/**, internal/client/*_test.go
       Accept: Editor configura membros/contas/model/effort necessários e cria missão com objetivo real no workspace escolhido → go test ./internal/tui ./internal/i18n ./internal/client -count=1; Validação, pending e erro preservam dados sem duplicar missão, e seleção entre missões mantém a identidade correta
-- [ ] 33. Completar aprovação, execução, perguntas e retomada na TUI — frontend/high
+- [x] 33. Completar aprovação, execução, perguntas e retomada na TUI — frontend/high
       Depends on: 19, 20, 21, 23, 27, 29, 31, 32
       Scope: internal/tui/**, internal/i18n/**, internal/client/*_test.go
       Accept: TUI lê e aprova plano exato, executa, responde delivery/question_id corretos, retoma e mostra gates/evidências de duas missões sem mistura → go test ./internal/tui ./internal/i18n ./internal/client -count=1; Journal externo, restart do daemon e reconexão restauram progresso, preservam seleção e recusam resposta atrasada
