@@ -1,0 +1,67 @@
+--- a/internal/terminalengine/ansi.go
++++ b/internal/terminalengine/ansi.go
+@@ -1 +1 @@
+-package portalis
++package terminalengine
+--- a/internal/terminalengine/screen.go
++++ b/internal/terminalengine/screen.go
+@@ -1 +1 @@
+-package portalis
++package terminalengine
+@@ -58,0 +59,2 @@
++	savedCursorAlt          bool
++	savedCursorDiscarded    bool
+@@ -531,0 +534,2 @@
++	s.savedCursorAlt = false
++	s.savedCursorDiscarded = false
+@@ -727 +731 @@
+-func (s *Screen) resize(rows, cols int) {
++func (s *Screen) resize(rows, cols int) int {
+@@ -731,0 +736 @@
++	mainTrim := activeTrim
+@@ -733,0 +739 @@
++		mainTrim = savedTrim
+@@ -746,0 +753,10 @@
++	savedTrim := mainTrim
++	if s.savedCursorAlt {
++		savedTrim = activeTrim
++	}
++	if s.savedCursorDiscarded {
++		// A later alternate grid cannot revive a discarded saved-cursor buffer.
++		savedTrim = 0
++	}
++	s.savedCursor.Row -= savedTrim
++	s.savedCursor = clampCursorToSize(s.savedCursor, rows, cols)
+@@ -771,0 +788 @@
++	return mainTrim
+@@ -817,0 +835,5 @@
++	_, err := s.resizeChecked(rows, cols)
++	return err
++}
++
++func (s *Screen) resizeChecked(rows, cols int) (int, error) {
+@@ -819 +841 @@
+-		return err
++		return 0, err
+@@ -822,3 +844,3 @@
+-		return nil
+-	}
+-	s.resize(rows, cols)
++		return 0, nil
++	}
++	mainTrim := s.resize(rows, cols)
+@@ -826 +848 @@
+-	return nil
++	return mainTrim, nil
+@@ -1569,0 +1592,2 @@
++	s.savedCursorAlt = s.altScreen
++	s.savedCursorDiscarded = false
+@@ -1628,0 +1653,3 @@
++	if s.savedCursorAlt {
++		s.savedCursorDiscarded = true
++	}
+--- a/internal/terminalengine/terminal_size.go
++++ b/internal/terminalengine/terminal_size.go
+@@ -1 +1 @@
+-package portalis
++package terminalengine

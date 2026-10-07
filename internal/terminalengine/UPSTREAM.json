@@ -1,0 +1,41 @@
+{
+  "module": "github.com/starframe-dev/portalis",
+  "version": "v0.1.0",
+  "commit": "4d6e28d0f8f02fe1947f5e3efc6429138ffb5818",
+  "license": "MIT",
+  "upstream_sha256": {
+    "ansi.go": "587cdf6ac33f0443e322ca452078ffcc601e17c31cd4c6f368864ae37bb97df2",
+    "screen.go": "081ae0e0a09415cd945382210079ead2033d453f7f05b668f41110461e250366",
+    "terminal_size.go": "7b1437d4f2105af1d390974066523d7f231a119242e5825b1bca5547077ccaf2",
+    "ansi_test.go": "3f6e780e35ae7ad18a70acfdb173355d622ec272dc6b9624bfa7f3bca624ca54",
+    "screen_test.go": "7945743abbfa26d39cbd5099e24e8ea2c96c6a230af0dd71d54da1b15eb794da",
+    "LICENSE": "97e4964384db28c359be6ae336b7f5758224148808de186f45a9aca8eeb76e86",
+    "clipboard.go": "8afe19c02e8b64ad05396bfa1673e756fbb6527549268497d0df38f078741859"
+  },
+  "copied_source": [
+    "ansi.go",
+    "screen.go",
+    "terminal_size.go"
+  ],
+  "copied_tests": [
+    "ansi_test.go",
+    "screen_test.go"
+  ],
+  "extracted_constants": {
+    "clipboard.go": [
+      "maxClipboardBytes",
+      "maxClipboardCells"
+    ]
+  },
+  "mechanical_change": "package portalis renamed to terminalengine",
+  "behavior_patch": "Actual screen main crop offset propagates through Parser.ResizeChecked to savedDEC1049 coordinates. Screen rebases DECSC/1048 coordinates by their saved-buffer crop; discardedalternategrid receives clamp-only. Non-resize feed unchanged; all attached-parser resizes use Parser.ResizeChecked.",
+  "derived_source_sha256": {
+    "ansi.go": "a3b34f32477b49459594d7a21b3fa9dff09effd4244c9cd6c0d8cd9807e8cd7b",
+    "screen.go": "020017ec5fb31351ebbfb49d897fed914419cc0492c757a8c90727698fbc0375",
+    "terminal_size.go": "5ba1e832687a128c6ece2d9f8cb0f8fc72c5826690a3965baefe400b1e42ef4b",
+    "selection_limits.go": "d0b4eb62bf95fa8c765a4e16289202b8d8896670cd3243de275d0f476056649e",
+    "resize_console.go": "f2aea5e6972ddb51d002b30caafbfc8eeb0011b58476d4f05db28827cfaf5704"
+  },
+  "patch_sha256": "251828a8d97f49a149db7ca5d76cff7a929900f3aecf836fa419458d414492fc",
+  "patch_format": "Zero-context unified diff; apply with --unidiff-zero against exact recorded upstream source."
+}
