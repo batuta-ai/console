@@ -30,6 +30,8 @@ const (
 )
 
 type model struct {
+	catalog     catalogFlow
+	catalogIO   *terminalLifetime
 	workspace   workspaceFlow
 	workspaceIO *terminalLifetime
 
@@ -65,7 +67,7 @@ type model struct {
 }
 
 func New(api *client.Client) tea.Model {
-	m := model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}, accountIO: &terminalLifetime{}, workspaceIO: &terminalLifetime{}}
+	m := model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}, accountIO: &terminalLifetime{}, workspaceIO: &terminalLifetime{}, catalogIO: &terminalLifetime{}}
 	m.readAccounts()
 	m.refresh()
 	return m
@@ -76,7 +78,7 @@ func (m model) Init() tea.Cmd {
 	if m.account.read != nil {
 		read = m.account.read.run
 	}
-	return tea.Batch(m.refresh(), read, m.tick())
+	return tea.Batch(m.refresh(), read, func() tea.Msg { return catalogReadStart{} }, m.tick())
 }
 
 func (m model) tick() tea.Cmd {
@@ -98,15 +100,13 @@ func (m *model) refresh() tea.Cmd {
 		previous.cancel()
 	}
 	r := m.newWorkspaceRequest("refresh")
-	api, missionID, accountRevision := m.api, m.missionID, m.account.revision
+	api, missionWorkspaceID, accountRevision := m.api, m.roomMission().WorkspaceID, m.account.revision
 	r.execute = func(ctx context.Context) workspaceResult {
 		if previous != nil {
 			previous.run()
 		}
 		msg := dataMsg{workspaceRead: true, workspaceEpoch: r.epoch, workspaceRevision: r.revision, accountRevision: accountRevision}
 		msg.ws, msg.workspacesErr = api.ListWorkspaces(ctx)
-		msg.missions, _ = api.ListMissions(ctx, "")
-		msg.squads, _ = api.ListSquads(ctx)
 		msg.activity, _ = api.Activity(ctx)
 		msg.sessions, msg.sessionsErr = api.ListSessions(ctx)
 		msg.limits, _ = api.Limits(ctx)
@@ -115,11 +115,8 @@ func (m *model) refresh() tea.Cmd {
 			if len(msg.ws) > 0 {
 				wsID = msg.ws[0].ID
 			}
-			for _, msn := range msg.missions {
-				if msn.ID == missionID && msn.WorkspaceID != "" {
-					wsID = msn.WorkspaceID
-					break
-				}
+			if missionWorkspaceID != "" {
+				wsID = missionWorkspaceID
 			}
 		}
 		if wsID != "" {
@@ -141,8 +138,6 @@ type dataMsg struct {
 	sessionsErr     error
 	accountRevision uint64
 	ws              []domain.Workspace
-	missions        []domain.Mission
-	squads          []domain.Squad
 	activity        []domain.Event
 	sessions        []domain.Session
 	limits          []domain.LimitSnapshot
@@ -152,7 +147,7 @@ type dataMsg struct {
 type statusMsg string
 
 func (m model) applyData(msg dataMsg) model {
-	m.missions, m.squads, m.activity = msg.missions, msg.squads, msg.activity
+	m.activity = msg.activity
 	m.limits = msg.limits
 	if msg.workspaceRead && msg.workspaceEpoch == m.workspace.epoch && msg.workspaceRevision == m.workspace.revision && !m.exiting {
 		if msg.workspacesErr == nil {
@@ -186,13 +181,28 @@ func (m model) applyData(msg dataMsg) model {
 	return m
 }
 
-type createdMsg struct {
-	q    domain.Squad
-	data dataMsg
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	current := next.(model)
+	if (current.screen != m.screen || current.workspace.selected.ID != m.workspace.selected.ID) && current.catalog.epoch == m.catalog.epoch {
+		current.catalog.epoch++
+		current.catalog.validation = nil
+		return current, tea.Batch(cmd, current.cancelCatalogRequests())
+	}
+	return next, cmd
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case catalogReadStart:
+		return m, m.readCatalog()
+	case catalogResult:
+		return m.applyCatalogResult(msg)
+	case catalogJoined:
+		for _, result := range msg.results {
+			m, _ = m.applyCatalogResult(result)
+		}
+		return m, nil
 	case workspaceResult:
 		return m.applyWorkspaceResult(msg)
 	case workspaceJoined:
@@ -203,6 +213,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case accountResult:
 		return m.applyAccountResult(msg)
 	case accountJoined:
+		for _, result := range msg.catalog {
+			m, _ = m.applyCatalogResult(result)
+		}
 		for _, result := range msg.results {
 			m, _ = m.applyAccountResult(result)
 		}
@@ -226,6 +239,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lifetime = &terminalLifetime{}
 		m.accountIO = &terminalLifetime{}
 		m.workspaceIO = &terminalLifetime{}
+		m.catalogIO = &terminalLifetime{}
 		m.link = nil
 		m.termFrame.disconnected = true
 		m.termFrame.owned = false
@@ -243,13 +257,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyData(msg)
 	case tickMsg:
 		read := m.readAccounts()
-		return m, tea.Batch(m.refresh(), read, m.tick())
+		return m, tea.Batch(m.refresh(), read, m.readCatalog(), m.tick())
 	case statusMsg:
 		m.validMsg = string(msg)
-	case createdMsg:
-		m = m.applyData(msg.data)
-		m.editor, m.editIdx, m.validMsg = msg.q, 0, ""
-		m.screen = scrEditor
 	case attachedMsg:
 		if m.exiting || msg.id != m.sessID || msg.clientID != m.clientID || msg.generation != m.generation {
 			if msg.link != nil {
@@ -289,6 +299,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitPTY()
 	case tea.PasteMsg:
+		if !m.termMode && (m.screen == scrEditor || m.screen == scrMissionForm) {
+			return m.editCatalogText(msg.Content, false), nil
+		}
 		if !m.termMode && m.screen == scrWorkspace && (m.workspace.form || m.workspace.draft.editing) && m.workspace.pending == nil && m.workspace.uncertain == nil {
 			return m.editWorkspaceText(msg.Content, false), nil
 		}
@@ -318,17 +331,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.termMode = false
 				return m, m.detach()
 			}
-			if m.screen == scrEditor {
-				m.screen, m.cursor, m.validMsg = scrSquads, 0, ""
-				return m, nil
-			}
 		case "esc":
 			if m.termMode {
 				return m, m.sendPTY("\x1b")
-			}
-			if m.screen == scrEditor {
-				m.screen, m.cursor, m.validMsg = scrSquads, 0, ""
-				return m, nil
 			}
 		}
 		if m.termMode {
@@ -339,6 +344,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.screen == scrEditor {
 			return m.updateEditor(msg)
+		}
+		if m.screen == scrMissionForm {
+			return m.updateMissionForm(msg)
+		}
+		if msg.String() == "ctrl+f" {
+			return m, m.inspectCatalog()
+		}
+		if msg.String() == "ctrl+d" {
+			return m.acknowledgeCatalog(), nil
 		}
 		if m.screen == scrWorkspace {
 			return m.updateWorkspace(msg)
@@ -470,109 +484,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == scrHome || m.screen == scrAccounts {
 				return m.startAccountForm(), nil
 			}
+			if m.screen == scrMissions {
+				return m.startMission(), m.cancelCatalogRequests()
+			}
 			if m.screen == scrSquads {
-				return m, m.createSquad()
+				return m.startSquad(domain.Squad{}), m.cancelCatalogRequests()
 			}
 		}
-		if previousScreen == scrWorkspaces && m.screen != scrWorkspaces {
-			m.workspace.epoch++
-			return m, m.cancelWorkspaceRequests()
-		}
-		if previousScreen == scrAccounts && m.screen != scrAccounts && m.screen != scrAccount {
-			m.account.epoch++
-			return m, m.cancelAccountRequests()
+		if previousScreen != m.screen {
+			m.catalog.epoch++
+			m.catalog.validation = nil
+			catalogJoin := m.cancelCatalogRequests()
+			if previousScreen == scrAccounts && m.screen != scrAccount {
+				m.account.epoch++
+				return m, tea.Batch(catalogJoin, m.cancelAccountRequests())
+			}
+			if previousScreen == scrWorkspaces {
+				m.workspace.epoch++
+				return m, tea.Batch(catalogJoin, m.cancelWorkspaceRequests())
+			}
+			if m.screen == scrRoom {
+				return m, tea.Batch(catalogJoin, m.cancelWorkspaceRequests())
+			}
+			return m, catalogJoin
 		}
 	}
 	return m, nil
-}
-
-func (m model) updateEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "q":
-		return m.exitAccountWork(false)
-	case "down":
-		if m.editIdx < len(m.editor.Members)-1 {
-			m.editIdx++
-		}
-	case "up":
-		if m.editIdx > 0 {
-			m.editIdx--
-		}
-	case "n":
-		acct := ""
-		if len(m.accounts) > 0 {
-			acct = m.accounts[0].ID
-		}
-		m.editor.Members = append(m.editor.Members, domain.Member{
-			Role: "Member", CLI: "codex", AccountID: acct, Maestro: len(m.editor.Members) == 0,
-		})
-		m.editIdx = len(m.editor.Members) - 1
-		m.validMsg = ""
-	case "x":
-		if m.editIdx >= 0 && m.editIdx < len(m.editor.Members) {
-			m.editor.Members = append(m.editor.Members[:m.editIdx], m.editor.Members[m.editIdx+1:]...)
-			if m.editIdx >= len(m.editor.Members) && m.editIdx > 0 {
-				m.editIdx--
-			}
-		}
-		m.validMsg = ""
-	case "m":
-		for i := range m.editor.Members {
-			m.editor.Members[i].Maestro = i == m.editIdx
-		}
-		m.validMsg = ""
-	case "v":
-		return m, m.validateEditor()
-	case "s":
-		return m, m.saveEditor()
-	}
-	return m, nil
-}
-
-func (m model) validateEditor() tea.Cmd {
-	ed := m.editor
-	return func() tea.Msg {
-		id := ed.ID
-		if id == "" {
-			id = "draft"
-		}
-		var out struct {
-			Validation domain.Validation `json:"validation"`
-		}
-		if err := m.api.Post("/v0/squads/"+id+"/validate", ed, &out); err != nil {
-			return statusMsg(err.Error())
-		}
-		return statusMsg(out.Validation.Title + ". " + out.Validation.Text)
-	}
-}
-
-func (m model) saveEditor() tea.Cmd {
-	ed := m.editor
-	return func() tea.Msg {
-		var q domain.Squad
-		if err := m.api.Post("/v0/squads", ed, &q); err != nil {
-			return statusMsg(err.Error())
-		}
-		return statusMsg("saved v" + fmt.Sprint(q.Version) + " — catalog write, no model")
-	}
-}
-
-func (m model) createSquad() tea.Cmd {
-	return func() tea.Msg {
-		var q domain.Squad
-		if err := m.api.Post("/v0/squads", map[string]any{"name": "New squad", "members": []any{}}, &q); err != nil {
-			return statusMsg(err.Error())
-		}
-		var msg dataMsg
-		_ = m.api.Get("/v0/workspaces", &msg.ws)
-		_ = m.api.Get("/v0/missions", &msg.missions)
-		_ = m.api.Get("/v0/squads", &msg.squads)
-		_ = m.api.Get("/v0/activity", &msg.activity)
-		msg.sessionsErr = m.api.Get("/v0/sessions", &msg.sessions)
-		msg.accountRevision = m.account.revision
-		_ = m.api.Get("/v0/limits", &msg.limits)
-		return createdMsg{q: q, data: msg}
-	}
 }
 
 func (m model) open() model {
@@ -587,15 +524,12 @@ func (m model) open() model {
 		}
 		m.screen = scrMissions
 	case scrMissions:
-		if m.cursor < len(m.missions) {
-			m.missionID = m.missions[m.cursor].ID
+		if m.cursor >= 0 && m.cursor < len(m.missions) {
+			return m.selectMission(m.missions[m.cursor])
 		}
-		m.screen = scrRoom
 	case scrSquads:
-		if m.cursor < len(m.squads) {
-			m.editor = m.squads[m.cursor]
-			m.editIdx, m.validMsg = 0, ""
-			m.screen = scrEditor
+		if m.cursor >= 0 && m.cursor < len(m.squads) {
+			return m.startSquad(m.squads[m.cursor])
 		}
 	case scrAccounts:
 		if m.cursor >= 0 && m.cursor < len(m.accounts) {
@@ -636,6 +570,8 @@ func (m model) render() string {
 		m.viewSquads(&b)
 	case scrEditor:
 		m.viewEditor(&b)
+	case scrMissionForm:
+		m.viewMissionForm(&b)
 	case scrAccounts:
 		m.viewAccounts(&b)
 	case scrAccount:
@@ -645,6 +581,7 @@ func (m model) render() string {
 	case scrReview:
 		m.viewReview(&b)
 	}
+	m.viewCatalogNotice(&b)
 	m.viewAccountNotice(&b)
 	m.viewWorkspaceNotice(&b)
 	panel := asciiFold(b.String())
@@ -679,7 +616,11 @@ func (m model) render() string {
 	} else if m.screen == scrAccount || m.screen == scrAccounts {
 		fmt.Fprintln(&b, m.accountKeys())
 	} else if m.screen == scrEditor {
-		fmt.Fprintln(&b, "n add  x remove  m maestro  v validate  s save  esc back")
+		fmt.Fprintln(&b, i18n.T("catalog_editor_keys"))
+	} else if m.screen == scrMissionForm {
+		fmt.Fprintln(&b, i18n.T("catalog_mission_keys"))
+	} else if m.screen == scrSquads || m.screen == scrMissions {
+		fmt.Fprintln(&b, i18n.T("catalog_list_keys"))
 	} else {
 		fmt.Fprintln(&b, i18n.T("keys"))
 	}
@@ -715,7 +656,7 @@ func (m model) viewMissions(b *strings.Builder) {
 		if i == m.cursor {
 			mark = "> "
 		}
-		fmt.Fprintf(b, "%s%-20s %-12s %s\n", mark, clip(msn.Title, 20), clip(msn.SquadSnapshot.Name, 12), msn.Status)
+		fmt.Fprintf(b, "%s%-20s %-12s %s\n", mark, clip(msn.Title, 20), clip(msn.SquadSnapshot.Name, 12), msn.Status+"  "+msn.ID+"  "+msn.WorkspaceID)
 	}
 	if len(m.missions) == 0 {
 		fmt.Fprintln(b, "  no missions")
@@ -723,12 +664,10 @@ func (m model) viewMissions(b *strings.Builder) {
 }
 
 func (m model) viewRoom(b *strings.Builder) {
+	m.viewMissionIdentity(b)
 	title := i18n.T("room")
-	for _, msn := range m.missions {
-		if msn.ID == m.missionID {
-			title = msn.Title
-			break
-		}
+	if msn := m.roomMission(); msn.ID != "" {
+		title = msn.Title
 	}
 	for _, candidate := range m.sessions {
 		if m.missionID == "" || candidate.MissionID == m.missionID {
@@ -763,13 +702,8 @@ func (m model) viewRoom(b *strings.Builder) {
 	rows := m.watch.TaskRows()
 	if len(rows) == 0 {
 		fmt.Fprintln(b, "  no journal tasks")
-		for _, msn := range m.missions {
-			if msn.ID != m.missionID {
-				continue
-			}
-			for _, mb := range msn.SquadSnapshot.Members {
-				fmt.Fprintf(b, "  %-18s %-11s %s\n", clip(mb.Role, 18), mb.CLI, mb.AccountID)
-			}
+		for _, mb := range m.roomMission().SquadSnapshot.Members {
+			fmt.Fprintf(b, "  %-18s %-11s %s\n", clip(mb.Role, 18), mb.CLI, mb.AccountID)
 		}
 	}
 	for _, r := range rows {
@@ -808,30 +742,7 @@ func (m model) viewSquads(b *strings.Builder) {
 		if !q.Draft {
 			state = fmt.Sprintf("v%d", q.Version)
 		}
-		fmt.Fprintf(b, "%s%-20s %s  %d members\n", mark, clip(q.Name, 20), state, len(q.Members))
-	}
-}
-
-func (m model) viewEditor(b *strings.Builder) {
-	fmt.Fprintf(b, "\nSQUAD EDITOR  %s  v%d\n", m.editor.Name, m.editor.Version)
-	fmt.Fprintf(b, "%s\n", m.editor.Purpose)
-	fmt.Fprintln(b, "ROLE                 CLI          ACCOUNT              MAESTRO")
-	if len(m.editor.Members) == 0 {
-		fmt.Fprintln(b, "  no members yet")
-	}
-	for i, mb := range m.editor.Members {
-		mark := "  "
-		if i == m.editIdx {
-			mark = "> "
-		}
-		ms := "no"
-		if mb.Maestro {
-			ms = "yes"
-		}
-		fmt.Fprintf(b, "%s%-20s %-12s %-20s %s\n", mark, clip(mb.Role, 20), clip(mb.CLI, 12), clip(mb.AccountID, 20), ms)
-	}
-	if m.validMsg != "" {
-		fmt.Fprintf(b, "\n%s\n", m.validMsg)
+		fmt.Fprintf(b, "%s%-20s %s  %d members\n", mark, clip(q.Name, 20)+"  "+q.ID, state, len(q.Members))
 	}
 }
 
@@ -950,6 +861,10 @@ func Run(api *client.Client) error {
 		}
 		defer m.accountIO.close()
 		defer m.workspaceIO.close()
+		defer m.catalogIO.close()
+		if read := m.readCatalog(); read != nil {
+			m, _ = m.applyCatalogResult(read().(catalogResult))
+		}
 		msg := m.refresh()()
 		if result, ok := msg.(workspaceResult); ok {
 			m, _ = m.applyWorkspaceResult(result)
@@ -964,6 +879,7 @@ func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 	defer m.lifetime.close()
 	defer m.accountIO.close()
 	defer m.workspaceIO.close()
+	defer m.catalogIO.close()
 	options = append(options, tea.WithoutSignalHandler(), tea.WithFilter(func(current tea.Model, msg tea.Msg) tea.Msg {
 		state := current.(model)
 		switch msg.(type) {
@@ -997,6 +913,7 @@ func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 		current.lifetime.close()
 		current.accountIO.close()
 		current.workspaceIO.close()
+		current.catalogIO.close()
 	}
 	return err
 }

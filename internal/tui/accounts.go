@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -106,7 +107,7 @@ func (m *model) inspectAccounts() tea.Cmd {
 }
 
 func (m model) accountMutation(kind string) (model, tea.Cmd) {
-	if m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.exiting {
+	if m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.exiting {
 		return m, nil
 	}
 	if kind == "create" && strings.TrimSpace(m.account.label) == "" {
@@ -125,6 +126,7 @@ func (m model) accountMutation(kind string) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.account.revision++
+	m.catalog.validation = nil
 	if m.account.read != nil {
 		m.account.read.cancel()
 	}
@@ -234,6 +236,12 @@ func (m model) applyAccountResult(out accountResult) (model, tea.Cmd) {
 		if out.err != nil {
 			m.account.problem = "account_read_failed"
 			return m, nil
+		}
+		if !reflect.DeepEqual(m.accounts, out.accounts) {
+			m.catalog.validation = nil
+			if m.catalog.pending != nil && m.catalog.pending.kind == "validate" {
+				m.catalog.revision++
+			}
 		}
 		m.accounts = out.accounts
 		m.updateWorkspaceAccount(out.accounts)
@@ -442,6 +450,7 @@ func (m *model) cancelAccountRequests() tea.Cmd {
 }
 
 type accountJoined struct {
+	catalog    []catalogResult
 	workspaces []workspaceResult
 	results    []accountResult
 	exit       tea.Msg
@@ -452,6 +461,9 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.account.epoch++
+	m.catalog.epoch++
+	catalogJoin := m.cancelCatalogRequests()
+	catalogIO := m.catalogIO
 	m.workspace.epoch++
 	workspaceJoin := m.cancelWorkspaceRequests()
 	join := m.cancelAccountRequests()
@@ -461,6 +473,7 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 	workspaceIO := m.workspaceIO
 	return m, func() tea.Msg {
 		io.close()
+		catalogIO.close()
 		workspaceIO.close()
 		out := accountJoined{}
 		if join != nil {
@@ -468,6 +481,9 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 		}
 		if workspaceJoin != nil {
 			out.workspaces = workspaceJoin().(workspaceJoined).results
+		}
+		if catalogJoin != nil {
+			out.catalog = catalogJoin().(catalogJoined).results
 		}
 		out.exit = terminalExit()
 		return out
@@ -565,12 +581,14 @@ func (m model) viewAccountNotice(b *strings.Builder) {
 	}
 	if r := m.account.uncertain; r != nil {
 		fmt.Fprintf(b, "%s: %s %s %s %s\n", i18n.T("account_possible_effect"), i18n.T("account_action_"+r.kind), r.account.ID, r.label, r.adapter)
-		if m.screen == scrWorkspace || m.screen == scrWorkspaces {
+		if m.screen == scrEditor || m.screen == scrMissionForm {
+			fmt.Fprintln(b, i18n.T("catalog_external_recovery"))
+		} else if m.screen == scrWorkspace || m.screen == scrWorkspaces {
 			fmt.Fprintln(b, i18n.T("workspace_account_recovery"))
 		} else {
 			fmt.Fprintln(b, i18n.T("account_inspect"))
 		}
-		if m.account.inspected && m.screen != scrWorkspace && m.screen != scrWorkspaces {
+		if m.account.inspected && m.screen != scrWorkspace && m.screen != scrWorkspaces && m.screen != scrEditor && m.screen != scrMissionForm {
 			fmt.Fprintln(b, i18n.T("account_acknowledge"))
 		}
 	}

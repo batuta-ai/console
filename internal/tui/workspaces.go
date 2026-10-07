@@ -137,7 +137,7 @@ func (m model) selectWorkspace(w domain.Workspace) model {
 	return m
 }
 func (m model) workspaceMutation(kind string) (model, tea.Cmd) {
-	if m.exiting || m.workspace.pending != nil || (m.workspace.uncertain != nil && kind != "view") || m.account.pending != nil || m.api == nil {
+	if m.catalogBusy() || m.exiting || m.workspace.pending != nil || (m.workspace.uncertain != nil && kind != "view") || m.account.pending != nil || m.api == nil {
 		return m, nil
 	}
 	if kind == "create" {
@@ -690,12 +690,14 @@ func (m model) viewWorkspaceNotice(b *strings.Builder) {
 			fmt.Fprintf(b, "%s: %s  %s  %s  %s\n", i18n.T("workspace_unverified_reply"), r.result.session.ID, r.result.session.WorkspaceID, r.result.session.AccountID, r.result.session.Adapter)
 		}
 
-		if m.screen == scrWorkspace && (m.workspace.form || m.workspace.draft.editing) {
+		if m.screen == scrEditor || m.screen == scrMissionForm {
+			fmt.Fprintln(b, i18n.T("catalog_external_recovery"))
+		} else if m.screen == scrWorkspace && (m.workspace.form || m.workspace.draft.editing) {
 			fmt.Fprintln(b, i18n.T("workspace_inspect_from_form"))
 		} else {
 			fmt.Fprintln(b, i18n.T("workspace_inspect"))
 		}
-		if m.workspace.inspected && !m.workspace.form && !m.workspace.draft.editing {
+		if m.workspace.inspected && !m.workspace.form && !m.workspace.draft.editing && m.screen != scrEditor && m.screen != scrMissionForm {
 			fmt.Fprintln(b, i18n.T("workspace_acknowledge"))
 		}
 	}
