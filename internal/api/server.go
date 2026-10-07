@@ -476,57 +476,218 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 		return
 	}
+	var offered []string
+	for _, header := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, value := range strings.Split(header, ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				offered = append(offered, value)
+			}
+		}
+	}
+	v1 := false
+	for _, protocol := range offered {
+		if protocol == session.TerminalProtocol {
+			v1 = true
+		}
+	}
+	if len(offered) > 0 && !v1 {
+		writeErr(w, http.StatusBadRequest, "unsupported_terminal_protocol", "unsupported terminal protocol")
+		return
+	}
 	id := r.PathValue("id")
 	client := r.URL.Query().Get("client")
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"127.0.0.1:*", "localhost:*"}})
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"127.0.0.1:*", "localhost:*"}, Subprotocols: []string{session.TerminalProtocol}})
 	if err != nil {
 		return
 	}
-	defer c.Close(websocket.StatusNormalClosure, "")
-	outCh := make(chan []byte, 32)
-	unsub, err := s.Svc.Session.Subscribe(id, func(b []byte) {
-		select {
-		case outCh <- append([]byte(nil), b...):
-		default:
-		}
-	})
+	defer c.CloseNow()
+	c.SetReadLimit(session.TerminalMessageLimit)
+	sub, err := s.Svc.Session.SubscribeTerminal(id)
 	if err != nil {
+		_ = c.Close(websocket.StatusNormalClosure, "")
 		return
 	}
-	defer unsub()
+	defer sub.Close()
+	if err = s.Svc.Session.TerminalInputCapability(id); err != nil {
+		_ = c.Close(websocket.StatusInternalError, "terminal_input_unsupported")
+		return
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	inputs := make(chan *session.TerminalInput, 256)
+	results := make(chan error, 3)
+	var joined sync.WaitGroup
+	joined.Add(3)
 	go func() {
+		defer joined.Done()
+		defer close(inputs)
+		results <- s.readTerminal(ctx, c, id, client, v1, inputs)
+	}()
+	go func() { defer joined.Done(); results <- writeTerminalOutput(ctx, c, sub, v1) }()
+	go func() {
+		defer joined.Done()
 		for {
 			select {
-			case <-r.Context().Done():
+			case <-ctx.Done():
+				results <- ctx.Err()
 				return
-			case b, ok := <-outCh:
+			case input, ok := <-inputs:
 				if !ok {
+					results <- io.EOF
 					return
 				}
-				if err := c.Write(r.Context(), websocket.MessageBinary, b); err != nil {
+				if err := input.Write(ctx); err != nil && !errors.Is(err, os.ErrPermission) {
+					results <- err
 					return
 				}
 			}
 		}
 	}()
+	select {
+	case <-sub.Failed():
+		err = websocket.CloseError{Code: websocket.StatusTryAgainLater, Reason: "terminal_output_overflow"}
+	case err = <-results:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	var closeErr websocket.CloseError
+	if errors.As(err, &closeErr) {
+		_ = c.Close(closeErr.Code, closeErr.Reason)
+	} else {
+		_ = c.CloseNow()
+	}
+	cancel()
+	_ = c.CloseNow()
+	joined.Wait()
+	for input := range inputs {
+		input.Close()
+	}
+}
+
+func writeTerminalOutput(ctx context.Context, c *websocket.Conn, sub *session.TerminalSubscription, v1 bool) error {
 	for {
-		_, data, err := c.Read(r.Context())
+		event, err := sub.Next(ctx)
 		if err != nil {
-			return
+			if errors.Is(err, session.ErrTerminalOutputOverflow) {
+				return websocket.CloseError{Code: websocket.StatusTryAgainLater, Reason: "terminal_output_overflow"}
+			}
+			if errors.Is(err, io.EOF) {
+				return websocket.CloseError{Code: websocket.StatusNormalClosure}
+			}
+			return err
 		}
-		var msg map[string]any
-		if json.Unmarshal(data, &msg) == nil {
-			if msg["type"] == "resize" {
+		typ := websocket.MessageBinary
+		data := event.Data
+		if data == nil {
+			if !v1 {
+				continue
+			}
+			typ = websocket.MessageText
+			data, _ = json.Marshal(struct {
+				Type string `json:"type"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}{"geometry", event.Cols, event.Rows})
+		}
+		if err = c.Write(ctx, typ, data); err != nil {
+			return err
+		}
+	}
+}
+
+func (s *Server) readTerminal(ctx context.Context, c *websocket.Conn, id, client string, v1 bool, inputs chan<- *session.TerminalInput) error {
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			return err
+		}
+		if typ == websocket.MessageText {
+			if v1 {
+				cols, rows, reason := terminalResizeControl(data)
+				if reason != "" {
+					return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: reason}
+				}
+				err = s.Svc.Session.Resize(id, client, cols, rows)
+				if err != nil && !errors.Is(err, os.ErrPermission) {
+					return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "invalid_terminal_resize"}
+				}
+				continue
+			}
+			var msg map[string]any
+			if json.Unmarshal(data, &msg) == nil && msg["type"] == "resize" {
 				cols, _ := msg["cols"].(float64)
 				rows, _ := msg["rows"].(float64)
 				_ = s.Svc.Session.Resize(id, client, int(cols), int(rows))
 				continue
 			}
 		}
-		if err := s.Svc.Session.Input(id, client, data); err != nil && !errors.Is(err, os.ErrPermission) {
-			return
+		input, err := s.Svc.Session.PrepareTerminalInput(id, client, data)
+		if errors.Is(err, os.ErrPermission) {
+			continue
+		}
+		if errors.Is(err, session.ErrTerminalInputOverflow) {
+			return websocket.CloseError{Code: websocket.StatusTryAgainLater, Reason: "terminal_input_overflow"}
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case inputs <- input:
+		case <-ctx.Done():
+			input.Close()
+			return ctx.Err()
+		default:
+			input.Close()
+			return websocket.CloseError{Code: websocket.StatusTryAgainLater, Reason: "terminal_input_overflow"}
 		}
 	}
+}
+
+func terminalResizeControl(data []byte) (int, int, string) {
+	d := json.NewDecoder(strings.NewReader(string(data)))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return 0, 0, "invalid_terminal_control"
+	}
+	values := map[string]json.RawMessage{}
+	for d.More() {
+		key, err := d.Token()
+		if err != nil {
+			return 0, 0, "invalid_terminal_control"
+		}
+		name, ok := key.(string)
+		if !ok {
+			return 0, 0, "invalid_terminal_control"
+		}
+		if _, exists := values[name]; exists {
+			return 0, 0, "invalid_terminal_control"
+		}
+		var value json.RawMessage
+		if err = d.Decode(&value); err != nil {
+			return 0, 0, "invalid_terminal_control"
+		}
+		values[name] = value
+	}
+	if _, err = d.Token(); err != nil {
+		return 0, 0, "invalid_terminal_control"
+	}
+	if _, err = d.Token(); err != io.EOF {
+		return 0, 0, "invalid_terminal_control"
+	}
+	var typ string
+	if json.Unmarshal(values["type"], &typ) != nil || typ != "resize" {
+		return 0, 0, "invalid_terminal_control"
+	}
+	for key := range values {
+		if key != "type" && key != "cols" && key != "rows" {
+			return 0, 0, "invalid_terminal_control"
+		}
+	}
+	var cols, rows int
+	if json.Unmarshal(values["cols"], &cols) != nil || json.Unmarshal(values["rows"], &rows) != nil || cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
+		return 0, 0, "invalid_terminal_resize"
+	}
+	return cols, rows, ""
 }
 
 func (s *Server) watch(w http.ResponseWriter, r *http.Request) {

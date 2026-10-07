@@ -20,19 +20,24 @@ var ErrInvalidControl = errors.New("control requires web, tui, or none and a cli
 type Subscriber func([]byte)
 
 type live struct {
-	sess        domain.Session
-	cmd         *exec.Cmd
-	pty         *os.File
-	mu          sync.Mutex
-	subs        map[int]Subscriber
-	next        int
-	log         *os.File
-	replay      []byte
-	done        chan struct{}
-	readDone    chan struct{}
-	owned       *ownedProcess
-	cleanupErr  error
-	privateHome string
+	sess         domain.Session
+	cmd          *exec.Cmd
+	pty          *os.File
+	mu           sync.Mutex
+	terminalSubs map[int]*TerminalSubscription
+	inputErr     error
+	inputClosed  bool
+	inputRevoked chan struct{}
+	inputGate    chan struct{}
+	pendingInput int
+	next         int
+	log          *os.File
+	replay       []byte
+	done         chan struct{}
+	readDone     chan struct{}
+	owned        *ownedProcess
+	cleanupErr   error
+	privateHome  string
 }
 
 type Manager struct {
@@ -160,7 +165,8 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		m.recordCleanup(cleanupErr, waitErr)
 		return nil, errors.Join(err, cleanupErr)
 	}
-	l := &live{sess: sess, cmd: cmd, pty: pty, subs: map[int]Subscriber{}, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
+	pty, inputErr := prepareTerminalPTY(pty)
+	l := &live{sess: sess, cmd: cmd, pty: pty, inputErr: inputErr, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
 	m.mu.Lock()
 	m.live[sess.ID] = l
 	closing := m.closing
@@ -177,17 +183,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 }
 
 func (m *Manager) Input(id, ownerClient string, data []byte) error {
-	l, ok := m.Live(id)
-	if !ok {
-		return os.ErrNotExist
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.sess.OwnerClient == "" || l.sess.OwnerClient != ownerClient {
-		return os.ErrPermission
-	}
-	_, err := l.pty.Write(data)
-	return err
+	return m.InputContext(context.Background(), id, ownerClient, data)
 }
 
 func (m *Manager) Resize(id, ownerClient string, cols, rows int) error {
@@ -200,8 +196,15 @@ func (m *Manager) Resize(id, ownerClient string, cols, rows int) error {
 	if l.sess.OwnerClient == "" || l.sess.OwnerClient != ownerClient {
 		return os.ErrPermission
 	}
+	if cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
+		return fmt.Errorf("invalid terminal dimensions")
+	}
+	if err := resizePTY(l.pty, cols, rows); err != nil {
+		return err
+	}
 	l.sess.Cols, l.sess.Rows = cols, rows
-	return resizePTY(l.pty, cols, rows)
+	l.publishTerminal(TerminalEvent{Cols: cols, Rows: rows})
+	return nil
 }
 
 func (m *Manager) Take(id, surface, client string) (domain.Session, error) {
@@ -220,6 +223,9 @@ func (m *Manager) Take(id, surface, client string) (domain.Session, error) {
 		}
 		client = ""
 	}
+	if l.sess.OwnerClient != client {
+		l.revokeTerminalInput()
+	}
 	l.sess.Owner = surface
 	l.sess.OwnerClient = client
 	return l.sess, nil
@@ -236,24 +242,25 @@ func (m *Manager) Snapshot(id string) (domain.Session, bool) {
 }
 
 func (m *Manager) Subscribe(id string, sub Subscriber) (func(), error) {
-	l, ok := m.Live(id)
-	if !ok {
-		return nil, os.ErrNotExist
+	subEvents, err := m.SubscribeTerminal(id)
+	if err != nil {
+		return nil, err
 	}
-	l.mu.Lock()
-	idN := l.next
-	l.next++
-	l.subs[idN] = sub
-	replay := append([]byte(nil), l.replay...)
-	l.mu.Unlock()
-	if len(replay) > 0 {
-		sub(replay)
-	}
-	return func() {
-		l.mu.Lock()
-		delete(l.subs, idN)
-		l.mu.Unlock()
-	}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			e, err := subEvents.Next(ctx)
+			if err != nil {
+				return
+			}
+			if len(e.Data) > 0 {
+				sub(e.Data)
+			}
+		}
+	}()
+	return func() { cancel(); subEvents.Close(); <-done }, nil
 }
 
 func (m *Manager) Stop(id string) (domain.Session, error) {
@@ -261,6 +268,10 @@ func (m *Manager) Stop(id string) (domain.Session, error) {
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
 	}
+	l.mu.Lock()
+	l.inputClosed = true
+	l.revokeTerminalInput()
+	l.mu.Unlock()
 	if err := l.owned.stop(); err != nil {
 		return l.copy(), err
 	}
@@ -309,14 +320,8 @@ func (l *live) readLoop(m *Manager) {
 			if len(l.replay) > 64<<10 {
 				l.replay = append([]byte(nil), l.replay[len(l.replay)-(64<<10):]...)
 			}
-			subs := make([]Subscriber, 0, len(l.subs))
-			for _, s := range l.subs {
-				subs = append(subs, s)
-			}
+			l.publishTerminal(TerminalEvent{Data: chunk})
 			l.mu.Unlock()
-			for _, s := range subs {
-				s(chunk)
-			}
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -338,6 +343,8 @@ func (l *live) wait(m *Manager) {
 	} else {
 		l.sess.Process = "unknown"
 	}
+	l.inputClosed = true
+	l.revokeTerminalInput()
 	snap := l.sess
 	l.mu.Unlock()
 	m.release(snap.AccountID)
@@ -346,6 +353,11 @@ func (l *live) wait(m *Manager) {
 	}
 	cleanupErr = errors.Join(cleanupErr, l.pty.Close())
 	<-l.readDone
+	l.mu.Lock()
+	for _, sub := range l.terminalSubs {
+		sub.finish()
+	}
+	l.mu.Unlock()
 	cleanupErr = errors.Join(cleanupErr, l.log.Close())
 	if l.privateHome != "" {
 		homeErr := os.RemoveAll(l.privateHome)
@@ -383,6 +395,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		m.mu.Unlock()
 		go func() {
 			for _, l := range sessions {
+				l.mu.Lock()
+				l.revokeTerminalInput()
+				l.mu.Unlock()
 				if err := l.owned.stop(); err != nil {
 					m.recordCleanup(fmt.Errorf("shutdown PID %d: %w", l.cmd.Process.Pid, err), nil)
 				}
