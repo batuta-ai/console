@@ -80,7 +80,7 @@ func (m *model) newAccountRequest(kind string) *accountRequest {
 	return &accountRequest{kind: kind, account: m.account.selected, label: strings.TrimSpace(m.account.label), adapter: m.account.adapter, epoch: m.account.epoch, revision: m.account.revision, ctx: ctx, cancel: cancel, lifetime: m.accountIO}
 }
 func (m *model) readAccounts() tea.Cmd {
-	if m.exiting || m.account.read != nil || m.account.pending != nil || m.api == nil {
+	if m.exiting || m.account.read != nil || m.account.pending != nil || m.workspace.pending != nil || m.api == nil {
 		return nil
 	}
 	r := m.newAccountRequest("read")
@@ -106,7 +106,7 @@ func (m *model) inspectAccounts() tea.Cmd {
 }
 
 func (m model) accountMutation(kind string) (model, tea.Cmd) {
-	if m.account.pending != nil || m.account.uncertain != nil || m.exiting {
+	if m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.exiting {
 		return m, nil
 	}
 	if kind == "create" && strings.TrimSpace(m.account.label) == "" {
@@ -236,6 +236,7 @@ func (m model) applyAccountResult(out accountResult) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.accounts = out.accounts
+		m.updateWorkspaceAccount(out.accounts)
 		m.sessions = out.sessions
 		m.account.capabilities = out.capabilities
 		if m.account.selected.ID != "" {
@@ -441,8 +442,9 @@ func (m *model) cancelAccountRequests() tea.Cmd {
 }
 
 type accountJoined struct {
-	results []accountResult
-	exit    tea.Msg
+	workspaces []workspaceResult
+	results    []accountResult
+	exit       tea.Msg
 }
 
 func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
@@ -450,15 +452,22 @@ func (m model) exitAccountWork(suspend bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.account.epoch++
+	m.workspace.epoch++
+	workspaceJoin := m.cancelWorkspaceRequests()
 	join := m.cancelAccountRequests()
 	next, terminalExit := m.exitTerminal(suspend)
 	m = next.(model)
 	io := m.accountIO
+	workspaceIO := m.workspaceIO
 	return m, func() tea.Msg {
 		io.close()
+		workspaceIO.close()
 		out := accountJoined{}
 		if join != nil {
 			out = join().(accountJoined)
+		}
+		if workspaceJoin != nil {
+			out.workspaces = workspaceJoin().(workspaceJoined).results
 		}
 		out.exit = terminalExit()
 		return out
@@ -556,8 +565,12 @@ func (m model) viewAccountNotice(b *strings.Builder) {
 	}
 	if r := m.account.uncertain; r != nil {
 		fmt.Fprintf(b, "%s: %s %s %s %s\n", i18n.T("account_possible_effect"), i18n.T("account_action_"+r.kind), r.account.ID, r.label, r.adapter)
-		fmt.Fprintln(b, i18n.T("account_inspect"))
-		if m.account.inspected {
+		if m.screen == scrWorkspace || m.screen == scrWorkspaces {
+			fmt.Fprintln(b, i18n.T("workspace_account_recovery"))
+		} else {
+			fmt.Fprintln(b, i18n.T("account_inspect"))
+		}
+		if m.account.inspected && m.screen != scrWorkspace && m.screen != scrWorkspaces {
 			fmt.Fprintln(b, i18n.T("account_acknowledge"))
 		}
 	}

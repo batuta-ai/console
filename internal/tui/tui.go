@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -29,6 +30,9 @@ const (
 )
 
 type model struct {
+	workspace   workspaceFlow
+	workspaceIO *terminalLifetime
+
 	account    accountFlow
 	accountIO  *terminalLifetime
 	api        *client.Client
@@ -61,8 +65,9 @@ type model struct {
 }
 
 func New(api *client.Client) tea.Model {
-	m := model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}, accountIO: &terminalLifetime{}}
+	m := model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}, accountIO: &terminalLifetime{}, workspaceIO: &terminalLifetime{}}
 	m.readAccounts()
+	m.refresh()
 	return m
 }
 
@@ -80,33 +85,59 @@ func (m model) tick() tea.Cmd {
 
 type tickMsg struct{}
 
-func (m model) refresh() tea.Cmd {
-	return func() tea.Msg {
-		var msg dataMsg
-		_ = m.api.Get("/v0/workspaces", &msg.ws)
-		_ = m.api.Get("/v0/missions", &msg.missions)
-		_ = m.api.Get("/v0/squads", &msg.squads)
-		_ = m.api.Get("/v0/activity", &msg.activity)
-		msg.sessionsErr = m.api.Get("/v0/sessions", &msg.sessions)
-		msg.accountRevision = m.account.revision
-		_ = m.api.Get("/v0/limits", &msg.limits)
-		if len(msg.ws) > 0 {
-			wsID := msg.ws[0].ID
-			if m.missionID != "" {
-				for _, msn := range msg.missions {
-					if msn.ID == m.missionID && msn.WorkspaceID != "" {
-						wsID = msn.WorkspaceID
-						break
-					}
+func (m *model) refresh() tea.Cmd {
+	if m.api == nil || m.exiting {
+		return nil
+	}
+	var previous *workspaceRequest
+	if m.workspace.refresh != nil {
+		if m.workspace.refresh.epoch == m.workspace.epoch && m.workspace.refresh.revision == m.workspace.revision {
+			return m.workspace.refresh.run
+		}
+		previous = m.workspace.refresh
+		previous.cancel()
+	}
+	r := m.newWorkspaceRequest("refresh")
+	api, missionID, accountRevision := m.api, m.missionID, m.account.revision
+	r.execute = func(ctx context.Context) workspaceResult {
+		if previous != nil {
+			previous.run()
+		}
+		msg := dataMsg{workspaceRead: true, workspaceEpoch: r.epoch, workspaceRevision: r.revision, accountRevision: accountRevision}
+		msg.ws, msg.workspacesErr = api.ListWorkspaces(ctx)
+		msg.missions, _ = api.ListMissions(ctx, "")
+		msg.squads, _ = api.ListSquads(ctx)
+		msg.activity, _ = api.Activity(ctx)
+		msg.sessions, msg.sessionsErr = api.ListSessions(ctx)
+		msg.limits, _ = api.Limits(ctx)
+		wsID := r.workspace.ID
+		if wsID == "" {
+			if len(msg.ws) > 0 {
+				wsID = msg.ws[0].ID
+			}
+			for _, msn := range msg.missions {
+				if msn.ID == missionID && msn.WorkspaceID != "" {
+					wsID = msn.WorkspaceID
+					break
 				}
 			}
-			_ = m.api.Get("/v0/watch?workspace="+wsID, &msg.watch)
 		}
-		return msg
+		if wsID != "" {
+			msg.watch, msg.watchErr = api.WorkspaceWatch(ctx, wsID, "")
+		}
+		msg.watchWorkspaceID = wsID
+		return workspaceResult{data: &msg}
 	}
+	m.workspace.refresh = r
+	return r.run
 }
 
 type dataMsg struct {
+	workspaceRead                     bool
+	workspaceEpoch, workspaceRevision uint64
+	workspacesErr, watchErr           error
+	watchWorkspaceID                  string
+
 	sessionsErr     error
 	accountRevision uint64
 	ws              []domain.Workspace
@@ -121,8 +152,34 @@ type dataMsg struct {
 type statusMsg string
 
 func (m model) applyData(msg dataMsg) model {
-	m.ws, m.missions, m.squads, m.activity = msg.ws, msg.missions, msg.squads, msg.activity
-	m.limits, m.watch = msg.limits, msg.watch
+	m.missions, m.squads, m.activity = msg.missions, msg.squads, msg.activity
+	m.limits = msg.limits
+	if msg.workspaceRead && msg.workspaceEpoch == m.workspace.epoch && msg.workspaceRevision == m.workspace.revision && !m.exiting {
+		if msg.workspacesErr == nil {
+			m.ws = msg.ws
+			m.workspace.missing = m.workspace.selected.ID != ""
+			for _, w := range msg.ws {
+				if w.ID == m.workspace.selected.ID {
+					m.workspace.selected = w
+					m.workspace.missing = false
+					break
+				}
+			}
+		} else {
+			m.workspace.problem = "workspace_read_failed"
+			m.workspace.detail = msg.workspacesErr.Error()
+		}
+		if msg.watchErr == nil && (m.workspace.selected.ID == "" || msg.watchWorkspaceID == m.workspace.selected.ID) {
+			m.watch = msg.watch
+		}
+		if msg.watchErr != nil {
+			m.workspace.problem = "workspace_read_failed"
+			m.workspace.detail = msg.watchErr.Error()
+		}
+		if msg.workspacesErr == nil && msg.watchErr == nil && m.workspace.problem == "workspace_read_failed" {
+			m.workspace.problem, m.workspace.detail = "", ""
+		}
+	}
 	if msg.sessionsErr == nil && msg.accountRevision == m.account.revision {
 		m.sessions = msg.sessions
 	}
@@ -136,11 +193,21 @@ type createdMsg struct {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workspaceResult:
+		return m.applyWorkspaceResult(msg)
+	case workspaceJoined:
+		for _, result := range msg.results {
+			m, _ = m.applyWorkspaceResult(result)
+		}
+		return m, nil
 	case accountResult:
 		return m.applyAccountResult(msg)
 	case accountJoined:
 		for _, result := range msg.results {
 			m, _ = m.applyAccountResult(result)
+		}
+		for _, result := range msg.workspaces {
+			m, _ = m.applyWorkspaceResult(result)
 		}
 		if msg.exit != nil {
 			return m.Update(msg.exit)
@@ -158,6 +225,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.exiting, m.exitReady, m.termMode = false, false, false
 		m.lifetime = &terminalLifetime{}
 		m.accountIO = &terminalLifetime{}
+		m.workspaceIO = &terminalLifetime{}
 		m.link = nil
 		m.termFrame.disconnected = true
 		m.termFrame.owned = false
@@ -221,6 +289,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitPTY()
 	case tea.PasteMsg:
+		if !m.termMode && m.screen == scrWorkspace && (m.workspace.form || m.workspace.draft.editing) && m.workspace.pending == nil && m.workspace.uncertain == nil {
+			return m.editWorkspaceText(msg.Content, false), nil
+		}
 		if !m.termMode && m.screen == scrAccount && m.account.form && m.account.pending == nil && m.account.uncertain == nil {
 			m.account.label = accountLabel(m.account.label, msg.Content)
 		}
@@ -269,7 +340,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == scrEditor {
 			return m.updateEditor(msg)
 		}
-		if m.account.uncertain != nil && m.account.pending == nil {
+		if m.screen == scrWorkspace {
+			return m.updateWorkspace(msg)
+		}
+		if m.screen != scrWorkspaces && m.account.uncertain != nil && m.account.pending == nil {
 			switch msg.String() {
 			case "f":
 				return m, m.inspectAccounts()
@@ -300,6 +374,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			m = m.open()
+		case "f":
+			if m.screen == scrWorkspaces {
+				return m, m.inspectWorkspaces()
+			}
+		case "d":
+			if m.screen == scrWorkspaces {
+				return m.acknowledgeWorkspace(), nil
+			}
+		case "ctrl+a":
+			if m.screen == scrWorkspaces {
+				m.screen, m.cursor = scrAccounts, 0
+			}
+		case "w":
+			m.screen, m.cursor = scrWorkspaces, 0
 		case "m":
 			m.screen, m.cursor = scrMissions, 0
 		case "s":
@@ -372,12 +460,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "n":
+			if m.screen == scrWorkspaces {
+				next := m.startWorkspaceForm()
+				if next.workspace.epoch != m.workspace.epoch {
+					return next, next.cancelWorkspaceRequests()
+				}
+				return next, nil
+			}
 			if m.screen == scrHome || m.screen == scrAccounts {
 				return m.startAccountForm(), nil
 			}
 			if m.screen == scrSquads {
 				return m, m.createSquad()
 			}
+		}
+		if previousScreen == scrWorkspaces && m.screen != scrWorkspaces {
+			m.workspace.epoch++
+			return m, m.cancelWorkspaceRequests()
 		}
 		if previousScreen == scrAccounts && m.screen != scrAccounts && m.screen != scrAccount {
 			m.account.epoch++
@@ -478,6 +577,10 @@ func (m model) createSquad() tea.Cmd {
 
 func (m model) open() model {
 	switch m.screen {
+	case scrWorkspaces:
+		if m.cursor >= 0 && m.cursor < len(m.ws) {
+			return m.selectWorkspace(m.ws[m.cursor])
+		}
 	case scrHome:
 		if len(m.accounts) == 0 && len(m.ws) == 0 {
 			return m.startAccountForm()
@@ -519,6 +622,10 @@ func (m model) render() string {
 	fmt.Fprintln(&b, nav)
 	fmt.Fprintln(&b, rule(m.width))
 	switch m.screen {
+	case scrWorkspaces:
+		m.viewWorkspaces(&b)
+	case scrWorkspace:
+		m.viewWorkspace(&b)
 	case scrHome:
 		m.viewHome(&b)
 	case scrMissions:
@@ -539,6 +646,7 @@ func (m model) render() string {
 		m.viewReview(&b)
 	}
 	m.viewAccountNotice(&b)
+	m.viewWorkspaceNotice(&b)
 	panel := asciiFold(b.String())
 	b.Reset()
 	var terminal strings.Builder
@@ -566,6 +674,8 @@ func (m model) render() string {
 	fmt.Fprintln(&b, rule(m.width))
 	if m.termMode {
 		fmt.Fprintln(&b, i18n.T("term"))
+	} else if m.screen == scrWorkspace || m.screen == scrWorkspaces {
+		fmt.Fprintln(&b, m.workspaceKeys())
 	} else if m.screen == scrAccount || m.screen == scrAccounts {
 		fmt.Fprintln(&b, m.accountKeys())
 	} else if m.screen == scrEditor {
@@ -577,6 +687,7 @@ func (m model) render() string {
 }
 
 func (m model) viewHome(b *strings.Builder) {
+	fmt.Fprintln(b, i18n.T("workspace_home_keys"))
 	if len(m.accounts) == 0 {
 		fmt.Fprintln(b, i18n.T("account_empty"))
 	}
@@ -838,9 +949,10 @@ func Run(api *client.Client) error {
 			m, _ = m.applyAccountResult(m.account.read.run().(accountResult))
 		}
 		defer m.accountIO.close()
+		defer m.workspaceIO.close()
 		msg := m.refresh()()
-		if dm, ok := msg.(dataMsg); ok {
-			m = m.applyData(dm)
+		if result, ok := msg.(workspaceResult); ok {
+			m, _ = m.applyWorkspaceResult(result)
 		}
 		_, _ = fmt.Fprint(os.Stdout, m.render())
 		return nil
@@ -851,6 +963,7 @@ func Run(api *client.Client) error {
 func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 	defer m.lifetime.close()
 	defer m.accountIO.close()
+	defer m.workspaceIO.close()
 	options = append(options, tea.WithoutSignalHandler(), tea.WithFilter(func(current tea.Model, msg tea.Msg) tea.Msg {
 		state := current.(model)
 		switch msg.(type) {
@@ -883,6 +996,7 @@ func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 	if current, ok := final.(model); ok {
 		current.lifetime.close()
 		current.accountIO.close()
+		current.workspaceIO.close()
 	}
 	return err
 }

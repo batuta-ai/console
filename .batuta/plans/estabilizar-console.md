@@ -126,7 +126,7 @@
       Depends on: 14, 27, 29
       Scope: internal/tui/**, internal/i18n/**, cmd/console/**
       Accept: Instalação vazia cria conta isolada, conecta e abre login oficial para Codex/Claude, com estados e recuperação de erro → go test ./internal/tui ./internal/i18n ./cmd/console -count=1; Dois cadastros consecutivos não reutilizam o draft e ações pending não duplicam contas ou sessões de login
-- [ ] 31. Implementar criação, inicialização e retomada de workspace na TUI — frontend/high
+- [x] 31. Implementar criação, inicialização e retomada de workspace na TUI — frontend/high
       Depends on: 16, 27, 29, 30
       Scope: internal/tui/**, internal/i18n/**, internal/client/*_test.go
       Accept: Usuário cria/seleciona diretório, informa e confirma campos do init e retoma workspace parcial sem sair para o web → go test ./internal/tui ./internal/i18n ./internal/client -count=1; Cancelamento, conta incompatível e CLI ausente retornam estado recuperável com foco e formulário preservados corretamente
