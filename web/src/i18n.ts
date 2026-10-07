@@ -1,6 +1,9 @@
 export type Lang = "en" | "pt";
 
 const en = {
+  sync_timeout: "Request timed out. Retrying reads automatically; inspect uncertain actions before retrying.",
+  sync_reconnecting: "Connection lost. Reconnecting…",
+  sync_invalid: "Invalid event stream. Reconnecting…",
   journey_inspect_created: "Inspect created missions",
   journey_created_matches: "Matching missions exist. Open the intended mission below.",
   journey_no_matches: "No matching mission was found. You may retry explicitly.",
@@ -385,6 +388,9 @@ const en = {
 export type Msg = keyof typeof en;
 
 const pt: Record<Msg, string> = {
+  sync_timeout: "A solicitação expirou. As leituras serão repetidas; inspecione ações incertas antes de tentar novamente.",
+  sync_reconnecting: "Conexão perdida. Reconectando…",
+  sync_invalid: "Fluxo de eventos inválido. Reconectando…",
   journey_inspect_created: "Inspecionar missões criadas",
   journey_created_matches: "Há missões correspondentes. Abra a missão desejada abaixo.",
   journey_no_matches: "Nenhuma missão correspondente foi encontrada. Você pode tentar novamente explicitamente.",

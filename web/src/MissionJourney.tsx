@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api, executionLabel, journeyMutation, samePlan, sameQuestion, verifiedPlanText, verifyExecution, verifyReceipt,
   type AnswerResult, type ApprovalResult, type ExecutionResult, type ExecutionState, type Mission, type PlanApproval, type PlanDetail, type QuestionIdentity, type Watch,
 } from "./lib";
+import { bounded, READ_INTERVAL } from "./sync";
 import { T } from "./i18n";
 import { Alert, Button, Field, Input, Stepper } from "./ui";
 
-export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: Mission; refreshVersion: number; onWatch: (watch: Watch | null) => void }) {
+type JourneyProps = { mission: Mission; refreshVersion: number; onWatch: (watch: Watch | null, state?: ExecutionState | null) => void; children?: (journey: ReactNode) => ReactNode };
+
+export function MissionJourney(props: Omit<JourneyProps, "mission"> & { mission: Mission | null }) {
+  if (!props.mission) return props.children?.(null);
+  return <Journey key={`${props.mission.workspace_id}:${props.mission.id}`} {...props} mission={props.mission} />;
+}
+
+function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
   const [path, setPath] = useState(mission.binding?.plan_path || "");
   const [plan, setPlan] = useState<PlanDetail | null>(null);
   const [text, setText] = useState("");
@@ -17,11 +25,12 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [answer, setAnswer] = useState("");
+  const [answerDraft, setAnswerDraft] = useState<{ target: QuestionIdentity; text: string } | null>(null);
   const [recordedQuestion, setRecordedQuestion] = useState<QuestionIdentity | null>(null);
   const current = useRef<{ mission: Mission; receipt: PlanApproval | null; execution: ExecutionState | null }>({ mission, receipt: null, execution: null });
   const lock = useRef(false);
   const generation = useRef(0);
+  const operation = useRef<AbortController | null>(null);
   const watchCallback = useRef(onWatch);
   watchCallback.current = onWatch;
   const base = `/v0/missions/${encodeURIComponent(mission.id)}`;
@@ -42,30 +51,38 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
   }
 
   function showExecution(state: ExecutionState | null) {
+    const target = state?.watch?.pending_question?.target;
+    setAnswerDraft(draft => draft && target && sameQuestion(draft.target, target) ? draft : null);
     current.current.execution = state;
     setExecution(state);
-    watchCallback.current(state?.watch || null);
+    watchCallback.current(state?.watch || null, state);
   }
 
-  async function readExecution(approved: PlanApproval, ticket: number) {
-    const read = await api<PlanApproval>(`${base}/plan/approvals/${encodeURIComponent(approved.id)}?${workspaceQuery}`);
+  async function readExecution(approved: PlanApproval, ticket: number, signal: AbortSignal) {
+    const read = await api<PlanApproval>(`${base}/plan/approvals/${encodeURIComponent(approved.id)}?${workspaceQuery}`, { signal });
+    signal.throwIfAborted();
     await verifyReceipt(read, approved.identity, approved.content, current.current.mission);
+    signal.throwIfAborted();
+    if (ticket !== generation.current || signal.aborted) return;
     if (read.id !== approved.id) throw new Error(T("journey_invalid_plan"));
-    const state = await api<ExecutionState>(`${base}/execution?${workspaceQuery}&approval_id=${encodeURIComponent(approved.id)}`);
+    const state = await api<ExecutionState>(`${base}/execution?${workspaceQuery}&approval_id=${encodeURIComponent(approved.id)}`, { signal });
+    signal.throwIfAborted();
     verifyExecution(state, read, current.current.execution);
     const binding = current.current.mission.binding;
     if (binding?.delivery_id && (state.delivery !== binding.delivery_id || state.opened_digest !== binding.opened_digest)) throw new Error(T("journey_invalid_state"));
     if (ticket === generation.current) showExecution(state);
   }
 
-  async function readPlan(ticket: number, snapshot?: PlanDetail) {
-    const detail = snapshot || await api<PlanDetail>(`${base}/plan?${workspaceQuery}`);
+  async function readPlan(ticket: number, signal: AbortSignal, snapshot?: PlanDetail) {
+    const detail = snapshot || await api<PlanDetail>(`${base}/plan?${workspaceQuery}`, { signal });
+    signal.throwIfAborted();
     if (!detail || (snapshot && !detail.approval)) throw new Error(T("journey_invalid_plan"));
     const original = await verifiedPlanText(detail.identity, detail.content, current.current.mission);
+    signal.throwIfAborted();
     if (typeof detail.title !== "string" || typeof detail.status !== "string" || !Array.isArray(detail.tasks) || detail.tasks.some(task => !task || typeof task.id !== "string" || typeof task.title !== "string" ||
       [task.scope, task.dependencies, task.accept].some(values => values !== null && (!Array.isArray(values) || values.some(value => typeof value !== "string"))))) throw new Error(T("journey_invalid_plan"));
     if (detail.approval) await verifyReceipt(detail.approval, detail.identity, detail.content, current.current.mission);
-    if (ticket !== generation.current) return;
+    if (ticket !== generation.current || signal.aborted) return;
     if (current.current.receipt?.id !== detail.approval?.id || !detail.approval) showExecution(null);
     current.current.receipt = detail.approval || null;
     setPlan(detail);
@@ -73,7 +90,7 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
     setReceipt(detail.approval || null);
     setPath(detail.identity.binding.plan_path);
     if (detail.approval) {
-      await readExecution(detail.approval, ticket);
+      await readExecution(detail.approval, ticket, signal);
       if (ticket === generation.current) sessionStorage.setItem(snapshotKey, JSON.stringify(detail));
     }
   }
@@ -84,31 +101,31 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
     if (mission.binding) current.current.mission = mission;
     lock.current = true;
     setBusy(true);
-    setUnavailable(true);
-    watchCallback.current(null);
+    const controller = new AbortController();
+    operation.current = controller;
     try {
-      if (manual) {
-        const missions = await api<Mission[]>("/v0/missions");
+      await bounded(async signal => {
+        const missions = await api<Mission[]>("/v0/missions", { signal });
+        signal.throwIfAborted();
         const exact = missions.find(m => m.id === mission.id && m.workspace_id === mission.workspace_id);
         if (!exact) throw new Error(T("journey_invalid_state"));
         current.current.mission = exact;
-      }
-      const saved = sessionStorage.getItem(snapshotKey);
-      if (current.current.receipt) await readExecution(current.current.receipt, ticket);
-      else if (saved) await readPlan(ticket, JSON.parse(saved));
-      if (ticket !== generation.current) return;
-      if (!retainSnapshot() && current.current.mission.binding) {
-        // An unopened historical receipt does not establish current source eligibility.
-        // Once its exact state is inspected, rebinding remains possible if the source fails to load.
-        if (manual) markBlocked(false);
-        await readPlan(ticket);
-      } else if (!current.current.receipt && current.current.mission.binding) await readPlan(ticket);
-      if (ticket !== generation.current) return;
-      setUnavailable(false);
-      if (manual) {
-        markBlocked(false);
+        const saved = sessionStorage.getItem(snapshotKey);
+        if (current.current.receipt) await readExecution(current.current.receipt, ticket, signal);
+        else if (saved) await readPlan(ticket, signal, JSON.parse(saved));
+        if (ticket !== generation.current || signal.aborted) return;
+        if (!retainSnapshot() && current.current.mission.binding) {
+          // An unopened historical receipt does not establish current source eligibility.
+          // Once its exact state is inspected, rebinding remains possible if the source fails to load.
+          if (manual) markBlocked(false);
+          await readPlan(ticket, signal);
+        } else if (!current.current.receipt && current.current.mission.binding) await readPlan(ticket, signal);
+        if (ticket !== generation.current || signal.aborted) return;
+        setUnavailable(false);
         setError("");
-      } else setBlocked(sessionStorage.getItem(storageKey) === "inspect");
+        if (manual) markBlocked(false);
+        else setBlocked(sessionStorage.getItem(storageKey) === "inspect");
+      }, controller.signal);
     } catch (e) {
       if (ticket === generation.current) {
         setUnavailable(true);
@@ -128,17 +145,28 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
   useEffect(() => {
     void inspectRef.current();
   }, [refreshVersion]);
-  useEffect(() => () => { ++generation.current; lock.current = false; }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => { void inspectRef.current(); }, READ_INTERVAL);
+    return () => {
+      ++generation.current;
+      operation.current?.abort();
+      lock.current = false;
+      window.clearInterval(timer);
+      watchCallback.current(null);
+    };
+  }, []);
 
-  async function mutate(action: (ticket: number) => Promise<void>) {
+  async function mutate(action: (ticket: number, signal: AbortSignal) => Promise<void>) {
     if (lock.current || blocked) return;
     const ticket = ++generation.current;
     lock.current = true;
     setBusy(true);
     setError("");
+    const controller = new AbortController();
+    operation.current = controller;
     try {
       markBlocked(true);
-      await action(ticket);
+      await bounded(signal => action(ticket, signal), controller.signal);
       if (ticket !== generation.current) return;
       markBlocked(false);
       setUnavailable(false);
@@ -155,63 +183,66 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
     }
   }
 
-  async function bind(ticket: number) {
-    const bound = await api<Mission>(`${base}/binding`, { method: "PUT", body: JSON.stringify({ workspace_id: mission.workspace_id, plan_path: path }) });
+  async function bind(ticket: number, signal: AbortSignal) {
+    const bound = await api<Mission>(`${base}/binding`, { signal, method: "PUT", body: JSON.stringify({ workspace_id: mission.workspace_id, plan_path: path }) });
     if (bound?.id !== mission.id || bound.workspace_id !== mission.workspace_id || !bound.binding || bound.binding.workspace_id !== mission.workspace_id || bound.binding.plan_path !== path) throw new Error(T("journey_invalid_plan"));
-    if (ticket !== generation.current) return;
+    if (ticket !== generation.current || signal.aborted) return;
     current.current.mission = bound;
     current.current.receipt = null;
     sessionStorage.removeItem(snapshotKey);
     setPlan(null);
     setReceipt(null);
     showExecution(null);
-    await readPlan(ticket);
+    await readPlan(ticket, signal);
   }
 
-  async function approve(ticket: number) {
+  async function approve(ticket: number, signal: AbortSignal) {
     if (!plan || receipt) return;
-    const result = await journeyMutation<ApprovalResult>(`${base}/plan/approvals`, plan.identity);
+    const result = await journeyMutation<ApprovalResult>(`${base}/plan/approvals`, plan.identity, signal);
     if (!result || !samePlan(result.target, plan.identity) || result.effect !== "recorded" || !result.receipt) throw new Error(result?.error?.message || T("journey_invalid_plan"));
+    if (ticket !== generation.current || signal.aborted) return;
     await verifyReceipt(result.receipt, plan.identity, plan.content, current.current.mission);
-    if (ticket !== generation.current) return;
+    if (ticket !== generation.current || signal.aborted) return;
     current.current.receipt = result.receipt;
     setReceipt(result.receipt);
     sessionStorage.setItem(`${snapshotKey}:${result.receipt.id}`, JSON.stringify({ ...plan, approval: result.receipt }));
     sessionStorage.setItem(snapshotKey, JSON.stringify({ ...plan, approval: result.receipt }));
-    await readExecution(result.receipt, ticket);
+    await readExecution(result.receipt, ticket, signal);
   }
 
-  async function execute(ticket: number, resume: boolean) {
+  async function execute(ticket: number, resume: boolean, signal: AbortSignal) {
     if (!receipt || !execution) return;
     const body = { target: receipt.identity, approval_id: receipt.id };
     if (!resume) sessionStorage.setItem(executionPendingKey, receipt.id);
-    const result = await journeyMutation<ExecutionResult>(`${base}/execution${resume ? "/resume" : ""}`, resume ? { ...body, delivery: execution.delivery, opened_digest: execution.opened_digest } : body);
+    const result = await journeyMutation<ExecutionResult>(`${base}/execution${resume ? "/resume" : ""}`, resume ? { ...body, delivery: execution.delivery, opened_digest: execution.opened_digest } : body, signal);
+    if (ticket !== generation.current || signal.aborted) return;
     if (!resume && result && samePlan(result.target, receipt.identity) && result.approval_id === receipt.id && result.effect === "rejected") sessionStorage.removeItem(executionPendingKey);
     if (!result || !samePlan(result.target, receipt.identity) || result.approval_id !== receipt.id || result.effect !== "started" || result.delivery !== execution.delivery ||
       !result.opened_digest || (resume && result.opened_digest !== execution.opened_digest)) throw new Error(result?.error?.message || T("journey_invalid_state"));
-    await readExecution(receipt, ticket);
+    await readExecution(receipt, ticket, signal);
   }
 
-  async function sendAnswer(ticket: number) {
+  async function sendAnswer(ticket: number, signal: AbortSignal) {
     const question = execution?.watch?.pending_question;
-    if (!question || !receipt || (recordedQuestion && sameQuestion(recordedQuestion, question.target))) return;
-    const result = await journeyMutation<AnswerResult>("/v0/watch/answer", { ...question.target, text: answer });
+    if (!question || !receipt || !answerDraft || !sameQuestion(answerDraft.target, question.target) || !answerDraft.text.trim() || (recordedQuestion && sameQuestion(recordedQuestion, question.target))) return;
+    const result = await journeyMutation<AnswerResult>("/v0/watch/answer", { ...answerDraft.target, text: answerDraft.text }, signal);
     if (!result || !sameQuestion(result.target, question.target) || result.delivery !== execution?.delivery || result.effect !== "recorded") throw new Error(result?.error?.message || T("journey_invalid_state"));
-    if (ticket !== generation.current) return;
+    if (ticket !== generation.current || signal.aborted) return;
     setRecordedQuestion(question.target);
     setNotice(T("journey_answer_recorded"));
-    setAnswer("");
-    await readExecution(receipt, ticket);
+    setAnswerDraft(null);
+    await readExecution(receipt, ticket, signal);
   }
 
   const disabled = busy || blocked || unavailable;
   const label = executionLabel(execution, !!receipt, unavailable || blocked);
   const question = !unavailable ? execution?.watch?.pending_question : undefined;
+  const answer = question && answerDraft && sameQuestion(answerDraft.target, question.target) ? answerDraft.text : "";
   const canStart = !!receipt && !!execution && !execution.active && !execution.bound && !execution.opened_digest;
   const canResume = !!receipt && !!execution?.opened_digest && !execution.active && !question && execution.watch?.header?.state !== "done";
   const bindingLocked = busy || blocked || retainSnapshot() || (!!receipt && !execution);
 
-  return <div>
+  const content = <div>
     <Stepper steps={[T("plan_understand"), T("plan_decompose"), T("plan_write"), T("plan_approve"), T("plan_execute")]} current={execution?.opened_digest ? 5 : receipt ? 4 : plan ? 3 : 1} />
     <p aria-label={T("journey_status")}>{label}</p>
     {busy ? <p role="status">{T("journey_pending")}</p> : null}
@@ -238,8 +269,8 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
       {receipt ? <p>{T("journey_receipt")} <span className="mono">{receipt.id}</span></p> : null}
       <div className="inline-actions">
         <Button disabled={disabled || !!receipt || !!plan.identity.binding.delivery_id || !["proposed", "approved"].includes(plan.status)} onClick={() => mutate(approve)}>{T("journey_approve")}</Button>
-        <Button disabled={disabled || !canStart} onClick={() => mutate(ticket => execute(ticket, false))}>{T("journey_start")}</Button>
-        <Button disabled={disabled || !canResume} onClick={() => mutate(ticket => execute(ticket, true))}>{T("journey_resume")}</Button>
+        <Button disabled={disabled || !canStart} onClick={() => mutate((ticket, signal) => execute(ticket, false, signal))}>{T("journey_start")}</Button>
+        <Button disabled={disabled || !canResume} onClick={() => mutate((ticket, signal) => execute(ticket, true, signal))}>{T("journey_resume")}</Button>
       </div>
     </> : null}
     {execution ? <p className="mono">{execution.delivery} · {execution.opened_digest || "—"}</p> : null}
@@ -247,9 +278,10 @@ export function MissionJourney({ mission, refreshVersion, onWatch }: { mission: 
     {question ? <div>
       <p>{question.prompt}</p>
       <p className="mono">{question.target.task} · {question.target.execution} · {question.target.question_id} · {question.target.opened_digest}</p>
-      <Field label={T("journey_answer")}><Input value={answer} onChange={e => setAnswer(e.target.value)} /></Field>
+      <Field label={T("journey_answer")}><Input value={answer} onChange={e => setAnswerDraft({ target: question.target, text: e.target.value })} /></Field>
       <p>{T("answer_no_paid")}</p>
       <Button disabled={disabled || !answer.trim() || (!!recordedQuestion && sameQuestion(recordedQuestion, question.target))} onClick={() => mutate(sendAnswer)}>{T("send_answer")}</Button>
     </div> : null}
   </div>;
+  return children ? children(content) : content;
 }

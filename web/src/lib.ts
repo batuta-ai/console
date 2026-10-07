@@ -175,6 +175,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers || {}),
     },
   });
+  init?.signal?.throwIfAborted();
   if (!res.ok) {
     if (res.status === 401) {
       try {
@@ -187,6 +188,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(await res.text());
   }
   const text = await res.text();
+  init?.signal?.throwIfAborted();
   return (text ? JSON.parse(text) : null) as T;
 }
 
@@ -389,10 +391,11 @@ export type AnswerResult = { target: QuestionIdentity; delivery?: string; effect
 
 // Mutation errors carry a typed effect even on non-2xx HTTP responses.
 // Missing/malformed replies are uncertain; callers must inspect before retrying.
-export async function journeyMutation<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(path, { method: "POST", redirect: "error", headers: {
+export async function journeyMutation<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { signal, method: "POST", redirect: "error", headers: {
     Authorization: `Bearer ${localStorage.getItem("bt-token") || ""}`, "Content-Type": "application/json",
   }, body: JSON.stringify(body) });
+  signal?.throwIfAborted();
   if (response.status === 401) {
     localStorage.removeItem("bt-token");
     throw new Error(T("err_token"));

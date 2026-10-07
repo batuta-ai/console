@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "@lyra-ds/react/theme-provider";
 import { Activity, FolderOpen, House, KeyRound, Moon, Sun, Target, Users } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
@@ -6,6 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import {
   api,
+  executionLabel,
+  type ExecutionState,
   attentionLine,
   clock,
   criteria,
@@ -38,6 +40,7 @@ import {
   type Workspace,
   plural,
 } from "./lib";
+import { bounded, followEvents, READ_INTERVAL } from "./sync";
 import { T } from "./i18n";
 import { MissionPlanning } from "./MissionPlanning";
 import { MissionJourney } from "./MissionJourney";
@@ -89,6 +92,7 @@ export function App() {
   const { dark, toggle: toggleTheme } = useTheme();
   const [screen, setScreen] = useState<Screen>("home");
   const [err, setErr] = useState("");
+  const [eventError, setEventError] = useState("");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
   const [squads, setSquads] = useState<Squad[]>([]);
@@ -96,8 +100,7 @@ export function App() {
   const [activity, setActivity] = useState<Event[]>([]);
   const [limits, setLimits] = useState<Limit[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [watch, setWatch] = useState<Watch | null>(null);
-  const [missionWatch, setMissionWatch] = useState<Watch | null>(null);
+  const [missionState, setMissionState] = useState<ExecutionState | null>(null);
   const [journeyRefresh, setJourneyRefresh] = useState(0);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsRoot, setSkillsRoot] = useState("");
@@ -120,40 +123,48 @@ export function App() {
   }, [currentWs, wsId]);
 
   const refreshGeneration = useRef(0);
+  const refreshController = useRef<AbortController | null>(null);
 
   async function refresh() {
+    if (refreshController.current) return;
+    const controller = new AbortController();
+    refreshController.current = controller;
     const generation = ++refreshGeneration.current;
     try {
-      const [ws, msn, sq, ac, ev, sess, lim, sk] = await Promise.all([
-        api<Workspace[]>("/v0/workspaces"),
-        api<Mission[]>("/v0/missions"),
-        api<Squad[]>("/v0/squads"),
-        api<Account[]>("/v0/accounts"),
-        api<Event[]>("/v0/activity"),
-        api<Session[]>("/v0/sessions"),
-        api<Limit[]>("/v0/limits"),
-        api<{ root?: string; skills?: Skill[] }>("/v0/skills"),
-      ]);
-      if (generation !== refreshGeneration.current) return;
-      setWorkspaces(ws || []);
-      setMissions(msn || []);
-      setActiveMission(selected => selected ? (msn || []).find(m => m.id === selected.id && m.workspace_id === selected.workspace_id) || selected : null);
-      setSquads(sq || []);
-      setAccounts(ac || []);
-      setActivity(ev || []);
-      setSessions(sess || []);
-      setLimits(lim || []);
-      setSkills(sk?.skills || []);
-      setSkillsRoot(sk?.root || "");
-      setJourneyRefresh(n => n + 1);
-      setErr("");
-      const watchID = activeMission?.workspace_id || (ws || []).find((w) => w.id === wsId)?.id || ws?.[0]?.id;
-      if (watchID) {
-        const w = await api<Watch>(`/v0/watch?workspace=${encodeURIComponent(watchID)}`);
-        if (generation === refreshGeneration.current) setWatch(w);
-      }
+      await bounded(async signal => {
+        const [ws, msn, sq, ac, ev, sess, lim, sk] = await Promise.all([
+          api<Workspace[]>("/v0/workspaces", { signal }),
+          api<Mission[]>("/v0/missions", { signal }),
+          api<Squad[]>("/v0/squads", { signal }),
+          api<Account[]>("/v0/accounts", { signal }),
+          api<Event[]>("/v0/activity", { signal }),
+          api<Session[]>("/v0/sessions", { signal }),
+          api<Limit[]>("/v0/limits", { signal }),
+          api<{ root?: string; skills?: Skill[] }>("/v0/skills", { signal }),
+        ]);
+        if (generation !== refreshGeneration.current || signal.aborted) return;
+        if (![ws, msn, sq, ac, ev, sess, lim].every(value => value == null || (Array.isArray(value) && value.every(item => item && typeof item === "object" && !Array.isArray(item)))) ||
+            (ws || []).some(w => !w.id || typeof w.id !== "string" || typeof w.name !== "string" || typeof w.root !== "string") ||
+            (msn || []).some(m => !m.id || typeof m.id !== "string" || !m.workspace_id || typeof m.workspace_id !== "string" || typeof m.title !== "string" || typeof m.status !== "string") ||
+            (sk?.skills != null && !Array.isArray(sk.skills))) throw new Error(T("journey_invalid_state"));
+        setWorkspaces(ws || []);
+        setMissions(msn || []);
+        setActiveMission(selected => selected ? (msn || []).find(m => m.id === selected.id && m.workspace_id === selected.workspace_id) || null : null);
+        setSquads(sq || []);
+        setAccounts(ac || []);
+        setActivity(ev || []);
+        setSessions(sess || []);
+        setLimits(lim || []);
+        setSkills(sk?.skills || []);
+        setSkillsRoot(sk?.root || "");
+        setJourneyRefresh(n => n + 1);
+        setErr("");
+      }, controller.signal);
     } catch (e) {
       if (generation === refreshGeneration.current) setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      controller.abort();
+      if (refreshController.current === controller) refreshController.current = null;
     }
   }
 
@@ -161,43 +172,27 @@ export function App() {
   refreshRef.current = refresh;
 
   useEffect(() => {
-    if (screen !== "login" && screen !== "setup") return;
-    const id = window.setInterval(() => refreshRef.current(), 4000);
-    return () => window.clearInterval(id);
-  }, [screen]);
-
-  useEffect(() => {
-    refreshRef.current();
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const tok = localStorage.getItem("bt-token") || "";
-    const sock = new WebSocket(`${proto}://${location.host}/v0/events?token=${encodeURIComponent(tok)}`);
-    let timer = 0;
-    sock.onmessage = () => {
-      if (timer) return;
-      timer = window.setTimeout(() => {
-        timer = 0;
-        refreshRef.current();
-      }, 200);
-    };
+    void refreshRef.current();
+    const timer = window.setInterval(() => { void refreshRef.current(); }, READ_INTERVAL);
+    const stopEvents = followEvents(() => { void refreshRef.current(); }, setEventError);
     return () => {
-      sock.close();
-      if (timer) window.clearTimeout(timer);
+      ++refreshGeneration.current;
+      refreshController.current?.abort();
+      refreshController.current = null;
+      window.clearInterval(timer);
+      stopEvents();
     };
   }, []);
 
-  useEffect(() => {
-    const id = activeMission?.workspace_id || currentWs?.id;
-    if (!id) return;
-    api<Watch>(`/v0/watch?workspace=${encodeURIComponent(id)}`)
-      .then(setWatch)
-      .catch(() => {});
-  }, [activeMission?.workspace_id, currentWs?.id]);
-
+  const missionWatch = missionState?.watch || null;
+  const selectedState = activeMission && missionState?.target.mission_id === activeMission.id && missionState.target.binding.workspace_id === activeMission.workspace_id ? missionState : null;
+  const watch = activeMission && activeMissionMatch(activeMission, missionWatch) ? missionWatch : null;
   const attention = useMemo(() => attentionLine(watch), [watch]);
   const wsMissions = missions.filter((m) => !currentWs || m.workspace_id === currentWs.id);
   const attentionCount = attention ? 1 : 0;
 
   function go(id: Screen) {
+    if (id === "room") setJourneyRefresh(n => n + 1);
     setScreen(id);
     setAddAccount(false);
   }
@@ -208,6 +203,8 @@ export function App() {
   }
 
   function pickWorkspace(id: string) {
+    setActiveMission(null);
+    setMissionState(null);
     setWsId(id);
     localStorage.setItem("bt-ws", id);
     go("missions");
@@ -296,6 +293,7 @@ export function App() {
     <div className={phone ? "frame frame--phone" : "frame"} data-theme={dark ? "dark" : "light"} data-density="comfortable">
       <Shell scroll="content" className="bt-shell" sidebar={!phone ? sidebar : undefined} topbar={topbar} sidebarLabel="Batuta Console">
         {err ? <div className="err">{err}</div> : null}
+        {eventError ? <div className="err">{eventError}</div> : null}
         {(screen === "home" || screen === "missions") && currentWs ? (
           <div className="inline-actions" style={{ padding: "var(--cardpad)" }}>
             <Button variant="secondary" onClick={() => openSetup(currentWs)}>
@@ -330,6 +328,7 @@ export function App() {
             workspace={currentWs}
             onSetup={() => currentWs && openSetup(currentWs)}
             watch={watch}
+            selectedState={selectedState}
             attention={attention}
             onOpen={(m) => {
               setActiveMission(m);
@@ -342,14 +341,14 @@ export function App() {
             }}
           />
         )}
-        {screen === "room" && (
+        <MissionJourney mission={activeMission} refreshVersion={journeyRefresh} onWatch={(_watch, state) => setMissionState(state || null)}>
+        {journey => screen === "room" ? (
           <Room
-            key={activeMission?.id || "none"}
-            refreshVersion={journeyRefresh}
-            onWatch={setMissionWatch}
+            key={activeMission ? `${activeMission.workspace_id}:${activeMission.id}` : "none"}
+            journey={journey}
             mission={activeMission}
             sessions={sessions.filter((s) => !activeMission || s.mission_id === activeMission.id)}
-            watch={missionWatch?.mission_id === activeMission?.id ? missionWatch : null}
+            watch={watch}
             accounts={accounts}
             activity={activity}
             client={webClient}
@@ -357,7 +356,8 @@ export function App() {
             onRefresh={refresh}
             onReview={() => setScreen("review")}
           />
-        )}
+        ) : null}
+        </MissionJourney>
         {screen === "squads" && (
           <Squads
             squads={squads}
@@ -470,7 +470,7 @@ export function App() {
           />
         )}
         {screen === "activity" && <ActivityScreen activity={activity} sessions={sessions} missions={missions} onOpenMission={(m) => { setActiveMission(m); go("room"); }} />}
-        {screen === "review" && <Review watch={missionWatch?.mission_id === activeMission?.id ? missionWatch : null} mission={activeMission} onBack={() => go("room")} />}
+        {screen === "review" && <Review watch={watch} mission={activeMission} onBack={() => go("room")} />}
       </Shell>
       {phone ? (
         <BottomNav
@@ -660,6 +660,7 @@ function Missions({
   squads,
   workspace,
   watch,
+  selectedState,
   attention,
   onOpen,
   onCreated,
@@ -669,6 +670,7 @@ function Missions({
   squads: Squad[];
   workspace?: Workspace;
   watch: Watch | null;
+  selectedState: ExecutionState | null;
   attention: string;
   onOpen: (m: Mission) => void;
   onCreated: (m: Mission) => void;
@@ -676,11 +678,14 @@ function Missions({
 }) {
   const [filter, setFilter] = useState("all");
   const [creating, setCreating] = useState(false);
-  const active = missions.filter((m) => !/done|complete|conclu/i.test(m.status));
-  const done = missions.filter((m) => /done|complete|conclu/i.test(m.status));
+  const stateFor = (m: Mission) => selectedState?.target.mission_id === m.id && selectedState.target.binding.workspace_id === m.workspace_id ? selectedState : null;
+  const completed = (m: Mission) => {
+    const state = stateFor(m);
+    return !!state?.opened_digest && !state.active && !state.watch?.pending_question && state.watch?.header?.state === "done" && !!state.gate && (!state.gate.required || state.gate.cleared);
+  };
+  const active = missions.filter(m => !completed(m));
+  const done = missions.filter(completed);
   const shown = filter === "active" ? active : filter === "done" ? done : missions;
-  const crit = criteria(watch);
-  const pct = crit.length ? Math.round((100 * crit.filter((c) => c.state === "pass").length) / crit.length) : null;
   return (
     <div className="page">
       <PageHeader
@@ -717,7 +722,12 @@ function Missions({
         </div>
         {shown.length === 0 ? <EmptyState title={T("no_missions_filter")} /> : null}
         {shown.map((m) => {
-          const attn = Boolean(m.attention) || (attention && activeMissionMatch(m, watch));
+          const state = stateFor(m);
+          const status = completed(m) ? "done" : state ? "running" : /done|complete|conclu/i.test(m.status) ? "unknown" : m.status;
+          const exact = activeMissionMatch(m, watch);
+          const crit = criteria(exact ? watch : null);
+          const pct = crit.length ? Math.round((100 * crit.filter(c => c.state === "pass").length) / crit.length) : null;
+          const attn = exact ? attention : m.attention;
           return (
             <button key={m.id} type="button" className={attn ? "mission-grid row-warn" : "mission-grid"} onClick={() => onOpen(m)}>
               <span style={{ display: "flex", flexDirection: "column" }}>
@@ -729,8 +739,8 @@ function Missions({
               </span>
               <span style={{ fontSize: 13 }}>{m.squad_snapshot?.name || "—"}</span>
               <span>
-                <Badge tone={missionTone(m.status, attn ? "1" : m.attention)} dot>
-                  {missionStatusLabel(m.status, attn ? "1" : m.attention)}
+                <Badge tone={missionTone(status, attn ? "1" : m.attention)} dot>
+                  {state ? executionLabel(state, true, false) : missionStatusLabel(status, attn ? "1" : m.attention)}
                 </Badge>
               </span>
               <span style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -740,7 +750,7 @@ function Missions({
                 <Progress value={pct} unknown={pct == null} />
               </span>
               <span style={{ fontSize: 13, color: attn ? "var(--warning-text)" : undefined, fontWeight: attn ? 600 : 400 }}>
-                {attn ? attention || m.attention : T("follow_gates")}
+                {attn || T("follow_gates")}
               </span>
             </button>
           );
@@ -862,13 +872,12 @@ function NewMissionDialog({
 }
 
 function activeMissionMatch(m: Mission, watch: Watch | null) {
-  return Boolean(watch?.available && m.title && watch.delivery);
+  return Boolean(watch?.available && watch.source === "current" && watch.scope === "mission" && watch.mission_id === m.id && watch.workspace_id === m.workspace_id && watch.delivery && (!m.binding?.delivery_id || watch.delivery === m.binding.delivery_id));
 }
 
 function Room({
   mission,
-  refreshVersion,
-  onWatch,
+  journey,
   sessions,
   watch,
   accounts,
@@ -879,8 +888,7 @@ function Room({
   onReview,
 }: {
   mission: Mission | null;
-  refreshVersion: number;
-  onWatch: (watch: Watch | null) => void;
+  journey: ReactNode;
   sessions: Session[];
   watch: Watch | null;
   accounts: Account[];
@@ -991,7 +999,7 @@ function Room({
           <div className="caps">{T("mission_objective")}</div>
           <p className="mission-objective">{mission?.brief || mission?.title || "—"}</p>
           {mission ? <MissionPlanning mission={mission} sessions={sessions} client={client} onRefresh={onRefresh} /> : null}
-          {mission ? <MissionJourney mission={mission} refreshVersion={refreshVersion} onWatch={onWatch} /> : null}
+          {journey}
         </div>
       </section>
       {!skillsRoot && !live ? (

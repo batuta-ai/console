@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider } from "@lyra-ds/react/theme-provider";
@@ -477,4 +478,140 @@ test("ready configuration with historical stop intent does not instruct the user
   expect(screen.getByText("Configuration ready")).toBeVisible();
   expect(screen.getByText(/Termination outcome is unknown/)).toBeVisible();
   expect(screen.queryByText(/Confirm the inputs and account to retry/)).not.toBeInTheDocument();
+});
+
+test("event socket recovers once after error and close with exclusive cursor and renewed authentication", async () => {
+  const api = setupAPI();
+  const sockets: { url: string; onopen?: () => void; onmessage?: (event: { data: string }) => void; onerror?: () => void; onclose?: () => void; close: ReturnType<typeof vi.fn> }[] = [];
+  vi.stubGlobal("WebSocket", class {
+    close = vi.fn();
+    constructor(public url: string) { sockets.push(this); }
+  });
+  localStorage.setItem("bt-token", "first-token");
+  const view = render(<ThemeProvider defaultTheme="light"><App /></ThemeProvider>);
+  await screen.findByRole("button", { name: "Set up Batuta" });
+  vi.useFakeTimers();
+  try {
+    act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: "snapshot", events: [{ seq: 41 }, { seq: 42 }] }) }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    localStorage.setItem("bt-token", "renewed-token");
+    const count = api.requests.length;
+    act(() => { sockets[0].onerror?.(); sockets[0].onclose?.(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(sockets).toHaveLength(2);
+    const url = new URL(sockets[1].url);
+    expect(url.searchParams.get("cursor")).toBe("42");
+    expect(url.searchParams.get("token")).toBe("renewed-token");
+    act(() => sockets[1].onopen?.());
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect(api.requests.slice(count).filter(r => r.path === "/v0/missions")).toHaveLength(1);
+    expect(api.requests.slice(count).every(r => new Headers(r.init?.headers).get("Authorization") === "Bearer renewed-token")).toBe(true);
+    expect(api.requests.filter(r => r.init?.method === "POST")).toHaveLength(0);
+    view.unmount();
+    expect(sockets[1].close).toHaveBeenCalledTimes(1);
+    const requests = api.requests.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(sockets).toHaveLength(2);
+    expect(api.requests).toHaveLength(requests);
+  } finally { vi.useRealTimers(); }
+});
+
+test("StrictMode aborts obsolete catalog reads, bounds stalled refreshes and cancels all work on unmount", async () => {
+  vi.useFakeTimers();
+  const pending: RequestInit[] = [];
+  vi.stubGlobal("fetch", (path: string, init?: RequestInit) => {
+    if (path === "/v0/workspaces") {
+      pending.push(init || {});
+      return new Promise<Response>(() => {});
+    }
+    return Promise.resolve(Response.json(path === "/v0/skills" ? { skills: [] } : []));
+  });
+  try {
+    const view = await act(async () => render(<StrictMode><ThemeProvider defaultTheme="light"><App /></ThemeProvider></StrictMode>));
+    expect(pending).toHaveLength(2);
+    expect(pending[0].signal?.aborted).toBe(true);
+    expect(pending.filter(init => !init.signal?.aborted)).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(pending).toHaveLength(2);
+    expect(pending.every(init => init.signal?.aborted)).toBe(true);
+    expect(screen.getByText(/Request timed out/)).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(pending).toHaveLength(3);
+    expect(pending.filter(init => !init.signal?.aborted)).toHaveLength(1);
+    view.unmount();
+    expect(pending.every(init => init.signal?.aborted)).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(pending).toHaveLength(3);
+  } finally { vi.useRealTimers(); }
+});
+
+test("malformed event envelopes recover with bounded backoff and never advance the last verified cursor", async () => {
+  setupAPI();
+  const sockets: { url: string; onmessage?: (event: { data: string }) => void; onerror?: () => void; close: ReturnType<typeof vi.fn> }[] = [];
+  vi.stubGlobal("WebSocket", class {
+    close = vi.fn();
+    constructor(public url: string) { sockets.push(this); }
+  });
+  vi.useFakeTimers();
+  try {
+    const view = await act(async () => render(<ThemeProvider defaultTheme="light"><App /></ThemeProvider>));
+    act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: "snapshot", events: [{ seq: 10 }] }) }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: "event", event: { seq: 9 } }) }));
+    expect(screen.getByText(/Invalid event stream/)).toBeVisible();
+    for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000, 30000].entries()) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(delay - 1); });
+      expect(sockets).toHaveLength(index + 1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(sockets).toHaveLength(index + 2);
+      expect(new URL(sockets[index + 1].url).searchParams.get("cursor")).toBe("10");
+      act(() => sockets[index + 1].onerror?.());
+    }
+    view.unmount();
+    const count = sockets.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(sockets).toHaveLength(count);
+  } finally { vi.useRealTimers(); }
+});
+
+test("malformed catalog identities stay visible and recoverable without replacing the current catalog", async () => {
+  const api = setupAPI();
+  const user = await openSetup();
+  api.controls.workspaceResponse = Promise.resolve(Response.json([null]));
+  await user.click(screen.getByRole("button", { name: "Refresh setup" }));
+  expect(await screen.findByText(/Mission source, identity or supervision gate could not be verified/)).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Set up Batuta" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh setup" }));
+  await waitFor(() => expect(screen.queryByText(/Mission source, identity or supervision gate could not be verified/)).not.toBeInTheDocument());
+});
+
+test("an early catalog failure cancels unfinished parallel reads before the next poll", async () => {
+  const pending: AbortSignal[] = [];
+  vi.stubGlobal("fetch", (path: string, init?: RequestInit) => {
+    if (path === "/v0/workspaces") return Promise.resolve(Response.json({ error: "early catalog read failed" }, { status: 503 }));
+    if (path === "/v0/limits") {
+      if (!init?.signal) throw new Error("Missing catalog cancellation signal");
+      const signal = init.signal;
+      pending.push(signal);
+      return new Promise<Response>((_, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("canceled", "AbortError")), { once: true });
+      });
+    }
+    return Promise.resolve(Response.json(path === "/v0/skills" ? { skills: [] } : []));
+  });
+  vi.useFakeTimers();
+  try {
+    const view = await act(async () => render(<ThemeProvider defaultTheme="light"><App /></ThemeProvider>));
+    expect(screen.getByText(/early catalog read failed/)).toBeVisible();
+    expect(pending).toHaveLength(1);
+    expect(pending.every(signal => signal.aborted)).toBe(true);
+    for (const count of [2, 3]) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expect(pending).toHaveLength(count);
+      expect(pending.every(signal => signal.aborted)).toBe(true);
+    }
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(pending).toHaveLength(3);
+  } finally { vi.useRealTimers(); }
 });
