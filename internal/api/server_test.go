@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/batuta-ai/console/internal/client"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
@@ -533,6 +535,253 @@ func TestSessionPersistenceBoundaries(t *testing.T) {
 			events, err := st.EventsSince(0, 100)
 			if err != nil || len(events) != 0 {
 				t.Errorf("event escaped transaction: %+v %v", events, err)
+			}
+		})
+	}
+}
+
+// The same typed client crosses the authenticated handler without a listener or provider.
+type namedClientHandlerTransport struct{ handler http.Handler }
+
+func (tr namedClientHandlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	tr.handler.ServeHTTP(rec, r)
+	return rec.Result(), nil
+}
+func TestNamedClientCatalogHandler(t *testing.T) {
+	h, _ := testServer(t)
+	c := client.New("http://fixture", "test-token")
+	c.HTTP.Transport = namedClientHandlerTransport{h}
+	ctx := context.Background()
+	ws, err := c.CreateWorkspace(ctx, client.CreateWorkspaceRequest{Name: "selected", Root: t.TempDir()})
+	if err != nil || ws.ID == "" {
+		t.Fatalf("workspace %+v %v", ws, err)
+	}
+	q, err := c.SaveSquad(ctx, domain.Squad{Name: "local draft"})
+	if err != nil || q.ID == "" {
+		t.Fatalf("squad %+v %v", q, err)
+	}
+	val, err := c.ValidateSquad(ctx, q.ID, &domain.Squad{ID: q.ID, Name: "changed local draft"})
+	if err != nil || val.Squad.ID != q.ID || val.Squad.Name != "changed local draft" {
+		t.Fatalf("draft %+v %v", val, err)
+	}
+	squads, err := c.ListSquads(ctx)
+	if err != nil || len(squads) != 1 || squads[0].Name != "local draft" {
+		t.Fatalf("validation saved draft: %+v %v", squads, err)
+	}
+	m, err := c.CreateMission(ctx, client.CreateMissionRequest{WorkspaceID: ws.ID, Title: "exact mission", Brief: "exact brief", SquadID: q.ID})
+	if err != nil || m.ID == "" || m.WorkspaceID != ws.ID {
+		t.Fatalf("mission %+v %v", m, err)
+	}
+	missions, err := c.ListMissions(ctx, ws.ID)
+	if err != nil || len(missions) != 1 || missions[0].ID != m.ID {
+		t.Fatalf("missions %+v %v", missions, err)
+	}
+	watch, err := c.MissionWatch(ctx, m.ID, ws.ID, "")
+	if err != nil || watch.MissionID != m.ID || watch.WorkspaceID != ws.ID || watch.Message != "mission_unassigned" {
+		t.Fatalf("watch %+v %v", watch, err)
+	}
+	caps, err := c.Capabilities(ctx)
+	if err != nil || caps.API != "v0" || caps.Matrix.Qualification.Status == "" || caps.Runtime.GoVersion == "" {
+		t.Fatalf("capabilities %+v %v", caps, err)
+	}
+	sessions, err := c.ListSessions(ctx)
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("catalog unexpectedly dispatched: %+v %v", sessions, err)
+	}
+	c.Token = "wrong"
+	_, err = c.CreateMission(ctx, client.CreateMissionRequest{WorkspaceID: ws.ID})
+	var failure *client.OperationError
+	if !errors.As(err, &failure) || failure.Status != 401 || failure.Code != "unauthorized" || failure.Effect != client.EffectRejected {
+		t.Fatalf("auth %v", err)
+	}
+}
+
+func TestNamedClientReadFactsAcrossAuthenticatedHTTP(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "batuta", "adapters"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "batuta", "SKILL.md"), []byte("# fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillsRoot, err := filepath.EvalSymlinks(filepath.Join(root, "batuta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATUTA_SKILLS", root)
+	h, svc := testServer(t)
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	c := client.New(ts.URL, "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	skills, err := c.Skills(ctx)
+	if err != nil || skills.Root != skillsRoot || !skills.InjectDefault {
+		t.Fatalf("skills %+v %v", skills, err)
+	}
+	found := false
+	for _, skill := range skills.Skills {
+		if skill.ID == "batuta" {
+			found = true
+			if !skill.Installed || skill.Origin != "batuta" || skill.Path != skillsRoot {
+				t.Fatalf("installed skill %+v", skill)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("selected installed skill missing")
+	}
+	a := domain.Account{ID: "account-read-facts", Label: "selected account", Adapter: "codex"}
+	if err := svc.Store.PutAccount(a); err != nil {
+		t.Fatal(err)
+	}
+	quota, err := c.Limits(ctx)
+	if err != nil || len(quota) != 1 {
+		t.Fatalf("limits %+v %v", quota, err)
+	}
+	q := quota[0]
+	if q.AccountID != a.ID || q.Label != a.Label || q.Window != "unknown" || q.Source != domain.SourceUnavailable || q.Origin != "not_qualified" || q.Percent != nil || q.ObservedAt != nil || q.ResetAt != nil || q.LastAttempt.IsZero() {
+		t.Fatalf("unknown quota facts changed: %+v", q)
+	}
+	ws, err := c.CreateWorkspace(ctx, client.CreateWorkspaceRequest{Name: "selected", Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch, err := c.WorkspaceWatch(ctx, ws.ID, "")
+	if err != nil || watch.WorkspaceID != ws.ID || watch.Workspace != ws.Root || watch.Scope != "workspace" || watch.Message != "delivery_unassigned" || watch.Available || watch.Source != domain.SourceUnavailable {
+		t.Fatalf("workspace watch %+v %v", watch, err)
+	}
+	event, err := svc.Store.AppendEvent("selected.read-facts", map[string]any{"account_id": a.ID, "workspace_id": ws.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activity, err := c.Activity(ctx)
+	if err != nil || len(activity) != 2 {
+		t.Fatalf("activity %+v %v", activity, err)
+	}
+	if activity[0].Kind != "workspace.created" || activity[0].Seq != event.Seq-1 || activity[0].Payload["id"] != ws.ID {
+		t.Fatalf("chronological activity changed: %+v", activity)
+	}
+	got := activity[1]
+	if got.Seq != event.Seq || got.Kind != event.Kind || !got.At.Equal(event.At) || !reflect.DeepEqual(got.Payload, event.Payload) {
+		t.Fatalf("activity identity changed: %+v want %+v", got, event)
+	}
+	for _, read := range []func() error{
+		func() error { _, err := c.Skills(ctx); return err },
+		func() error { _, err := c.Limits(ctx); return err },
+		func() error { _, err := c.Activity(ctx); return err },
+		func() error { _, err := c.WorkspaceWatch(ctx, ws.ID, ""); return err },
+	} {
+		c.Token = "wrong"
+		var failure *client.OperationError
+		if err := read(); !errors.As(err, &failure) || failure.Status != 401 || failure.Code != "unauthorized" || failure.Effect != client.EffectReadOnly {
+			t.Fatalf("read authentication %v", err)
+		}
+	}
+}
+
+func TestNamedClientBindingAndRecoveryAcrossAuthenticatedHTTP(t *testing.T) {
+	h, svc := testServer(t)
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	c := client.New(ts.URL, "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ws, err := c.CreateWorkspace(ctx, client.CreateWorkspaceRequest{Name: "selected", Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := bindingFixture(t, ws.Root, "selected", "selected-run")
+	squad, err := c.SaveSquad(ctx, domain.Squad{Name: "selected squad"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := c.CreateMission(ctx, client.CreateMissionRequest{WorkspaceID: ws.ID, Title: "selected mission", Brief: "exact brief", SquadID: squad.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := c.BindMission(ctx, m.ID, client.MissionBindingRequest{WorkspaceID: ws.ID, PlanPath: path, DeliveryID: "selected-run"})
+	if err != nil || bound.ID != m.ID || bound.WorkspaceID != ws.ID || bound.Binding == nil || bound.Binding.WorkspaceID != ws.ID || bound.Binding.PlanPath != path || bound.Binding.DeliveryID != "selected-run" || bound.Binding.OpenedDigest == "" {
+		t.Fatalf("binding %+v %v", bound, err)
+	}
+	record := domain.Session{ID: "selected-recovery", MissionID: m.ID, MemberID: "selected-member", Process: "unknown", RecoveryReason: "process_missing", Owner: "none"}
+	if err := svc.Store.PutSession(record); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := c.ListSessions(ctx)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("recoverable catalog %+v %v", sessions, err)
+	}
+	got := sessions[0]
+	if got.ID != record.ID || got.MissionID != m.ID || got.MemberID != record.MemberID || got.Process != record.Process || got.RecoveryReason != record.RecoveryReason || got.Owner != "none" || got.OwnerClient != "" {
+		t.Fatalf("recoverable identity changed: %+v", got)
+	}
+}
+
+func TestNamedClientEventsAuthenticatedCursor(t *testing.T) {
+	for _, mode := range []string{"zero", "exclusive", "future"} {
+		t.Run(mode, func(t *testing.T) {
+			h, svc := testServer(t)
+			first, err := svc.Store.AppendEvent("selected.first", map[string]any{"mission_id": "exact"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := svc.Store.AppendEvent("selected.second", map[string]any{"mission_id": "exact"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(h)
+			defer server.Close()
+			c := client.New(server.URL, "test-token")
+			cursor := int64(0)
+			if mode == "exclusive" {
+				cursor = first.Seq
+			}
+			if mode == "future" {
+				cursor = second.Seq + 100
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stream, err := c.DialEvents(ctx, &cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			env, err := stream.Read(ctx)
+			if err != nil || env.Type != "snapshot" {
+				t.Fatalf("snapshot %+v %v", env, err)
+			}
+			want := 2
+			if mode == "exclusive" {
+				want = 1
+			}
+			if mode == "future" {
+				want = 0
+			}
+			if len(env.Events) != want {
+				t.Fatalf("cursor reset/replayed %+v", env)
+			}
+			for _, ev := range env.Events {
+				if ev.Seq <= cursor || ev.At.IsZero() || ev.Payload["mission_id"] != "exact" {
+					t.Fatalf("event %+v", ev)
+				}
+			}
+			if mode != "future" {
+				live, err := svc.Store.AppendEvent("selected.live", map[string]any{"mission_id": "exact"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				env, err = stream.Read(ctx)
+				if err != nil || env.Type != "event" || env.Event == nil || env.Event.Seq != live.Seq {
+					t.Fatalf("live %+v %v", env, err)
+				}
+			}
+			c.Token = "wrong"
+			_, err = c.DialEvents(ctx, &cursor)
+			var failure *client.OperationError
+			if !errors.As(err, &failure) || failure.Status != 401 || failure.Code != "unauthorized" || failure.Message == "" {
+				t.Fatalf("handshake %v", err)
 			}
 		})
 	}

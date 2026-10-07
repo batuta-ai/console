@@ -110,7 +110,7 @@
       Depends on: 14
       Scope: internal/adapters/**, internal/session/pty_unix.go, internal/session/pty_windows.go, internal/session/pty_unix_test.go, internal/session/pty_windows_test.go, internal/session/pty_test.go, internal/domain/**, internal/api/**, README.md
       Accept: Capabilities distinguem plataforma compilável, PTY disponível e adapter qualificado, com Windows fora da matriz selecionada → go test ./internal/adapters ./internal/api -count=1; Interfaces não oferecem ações que o ambiente não pode executar
-- [ ] 27. Completar contratos do cliente para a operação da TUI — backend/medium
+- [x] 27. Completar contratos do cliente para a operação da TUI — backend/medium
       Depends on: 16, 19, 20, 21, 23, 26
       Scope: internal/client/**, internal/domain/**, internal/api/server_test.go
       Accept: Cliente cobre contas/login, workspace/init, squads/missões, detalhe/aprovação de plano, execução/retomada e pergunta exata com erros tipados → go test ./internal/client ./internal/domain -count=1; Requests têm cancelamento e testes com servidor temporário verificam corpos e identidades, sem depender de estado global
@@ -391,3 +391,6 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 
 
 **Task25 concluída,2026-10-06.** Identidade real task/member/session, release none owner-only, dois clientes HTTP/WS/PTy reais, contas/squads consecutivos e recuperação manual sem replay. Fonte ccce9685ab98bd60b3a17bf47fa8ca512cb902fe; web165/0/0 Mac/Linux/types/build/assetparity; Go235paths idênticos ao f759 com fullnormal/race/vet/scan/TCPWSPTY raws reaproveitados explicitamente. Pacotes/embedded/currentcmdGo/HTTP/version/nativeMac/Linux qualificados. Final Sonnet6/6/guardclean; julgamentos completos na trilha. F3 retainedSquad estacionamento/descarte explícito e fixture eventfault seguemQA41; não declarar marco funcional completo. Próxima27,29/45 concluídas16pendentes. Todasworktrees preservadas.
+
+
+**Task27 concluída,2026-10-06.** Cliente nomeado/contextual tipado para contas,setup,workspace,squad,missão,controle/watch/capabilities/limits/activity e eventos canceláveis; contratos imutáveis plan/native/question/terminal preservados. Fonte cfd07d888c48a6c4fe0cc8efb90583b4e4a3c7c5; currentMacLinuxfullGo/allrace/vet/bins/defaultweb165/types/assets/modverify, Macscan/release6/journey/4packages/nativeHTTP/provenance qualificados. Cancelamento realHTTPWS comcause/status/effect e limpeza semreplay;20repetições verdes e originalred/green retidos. Mediumfirst+retry→highfirst+retry1→criticalselftest-onlyacceptedcoverageproofs; Sonnet6/6/guardclean. Sem deps/APIproduction/TUIflows/credenciais alteradas. Próxima28technicalcontractcriticalself;30/45concluídas15pendentes. Windows/provider/browserQA/publicação seguemabertos; todasworktreesWIPpreservadas.
