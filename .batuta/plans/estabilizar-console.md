@@ -114,13 +114,13 @@
       Depends on: 16, 19, 20, 21, 23, 26
       Scope: internal/client/**, internal/domain/**, internal/api/server_test.go
       Accept: Cliente cobre contas/login, workspace/init, squads/missões, detalhe/aprovação de plano, execução/retomada e pergunta exata com erros tipados → go test ./internal/client ./internal/domain -count=1; Requests têm cancelamento e testes com servidor temporário verificam corpos e identidades, sem depender de estado global
-- [ ] 28. Definir o contrato técnico do terminal interativo da TUI — frontend/critical
+- [x] 28. Definir o contrato técnico do terminal interativo da TUI — frontend/critical
       Depends on: 9, 13, 26, 27
       Scope: docs/tui-terminal.md
       Accept: Documento compara suporte disponível e registra a escolha de emulação compatível com Bubble Tea, input/foco/resize/scroll e alternate screen; Casos de prova incluem Unicode, cursor, clear screen, sinais, reconexão e interação com Codex e Claude, com riscos e versões verificadas nas fontes oficiais
 - [ ] 29. Implementar emulação e controle de terminal na TUI — frontend/high
       Depends on: 9, 27, 28
-      Scope: internal/tui/**, internal/client/term.go, internal/client/*_test.go, go.mod, go.sum, scripts/qualify-terminal.sh
+      Scope: internal/tui/**, internal/client/term.go, internal/client/*_test.go, go.mod, go.sum, scripts/qualify-terminal.sh, internal/api/server.go (terminal stream only), internal/api/server_test.go, internal/api/terminal*_test.go, internal/session/manager.go (terminal subscription only), internal/session/manager_test.go, internal/session/terminal*_test.go
       Accept: Fixtures de cursor/clear/alternate screen/Unicode/resize mantêm buffer de tela correto e input não conflita com atalhos do painel → go test ./internal/tui ./internal/client -count=1; Attach/detach, transferência de controle e stop preservam ownership e o processo correto → sh scripts/qualify-terminal.sh --fixtures
 - [ ] 30. Implementar onboarding e contas Codex/Claude na TUI — frontend/high
       Depends on: 14, 27, 29
@@ -394,3 +394,6 @@ Documentação pública de produto continua em inglês como os docs existentes; 
 
 
 **Task27 concluída,2026-10-06.** Cliente nomeado/contextual tipado para contas,setup,workspace,squad,missão,controle/watch/capabilities/limits/activity e eventos canceláveis; contratos imutáveis plan/native/question/terminal preservados. Fonte cfd07d888c48a6c4fe0cc8efb90583b4e4a3c7c5; currentMacLinuxfullGo/allrace/vet/bins/defaultweb165/types/assets/modverify, Macscan/release6/journey/4packages/nativeHTTP/provenance qualificados. Cancelamento realHTTPWS comcause/status/effect e limpeza semreplay;20repetições verdes e originalred/green retidos. Mediumfirst+retry→highfirst+retry1→criticalselftest-onlyacceptedcoverageproofs; Sonnet6/6/guardclean. Sem deps/APIproduction/TUIflows/credenciais alteradas. Próxima28technicalcontractcriticalself;30/45concluídas15pendentes. Windows/provider/browserQA/publicação seguemabertos; todasworktreesWIPpreservadas.
+
+
+**Task28 concluída,2026-10-06.** Contrato técnico inglês escolhe plainx/vtad85/BubbleTeaexistente; fonte oficialGoProxy/33arquivos imutáveis/sixSHA/18âncoras. Screen/cell/renderGraphemeWidth, main/altknown10000line5Mhiddenexception, ownedInputPipeCloser/drainjoin antesClose,64KiBexplicitbothWSlimits/chunk/order/overflow1013 e autenticação/controle/stop/reconnect/signals. Sourcefacts nãoqualificamruntime/provider/Windows. Criticalselfdocfirst+retry e correçãofactualwidth; preservadas todasWIPs/reviewsincluindo75sformatinvalid. FinalSonnet66.22s/2DONE/fullguard/FINDINGSnone. 29Scopeampliada só terminalstream/subscription+testspaths para3defeitos de fonte: JSONpastecontrol ambiguity, replay/live order, silentoverload/readlimits; WeblegacyJSONpaste segueQA41, sharedconsumercompatprovas29. Original29aceites inalterados.31/45concluídas14pendentes.
