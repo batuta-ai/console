@@ -122,7 +122,7 @@
       Depends on: 9, 27, 28
       Scope: internal/tui/**, internal/terminalengine/** (disclosed licensed headless derivative only), internal/client/term.go, internal/client/*_test.go, go.mod, go.sum, scripts/qualify-terminal.sh, THIRD_PARTY_NOTICES (full copied MIT notice only), .goreleaser.yaml (archive notice inclusion only), scripts/verify-packages.mjs (exact archive notice verification only), internal/api/server.go (terminal stream only), internal/api/server_test.go, internal/api/terminal*_test.go, internal/session/manager.go (terminal subscription, verified resize-geometry facts and cancellable input backpressure only), internal/session/terminal*.go (existing PTY input helpers only), internal/session/manager_test.go, internal/session/terminal*_test.go
       Accept: Fixtures de cursor/clear/alternate screen/Unicode/resize mantêm buffer de tela correto e input não conflita com atalhos do painel → go test ./internal/tui ./internal/client -count=1; Attach/detach, transferência de controle e stop preservam ownership e o processo correto → sh scripts/qualify-terminal.sh --fixtures
-- [ ] 30. Implementar onboarding e contas Codex/Claude na TUI — frontend/high
+- [x] 30. Implementar onboarding e contas Codex/Claude na TUI — frontend/high
       Depends on: 14, 27, 29
       Scope: internal/tui/**, internal/i18n/**, cmd/console/**
       Accept: Instalação vazia cria conta isolada, conecta e abre login oficial para Codex/Claude, com estados e recuperação de erro → go test ./internal/tui ./internal/i18n ./cmd/console -count=1; Dois cadastros consecutivos não reutilizam o draft e ações pending não duplicam contas ou sessões de login

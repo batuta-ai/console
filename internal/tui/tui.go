@@ -23,11 +23,14 @@ const (
 	scrSquads   screen = "squads"
 	scrEditor   screen = "editor"
 	scrAccounts screen = "accounts"
+	scrAccount  screen = "account"
 	scrActivity screen = "activity"
 	scrReview   screen = "review"
 )
 
 type model struct {
+	account    accountFlow
+	accountIO  *terminalLifetime
 	api        *client.Client
 	clientID   string
 	screen     screen
@@ -58,10 +61,18 @@ type model struct {
 }
 
 func New(api *client.Client) tea.Model {
-	return model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}}
+	m := model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}, accountIO: &terminalLifetime{}}
+	m.readAccounts()
+	return m
 }
 
-func (m model) Init() tea.Cmd { return tea.Batch(m.refresh(), m.tick()) }
+func (m model) Init() tea.Cmd {
+	var read tea.Cmd
+	if m.account.read != nil {
+		read = m.account.read.run
+	}
+	return tea.Batch(m.refresh(), read, m.tick())
+}
 
 func (m model) tick() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
@@ -75,9 +86,9 @@ func (m model) refresh() tea.Cmd {
 		_ = m.api.Get("/v0/workspaces", &msg.ws)
 		_ = m.api.Get("/v0/missions", &msg.missions)
 		_ = m.api.Get("/v0/squads", &msg.squads)
-		_ = m.api.Get("/v0/accounts", &msg.accounts)
 		_ = m.api.Get("/v0/activity", &msg.activity)
-		_ = m.api.Get("/v0/sessions", &msg.sessions)
+		msg.sessionsErr = m.api.Get("/v0/sessions", &msg.sessions)
+		msg.accountRevision = m.account.revision
 		_ = m.api.Get("/v0/limits", &msg.limits)
 		if len(msg.ws) > 0 {
 			wsID := msg.ws[0].ID
@@ -96,21 +107,25 @@ func (m model) refresh() tea.Cmd {
 }
 
 type dataMsg struct {
-	ws       []domain.Workspace
-	missions []domain.Mission
-	squads   []domain.Squad
-	accounts []domain.Account
-	activity []domain.Event
-	sessions []domain.Session
-	limits   []domain.LimitSnapshot
-	watch    domain.WatchView
+	sessionsErr     error
+	accountRevision uint64
+	ws              []domain.Workspace
+	missions        []domain.Mission
+	squads          []domain.Squad
+	activity        []domain.Event
+	sessions        []domain.Session
+	limits          []domain.LimitSnapshot
+	watch           domain.WatchView
 }
 
 type statusMsg string
 
 func (m model) applyData(msg dataMsg) model {
-	m.ws, m.missions, m.squads, m.accounts, m.activity = msg.ws, msg.missions, msg.squads, msg.accounts, msg.activity
-	m.sessions, m.limits, m.watch = msg.sessions, msg.limits, msg.watch
+	m.ws, m.missions, m.squads, m.activity = msg.ws, msg.missions, msg.squads, msg.activity
+	m.limits, m.watch = msg.limits, msg.watch
+	if msg.sessionsErr == nil && msg.accountRevision == m.account.revision {
+		m.sessions = msg.sessions
+	}
 	return m
 }
 
@@ -121,8 +136,18 @@ type createdMsg struct {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case accountResult:
+		return m.applyAccountResult(msg)
+	case accountJoined:
+		for _, result := range msg.results {
+			m, _ = m.applyAccountResult(result)
+		}
+		if msg.exit != nil {
+			return m.Update(msg.exit)
+		}
+		return m, nil
 	case terminalExitRequest:
-		return m.exitTerminal(msg.suspend)
+		return m.exitAccountWork(msg.suspend)
 	case terminalExitReady:
 		m.exitReady = true
 		if msg.suspend {
@@ -132,6 +157,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case terminalResumed:
 		m.exiting, m.exitReady, m.termMode = false, false, false
 		m.lifetime = &terminalLifetime{}
+		m.accountIO = &terminalLifetime{}
 		m.link = nil
 		m.termFrame.disconnected = true
 		m.termFrame.owned = false
@@ -148,7 +174,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataMsg:
 		m = m.applyData(msg)
 	case tickMsg:
-		return m, tea.Batch(m.refresh(), m.tick())
+		read := m.readAccounts()
+		return m, tea.Batch(m.refresh(), read, m.tick())
 	case statusMsg:
 		m.validMsg = string(msg)
 	case createdMsg:
@@ -194,6 +221,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitPTY()
 	case tea.PasteMsg:
+		if !m.termMode && m.screen == scrAccount && m.account.form && m.account.pending == nil && m.account.uncertain == nil {
+			m.account.label = accountLabel(m.account.label, msg.Content)
+		}
 		if m.termMode && m.link != nil {
 			m.link.offer(terminalAction{paste: &msg.Content})
 		}
@@ -239,9 +269,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == scrEditor {
 			return m.updateEditor(msg)
 		}
+		if m.account.uncertain != nil && m.account.pending == nil {
+			switch msg.String() {
+			case "f":
+				return m, m.inspectAccounts()
+			case "d":
+				return m.acknowledgeAccount(), nil
+			}
+		}
+		if m.screen == scrAccount {
+			return m.updateAccount(msg)
+		}
+		if m.screen == scrAccounts {
+			switch msg.String() {
+			case "f":
+				return m, m.inspectAccounts()
+			case "d":
+				return m.acknowledgeAccount(), nil
+			}
+		}
+		previousScreen := m.screen
 		switch msg.String() {
 		case "ctrl+c", "q":
-			return m.exitTerminal(false)
+			return m.exitAccountWork(false)
 		case "down":
 			m.cursor++
 		case "up":
@@ -322,9 +372,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "n":
+			if m.screen == scrHome || m.screen == scrAccounts {
+				return m.startAccountForm(), nil
+			}
 			if m.screen == scrSquads {
 				return m, m.createSquad()
 			}
+		}
+		if previousScreen == scrAccounts && m.screen != scrAccounts && m.screen != scrAccount {
+			m.account.epoch++
+			return m, m.cancelAccountRequests()
 		}
 	}
 	return m, nil
@@ -333,7 +390,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m.exitTerminal(false)
+		return m.exitAccountWork(false)
 	case "down":
 		if m.editIdx < len(m.editor.Members)-1 {
 			m.editIdx++
@@ -411,9 +468,9 @@ func (m model) createSquad() tea.Cmd {
 		_ = m.api.Get("/v0/workspaces", &msg.ws)
 		_ = m.api.Get("/v0/missions", &msg.missions)
 		_ = m.api.Get("/v0/squads", &msg.squads)
-		_ = m.api.Get("/v0/accounts", &msg.accounts)
 		_ = m.api.Get("/v0/activity", &msg.activity)
-		_ = m.api.Get("/v0/sessions", &msg.sessions)
+		msg.sessionsErr = m.api.Get("/v0/sessions", &msg.sessions)
+		msg.accountRevision = m.account.revision
 		_ = m.api.Get("/v0/limits", &msg.limits)
 		return createdMsg{q: q, data: msg}
 	}
@@ -422,6 +479,9 @@ func (m model) createSquad() tea.Cmd {
 func (m model) open() model {
 	switch m.screen {
 	case scrHome:
+		if len(m.accounts) == 0 && len(m.ws) == 0 {
+			return m.startAccountForm()
+		}
 		m.screen = scrMissions
 	case scrMissions:
 		if m.cursor < len(m.missions) {
@@ -433,6 +493,13 @@ func (m model) open() model {
 			m.editor = m.squads[m.cursor]
 			m.editIdx, m.validMsg = 0, ""
 			m.screen = scrEditor
+		}
+	case scrAccounts:
+		if m.cursor >= 0 && m.cursor < len(m.accounts) {
+			m.account.epoch++
+			m.account.selected = m.accounts[m.cursor]
+			m.account.form, m.account.missing = false, false
+			m.screen = scrAccount
 		}
 	case scrActivity:
 		m.screen = scrRoom
@@ -464,11 +531,14 @@ func (m model) render() string {
 		m.viewEditor(&b)
 	case scrAccounts:
 		m.viewAccounts(&b)
+	case scrAccount:
+		m.viewAccount(&b)
 	case scrActivity:
 		m.viewActivity(&b)
 	case scrReview:
 		m.viewReview(&b)
 	}
+	m.viewAccountNotice(&b)
 	panel := asciiFold(b.String())
 	b.Reset()
 	var terminal strings.Builder
@@ -496,6 +566,8 @@ func (m model) render() string {
 	fmt.Fprintln(&b, rule(m.width))
 	if m.termMode {
 		fmt.Fprintln(&b, i18n.T("term"))
+	} else if m.screen == scrAccount || m.screen == scrAccounts {
+		fmt.Fprintln(&b, m.accountKeys())
 	} else if m.screen == scrEditor {
 		fmt.Fprintln(&b, "n add  x remove  m maestro  v validate  s save  esc back")
 	} else {
@@ -505,6 +577,9 @@ func (m model) render() string {
 }
 
 func (m model) viewHome(b *strings.Builder) {
+	if len(m.accounts) == 0 {
+		fmt.Fprintln(b, i18n.T("account_empty"))
+	}
 	fmt.Fprintf(b, "\n%s\n\n", i18n.T("home"))
 	if line := m.watch.AttentionLine(); line != "" {
 		fmt.Fprintf(b, "%s  %s\n\n", i18n.T("needs_you"), line)
@@ -651,7 +726,7 @@ func (m model) viewEditor(b *strings.Builder) {
 
 func (m model) viewAccounts(b *strings.Builder) {
 	fmt.Fprintf(b, "\n%s\n", i18n.T("accounts"))
-	fmt.Fprintln(b, "ACCOUNT              ISOLATION           LIMIT                    BAR")
+	fmt.Fprintln(b, i18n.T("account_columns"))
 	for i, a := range m.accounts {
 		mark := "  "
 		if i == m.cursor {
@@ -672,11 +747,13 @@ func (m model) viewAccounts(b *strings.Builder) {
 			break
 		}
 		fmt.Fprintf(b, "%s%-20s %-18s %-24s %s\n", mark, clip(a.Label, 20), a.Isolation, clip(lim, 24), bar)
+		fmt.Fprintf(b, "  %s  %s\n", a.Adapter, i18n.T(accountReadiness(a)))
 	}
 	if len(m.accounts) == 0 {
-		fmt.Fprintln(b, "  no accounts")
+		fmt.Fprintln(b, i18n.T("account_empty"))
 	}
-	fmt.Fprintln(b, "connect creates an isolated HOME; official login is the session PTY")
+	fmt.Fprintln(b, i18n.T("account_connection_help"))
+	m.viewAccountSessions(b)
 }
 
 func limitBar(p float64) string {
@@ -757,6 +834,10 @@ func max(a, b int) int {
 func Run(api *client.Client) error {
 	m := New(api).(model)
 	if !isatty.IsTerminal(os.Stdout.Fd()) || os.Getenv("TERM") == "dumb" {
+		if m.account.read != nil {
+			m, _ = m.applyAccountResult(m.account.read.run().(accountResult))
+		}
+		defer m.accountIO.close()
 		msg := m.refresh()()
 		if dm, ok := msg.(dataMsg); ok {
 			m = m.applyData(dm)
@@ -769,6 +850,7 @@ func Run(api *client.Client) error {
 
 func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 	defer m.lifetime.close()
+	defer m.accountIO.close()
 	options = append(options, tea.WithoutSignalHandler(), tea.WithFilter(func(current tea.Model, msg tea.Msg) tea.Msg {
 		state := current.(model)
 		switch msg.(type) {
@@ -800,6 +882,7 @@ func runTerminalProgram(m model, options ...tea.ProgramOption) error {
 	final, err := p.Run()
 	if current, ok := final.(model); ok {
 		current.lifetime.close()
+		current.accountIO.close()
 	}
 	return err
 }
