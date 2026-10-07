@@ -602,7 +602,6 @@ function Home({
         description={T(attention ? "home_sub_attention" : "home_sub", {
           n: active.length,
           deliveries: T(active.length === 1 ? "delivery_one" : "delivery_many"),
-          plural: active.length === 1 ? "" : "s",
           ws: wsName,
         })}
         actions={

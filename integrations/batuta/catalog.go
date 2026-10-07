@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/i18n"
 	"github.com/batuta-ai/core/loop"
 )
 
@@ -25,17 +26,17 @@ type Skill struct {
 
 // OfficialSkills is the Batuta skill catalog shown in the Console.
 var OfficialSkills = []Skill{
-	{ID: "batuta", Name: "batuta", Origin: "batuta", Summary: "Conduz a tarefa sem escrever o código — classifica, roteia e verifica."},
-	{ID: "batuta-init", Name: "batuta-init", Origin: "batuta", Summary: "Perfil e onboarding do workspace."},
-	{ID: "batuta-plan", Name: "batuta-plan", Origin: "batuta", Summary: "Plano de implementação com critérios."},
-	{ID: "batuta-loop", Name: "batuta-loop", Origin: "batuta", Summary: "Ciclo de execução da entrega."},
-	{ID: "batuta-route", Name: "batuta-route", Origin: "batuta", Summary: "Roteamento de executor e modelo."},
-	{ID: "batuta-review", Name: "batuta-review", Origin: "batuta", Summary: "Revisão de diff, PR ou entrega."},
-	{ID: "batuta-status", Name: "batuta-status", Origin: "batuta", Summary: "Estado da missão e do journal."},
-	{ID: "batuta-pause", Name: "batuta-pause", Origin: "batuta", Summary: "Pausa com handoff para retomar depois."},
-	{ID: "batuta-resume", Name: "batuta-resume", Origin: "batuta", Summary: "Retoma a partir do handoff."},
-	{ID: "batuta-qa-plan", Name: "batuta-qa-plan", Origin: "batuta", Summary: "Plano de QA da entrega."},
-	{ID: "batuta-qa-run", Name: "batuta-qa-run", Origin: "batuta", Summary: "Execução do plano de QA."},
+	{ID: "batuta", Name: "batuta", Origin: "batuta", Summary: "Conducts the task without writing code: classifies, routes and verifies."},
+	{ID: "batuta-init", Name: "batuta-init", Origin: "batuta", Summary: "Workspace profile and onboarding."},
+	{ID: "batuta-plan", Name: "batuta-plan", Origin: "batuta", Summary: "Implementation plan with acceptance criteria."},
+	{ID: "batuta-loop", Name: "batuta-loop", Origin: "batuta", Summary: "Delivery execution cycle."},
+	{ID: "batuta-route", Name: "batuta-route", Origin: "batuta", Summary: "Executor and model routing."},
+	{ID: "batuta-review", Name: "batuta-review", Origin: "batuta", Summary: "Review of a diff, PR or delivery."},
+	{ID: "batuta-status", Name: "batuta-status", Origin: "batuta", Summary: "Mission and journal status."},
+	{ID: "batuta-pause", Name: "batuta-pause", Origin: "batuta", Summary: "Pause with a handoff for later resumption."},
+	{ID: "batuta-resume", Name: "batuta-resume", Origin: "batuta", Summary: "Resume from the handoff."},
+	{ID: "batuta-qa-plan", Name: "batuta-qa-plan", Origin: "batuta", Summary: "Delivery QA plan."},
+	{ID: "batuta-qa-run", Name: "batuta-qa-run", Origin: "batuta", Summary: "Execute the QA plan."},
 }
 
 // SkillsRoot is the directory used for session injection and skill discovery.
@@ -47,6 +48,7 @@ func ListSkills() []Skill {
 	seen := map[string]bool{}
 	out := make([]Skill, 0, len(OfficialSkills)+len(installed))
 	for _, sk := range OfficialSkills {
+		sk.Summary = i18n.T("skill_summary_" + sk.ID)
 		if p, ok := installed[sk.ID]; ok {
 			sk.Installed = true
 			sk.Path = p
@@ -65,7 +67,7 @@ func ListSkills() []Skill {
 		}
 		out = append(out, Skill{
 			ID: id, Name: id, Origin: "custom", Installed: true, Path: installed[id],
-			Summary: "Skill no disco, fora do catálogo Batuta.",
+			Summary: i18n.T("skill_summary_custom"),
 		})
 	}
 	return out

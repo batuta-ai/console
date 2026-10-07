@@ -141,7 +141,7 @@
 - [x] 34. Distinguir observações de quota atuais, antigas e desconhecidas — backend/medium
       Scope: plugins/limits/**, internal/domain/view.go, docs/domain.md
       Accept: Fixture antiga vira stale, tempo da medição não é substituído pelo tempo de leitura e valores/schema inválidos viram unknown → go test ./plugins/limits -count=1; Limite de sessões não vira quota do provedor e o modo importado/desconhecido está documentado
-- [ ] 35. Atualizar documentação de produto e textos PT/EN — docs/medium
+- [x] 35. Atualizar documentação de produto e textos PT/EN — docs/medium
       Depends on: 17, 22, 25, 26, 33, 34
       Scope: README.md, docs/api.md, docs/domain.md, internal/i18n/**, integrations/batuta/catalog.go, integrations/batuta/catalog_test.go, web/src/i18n.ts, web/src/App.tsx, web/src/ui.tsx, internal/webui/dist/**
       Accept: Docs descrevem login/init/aprovação/execução/perguntas/recuperação, erros e matriz suportada sem fallback de embed impossível; Fluxos novos têm textos PT/EN e não codificam resumos sempre em português → go test ./internal/i18n ./integrations/batuta; Tipagem e build web passam → npm --prefix web run build

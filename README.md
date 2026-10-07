@@ -5,9 +5,11 @@ and a versioned HTTP API; a Bubble Tea TUI and a loopback web app are
 clients of that daemon. Closing a client does not end a session.
 
 Batuta (`batuta-ai/core`) stays the authority for verified deliveries. The
-Console does not require Batuta to open a CLI. A new session injects Batuta
-by default (`BATUTA_SKILLS` and related env for that PTY only). Pass
-`"batuta": false` for a generic CLI. Missing skills still start the session.
+Console keeps catalog, approval receipts and processes separate from native
+delivery evidence. Official sessions require a selected isolated account and
+readiness checks. Batuta injection is requested by default; `"batuta": false`
+disables injection, not account/readiness guards. Missing required planning,
+init or role skills reject the launch; do not assume a generic-session fallback.
 
 Console depends on the published [`batuta-ai/core`](https://github.com/batuta-ai/core)
 module; no sibling checkout is required. It is not part of the core module
@@ -31,7 +33,7 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 ## Build and install from source
 
 Use Go 1.27.1 or newer and run these commands from a checkout of the desired
-Console revision. `go.mod` and `go.sum` pin the dependency graph, including
+Console revision (the qualified SDK here is Go 1.27.1). `go.mod` and `go.sum` pin the dependency graph, including
 Batuta core `v1.1.0-beta.49`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 
@@ -47,7 +49,8 @@ go build -o bin/console ./cmd/console
 go install ./cmd/consoled ./cmd/console
 ```
 
-The builds are written to `bin/`. Installation writes both commands to
+The builds are written to `bin/`. Keep both executables: `console` finds
+`consoled` on PATH, then beside itself. Installation writes both commands to
 `GOBIN`, or to `$(go env GOPATH)/bin` when `GOBIN` is unset; add that directory
 to `PATH`. The exported variables disable developer workspaces and saved
 Go settings for this shell, force module mode instead of vendoring, and enable
@@ -72,6 +75,119 @@ These commands verify installation from source. Installation by a public
 Console tag (`go install ...@<tag>`) remains pending publication and verification.
 The core pre-release is selected for development; stable publication still
 requires qualification against a stable core/plugin contract.
+
+## Operator journey (web and TUI)
+
+1. **Account.** Open Accounts; create a labelled Codex or Claude account and
+   select its actual catalog ID. Connect prepares that account's private HOME;
+   it does not log in. Use **Sign in** (TUI: `l`) to launch the official CLI
+   login in that HOME. Complete the login, return to Accounts and refresh.
+   Readiness checks the connected isolation, exact supported CLI banner and
+   fresh provider authentication with bounded checks. Credential-file presence,
+   a connected label or a started/exited login process does not establish readiness.
+   In the TUI, connecting an already connected account is a no-op; inspect
+   readiness with `f`.
+2. **Workspace.** Create/select a workspace by its actual ID. Enter an absolute
+   checkout directory or use the native folder picker; if it is unavailable,
+   enter the directory manually. Registration alone does not initialize Batuta.
+   Review **Stack, Methodology, Test, Build, Install, Execution, Worktree and
+   Template**, optional notes, and the explicitly selected ready account.
+   Execution is `sequential` or `parallel`; Worktree is `off`, `medium+` or
+   `always`. Each required field allows at most 8192 UTF-8 bytes with no NUL or
+   line breaks; notes allow 65536 UTF-8 bytes with no NUL. Confirm to start
+   official init. Configuration values are literal inputs, not shell commands
+   executed by the form. Init asks the CLI to write `.batuta/profile.md`,
+   `.batuta/routing.md` and `WORK.md` while preserving existing user content.
+3. **Inspect setup.** Select the actual init session to observe it. The latest
+   attempt and configuration readiness are separate facts. A stopped/exited
+   process does not prove valid configuration. Refresh setup to inspect disk
+   configuration and attempt state. The backend can reuse an identical live
+   account/input attempt; conflicting live inputs and already complete setup
+   reject a new start. An interrupted/unknown session is catalog history, not a
+   reconnectable PTY. Inspect before explicitly confirming another setup attempt.
+4. **Squad and mission.** Create or edit a squad; select actual member IDs,
+   providers, matching accounts, models/effort and named skills, with exactly one
+   Maestro. Save stores a version; Validate checks structure/readiness without
+   model generation. A stored non-draft squad does not guarantee fresh readiness.
+   Validation of a blank draft may use the stored squad and produce a generic
+   refusal; inspect the returned identity and keep the draft. Create the mission
+   with an explicit workspace, squad and objective. Review the actual returned
+   squad snapshot: later squad edits do not rewrite that mission snapshot.
+5. **Plan.** Open the mission and choose planning with its snapshot Maestro.
+   The CLI receives the mission goal in its launch arguments; the Console does
+   not type a planning command into the terminal. Planning starts an interactive
+   session, not native execution or approval. Inspect/select the exact returned
+   session and attach explicitly; observation does not take input ownership.
+   Alternatively, bind an exact existing plan path in the selected workspace.
+   The mission does not automatically adopt a nearby plan or journal.
+6. **Inspect and approve.** Before native binding, inspect all exact source bytes
+   and metadata. Approval records an immutable receipt with a SHA-256 version
+   covering every original byte. It neither changes the source's status nor runs
+   a model. Before the first start, any source-byte change requires fresh
+   inspection/approval. Keep the receipt identity, including its original
+   binding with empty delivery/opening fields.
+7. **Execute and recover.** Start native execution explicitly from that receipt.
+   It requires the selected ready accounts, installed skills, permitted routes
+   and a Core CLI matching the linked SDK (`v1.1.0-beta.49`). Start `consoled
+   -core /absolute/path/to/batuta` to choose that executable; otherwise it uses
+   `batuta` on PATH. This version/capability check does not close the separate
+   official Core binary security gate. Inspect the resulting deterministic
+   delivery and opening. Resume uses the **original receipt and target plus
+   that same delivery/opening**. After native binding, Plan Detail returns the
+   **original approved snapshot**, even if the editable source changed or was
+   deleted. Current editable bytes are unavailable through that API; there is
+   no local-file fallback. Historical receipts remain separate, read-only facts.
+8. **Questions and completion.** Answer the current question's exact identity
+   (mission, workspace, delivery, task, execution, question ID and opening).
+   Recording an answer does not resume execution. Inspect, then explicitly
+   resume the original delivery. Done requires the current cleared review gate,
+   matching evidence and current projection. Process exit, `active=false`,
+   catalog counters, attention flags and output volume are not completion proof.
+
+### TUI controls
+
+Use the keys shown by the focused screen. Accounts: `c`, `n` new, Enter details,
+`k` connect, `l` official login, `f` inspect. Workspaces: `w`, `n` new, Enter
+select, `e` setup, `f` inspect. Forms use Tab to change fields; review then
+ordinary Enter to confirm. Workspace setup uses Ctrl+R for review and Ctrl+A
+for account recovery. In text fields, letters and pasted text edit the draft.
+
+In a mission room: `p` planning, `b` bind an existing plan, `o` source detail,
+`k` current receipt, `h` historical receipt, `f` authoritative inspection,
+`e` start, `g` resume, `j` retained answer, `n` confirm a new answer draft,
+`w` full progress/evidence, `l` inspect an exact session ID. In source view,
+Up/Down pages through escaped exact bytes; after inspecting all pages, `y`
+reviews approval before native binding. Esc exits focused views/forms. In the
+mission room, `h` and `w` are local receipt/progress actions, not global
+home/workspace navigation. An answered or stale draft stays retained under `j`;
+leave the form and use `n` to explicitly confirm replacing it for the current question.
+
+Select a real session with `[` / `]`, `v` attach read-only, `t` take control,
+`i` enter child input, `u` release, `x` stop the selected process. Ownership is
+separate from attachment. Ctrl+] detaches from child input; child keystrokes
+are not navigation shortcuts. See [terminal behavior](docs/tui-terminal.md)
+for geometry, Unicode, bounded replay and reconnect limits.
+
+### Recoverable errors
+
+Keep confirmed identities and drafts when an operation fails. A timeout, lost
+reply, malformed/foreign response or cancellation after dispatch can leave an
+**uncertain effect**. Inspect the actual account/workspace/session, receipt or
+native delivery before another mutation; do not automatically repeat it or infer
+success from a catalog refresh. Inspection and acknowledgment do not themselves
+prove a mutation succeeded. A rejected operation may be corrected and explicitly
+submitted again only when its effect and current target are understood.
+
+For `cli_missing`/`cli_incompatible`, inspect the official CLI installation/version;
+for disconnected/invalid isolation, inspect the selected account's private home;
+for expired/invalid credentials, use its official login and refresh readiness.
+Provider/probe failures or cancelled checks require fresh inspection, not another
+account substituted silently. Missing selected skills or conflicting discovery
+links require reconciling that installation without overwriting existing content.
+Stale plan/question, foreign opening, review blocks and owned deliveries require
+inspection of their exact current authority. An `unknown` session cannot be
+reattached or stopped as though it were owned by this daemon. Reconnecting a
+terminal is observation; it is not replay of input, Start, Resume or Answer.
 
 ## Beta infrastructure
 
@@ -103,7 +219,11 @@ Native operational and full provider, mission, browser and TUI qualification
 remain pending. Native Windows portability and ConPTY/provider QA are Tasks42–44;
 the current PTY start/resize implementation rejects Windows operations. WSL
 proves Linux only. Other adapter catalog entries remain outside this matrix.
-Sporadic WSL fork `EPERM` and stable core/plugin publication evidence remain open.
+Reliability work remains open: sporadic Linux fork `EPERM`, event-fixture
+publication ordering and an unexplained resize-test failure. Full journey QA
+still needs stronger PT/error/tick/mutual-exclusion coverage, external plan
+rebind reconciliation, abnormal run lifetime and source-page cost checks.
+This documentation does not claim those gaps fixed.
 Source installation or component cross-compilation does not qualify a release.
 
 `GET /v0/capabilities` retains `api`, `product`, `lang`, `integrations`, the
@@ -151,8 +271,7 @@ login, init and execution: an explicit connected isolated account, bounded exact
 CLI version check and fresh provider authentication are separate requirements.
 Static isolation labels, installed executables, synthetic version fixtures and
 native PTY availability cannot substitute for these guards or full release QA.
-This endpoint supplies metadata for later clients; it adds no web/TUI flow and
-does not enable blocked operations.
+These observations do not enable blocked operations or replace per-account checks.
 
 ## Develop
 
@@ -167,8 +286,11 @@ npm --prefix web run build
 go build -o bin/consoled ./cmd/consoled
 ```
 
-Without a built `dist`, the daemon still serves a diagnostic page so the
-API can be exercised.
+The Go embed directive requires `internal/webui/dist` at compile time.
+Tracked assets allow a source build without Node; after web source edits,
+regenerate them with the pinned Node 26.10.0/npm 12.2.0 build above. Missing
+embedded assets prevent compilation: an API-only diagnostic handler is not
+a fallback for a missing embed directory.
 
 For optional development against a local core checkout, create a separate
 workspace in a parent directory containing `console/` and `core/`:
@@ -195,3 +317,7 @@ Repository documentation is English. Product UI strings (TUI and web) ship
 in English with a Portuguese pack selected by `BATUTA_LANG`, then `LC_ALL`
 or `LANG`. The web client reads `lang` from `GET /v0/capabilities` so it
 matches the daemon, not the browser locale.
+
+Language changes translate product labels and official/custom skill summaries.
+Stored squad names, roles and purposes (including seeded templates), user text,
+provider output, source bytes, IDs and receipt/evidence provenance remain data.
