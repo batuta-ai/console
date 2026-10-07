@@ -31,11 +31,12 @@
   "behavior_patch": "Actual screen main crop offset propagates through Parser.ResizeChecked to savedDEC1049 coordinates. Screen rebases DECSC/1048 coordinates by their saved-buffer crop; discardedalternategrid receives clamp-only. Non-resize feed unchanged; all attached-parser resizes use Parser.ResizeChecked.",
   "derived_source_sha256": {
     "ansi.go": "a3b34f32477b49459594d7a21b3fa9dff09effd4244c9cd6c0d8cd9807e8cd7b",
-    "screen.go": "020017ec5fb31351ebbfb49d897fed914419cc0492c757a8c90727698fbc0375",
+    "screen.go": "78cbd05d7b29e0e1dea77e0935cf73e1cfd10b7026681677fe3952e6c0df909e",
     "terminal_size.go": "5ba1e832687a128c6ece2d9f8cb0f8fc72c5826690a3965baefe400b1e42ef4b",
     "selection_limits.go": "d0b4eb62bf95fa8c765a4e16289202b8d8896670cd3243de275d0f476056649e",
     "resize_console.go": "f2aea5e6972ddb51d002b30caafbfc8eeb0011b58476d4f05db28827cfaf5704"
   },
-  "patch_sha256": "251828a8d97f49a149db7ca5d76cff7a929900f3aecf836fa419458d414492fc",
-  "patch_format": "Zero-context unified diff; apply with --unidiff-zero against exact recorded upstream source."
+  "patch_sha256": "282f151dc237c6a67466979c23a98c0971ec5c164f7e38c81ef7b99ce396ff12",
+  "patch_format": "Zero-context unified diff; apply with --unidiff-zero against exact recorded upstream source.",
+  "render_format_patch": "Render cell rows reuse exact renderStyle output for complete foreground/background/style keys in a local cache of at most64entries; cache lives only for one row render. Render bytes/cursor/selection/heldscreen semantics unchanged; no parser/cell/history changes."
 }

@@ -60,6 +60,31 @@
 +	if s.savedCursorAlt {
 +		s.savedCursorDiscarded = true
 +	}
+@@ -1943,0 +1971,18 @@
++	// Cache only formatting, never cell state. A local, bounded cache avoids
++	// repeatedly parsing the same RGB colors in long styled rows.
++	type styleKey struct {
++		fg, bg lipgloss.Color
++		bits   StyleBits
++	}
++	styles := make(map[styleKey]string)
++	formattedStyle := func(fg, bg lipgloss.Color, bits StyleBits) string {
++		key := styleKey{fg, bg, bits}
++		if text, ok := styles[key]; ok {
++			return text
++		}
++		text := renderStyle(fg, bg, bits)
++		if len(styles) < 64 {
++			styles[key] = text
++		}
++		return text
++	}
+@@ -1982 +2027 @@
+-				b.WriteString(renderStyle(cell.FG, cell.BG, cell.Style))
++				b.WriteString(formattedStyle(cell.FG, cell.BG, cell.Style))
+@@ -1996 +2041 @@
+-			b.WriteString(renderStyle(cell.FG, cell.BG, cell.Style))
++			b.WriteString(formattedStyle(cell.FG, cell.BG, cell.Style))
 --- a/internal/terminalengine/terminal_size.go
 +++ b/internal/terminalengine/terminal_size.go
 @@ -1 +1 @@

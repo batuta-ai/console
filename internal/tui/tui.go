@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -27,32 +28,37 @@ const (
 )
 
 type model struct {
-	api       *client.Client
-	clientID  string
-	screen    screen
-	termMode  bool
-	ws        []domain.Workspace
-	missions  []domain.Mission
-	squads    []domain.Squad
-	accounts  []domain.Account
-	activity  []domain.Event
-	sessions  []domain.Session
-	watch     domain.WatchView
-	limits    []domain.LimitSnapshot
-	cursor    int
-	width     int
-	height    int
-	missionID string
-	sessID    string
-	ptyOut    string
-	link      *termLink
-	editor    domain.Squad
-	editIdx   int
-	validMsg  string
+	api        *client.Client
+	clientID   string
+	screen     screen
+	termMode   bool
+	ws         []domain.Workspace
+	missions   []domain.Mission
+	squads     []domain.Squad
+	accounts   []domain.Account
+	activity   []domain.Event
+	sessions   []domain.Session
+	watch      domain.WatchView
+	limits     []domain.LimitSnapshot
+	cursor     int
+	width      int
+	height     int
+	missionID  string
+	sessID     string
+	generation uint64
+	terminal   *terminalScreen
+	termFrame  terminalFrame
+	link       *termLink
+	lifetime   *terminalLifetime
+	exiting    bool
+	exitReady  bool
+	editor     domain.Squad
+	editIdx    int
+	validMsg   string
 }
 
 func New(api *client.Client) tea.Model {
-	return model{api: api, screen: scrHome, clientID: clientID(), link: &termLink{out: make(chan string, 64)}}
+	return model{api: api, screen: scrHome, clientID: clientID(), lifetime: &terminalLifetime{}}
 }
 
 func (m model) Init() tea.Cmd { return tea.Batch(m.refresh(), m.tick()) }
@@ -115,10 +121,29 @@ type createdMsg struct {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case terminalExitRequest:
+		return m.exitTerminal(msg.suspend)
+	case terminalExitReady:
+		m.exitReady = true
+		if msg.suspend {
+			return m, terminalSuspend()
+		}
+		return m, tea.Quit
+	case terminalResumed:
+		m.exiting, m.exitReady, m.termMode = false, false, false
+		m.lifetime = &terminalLifetime{}
+		m.link = nil
+		m.termFrame.disconnected = true
+		m.termFrame.owned = false
+		m.termFrame.problem = "disconnected after suspend; explicit reconnect required"
+		if msg.err != nil {
+			m.termFrame.problem = msg.err.Error()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.termMode {
-			return m, m.sendResize(max(msg.Width, 20), max(msg.Height-10, 8))
+			return m, m.sendResize(msg.Width, msg.Height-10)
 		}
 	case dataMsg:
 		m = m.applyData(msg)
@@ -131,22 +156,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editor, m.editIdx, m.validMsg = msg.q, 0, ""
 		m.screen = scrEditor
 	case attachedMsg:
-		m.sessID = msg.id
-		m.termMode = true
+		if m.exiting || msg.id != m.sessID || msg.clientID != m.clientID || msg.generation != m.generation {
+			if msg.link != nil {
+				msg.link.cancel()
+			}
+			return m, nil
+		}
+		if msg.err != nil {
+			m.validMsg = msg.err.Error()
+			return m, nil
+		}
+		m.link = msg.link
+		m.termMode = false
 		m.screen = scrRoom
-		return m, tea.Batch(m.waitPTY(), m.sendResize(max(m.width, 80), max(m.height-10, 24)))
+		return m, m.waitPTY()
 	case ptyOutMsg:
-		m.ptyOut += string(msg)
-		if len(m.ptyOut) > 8000 {
-			m.ptyOut = m.ptyOut[len(m.ptyOut)-8000:]
+		if m.terminal == nil {
+			m.terminal = &terminalScreen{}
+		}
+		cols, rows := 0, 0
+		for _, session := range m.sessions {
+			if session.ID == m.sessID {
+				cols, rows = session.Cols, session.Rows
+				break
+			}
+		}
+		engine, id := m.terminal, m.sessID
+		return m, func() tea.Msg { return terminalFrameMsg{sessionID: id, frame: engine.feed(cols, rows, string(msg))} }
+	case terminalFrameMsg:
+		if msg.sessionID != m.sessID || msg.generation != m.generation || msg.clientID != m.clientID {
+			return m, nil
+		}
+		m.termFrame = msg.frame
+		if msg.frame.disconnected {
+			m.termMode = false
+			return m, nil
 		}
 		return m, m.waitPTY()
+	case tea.PasteMsg:
+		if m.termMode && m.link != nil {
+			m.link.offer(terminalAction{paste: &msg.Content})
+		}
+		return m, nil
+	case tea.FocusMsg:
+		if m.termMode && m.link != nil {
+			focused := true
+			m.link.offer(terminalAction{focus: &focused})
+		}
+		return m, nil
+	case tea.BlurMsg:
+		if m.termMode && m.link != nil {
+			focused := false
+			m.link.offer(terminalAction{focus: &focused})
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+]":
-			if m.termMode {
+			if m.link != nil && !m.termFrame.disconnected {
 				m.termMode = false
-				return m, nil
+				return m, m.detach()
 			}
 			if m.screen == scrEditor {
 				m.screen, m.cursor, m.validMsg = scrSquads, 0, ""
@@ -162,14 +231,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.termMode {
-			return m, m.sendPTY(keyToPTY(msg))
+			if m.link != nil {
+				m.link.offer(terminalAction{key: &msg})
+			}
+			return m, nil
 		}
 		if m.screen == scrEditor {
 			return m.updateEditor(msg)
 		}
 		switch msg.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			return m.exitTerminal(false)
 		case "down":
 			m.cursor++
 		case "up":
@@ -191,7 +263,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			m.screen, m.cursor = scrHome, 0
 		case "t":
+			if m.link != nil {
+				m.link.offer(terminalAction{operation: "tui"})
+			}
+			return m, nil
+		case "v":
+			if m.link != nil && !m.termFrame.disconnected {
+				m.validMsg = "detach the current attachment first"
+				return m, nil
+			}
+			m.generation++
 			return m, m.attach()
+		case "i":
+			if m.link != nil && m.termFrame.owned {
+				m.termMode = true
+			}
+			return m, nil
+		case "u":
+			if m.link != nil {
+				m.link.offer(terminalAction{operation: "none"})
+			}
+			return m, nil
+		case "x":
+			if m.screen == scrRoom && m.link != nil {
+				m.link.offer(terminalAction{operation: "stop"})
+			}
+			return m, nil
+		case "pgup", "pgdown":
+			if m.link != nil {
+				n := 10
+				if msg.String() == "pgdown" {
+					n = -10
+				}
+				m.link.offer(terminalAction{history: n})
+			}
+			return m, nil
+		case "[", "]":
+			if m.link == nil || m.termFrame.disconnected {
+				ids := []string{}
+				for _, s := range m.sessions {
+					if m.missionID == "" || s.MissionID == m.missionID {
+						ids = append(ids, s.ID)
+					}
+				}
+				for i, id := range ids {
+					if m.sessID == id {
+						step := 1
+						if msg.String() == "[" {
+							step = -1
+						}
+						m.sessID = ids[(i+step+len(ids))%len(ids)]
+						return m, nil
+					}
+				}
+				if len(ids) > 0 {
+					m.sessID = ids[0]
+				}
+			}
+			return m, nil
 		case "n":
 			if m.screen == scrSquads {
 				return m, m.createSquad()
@@ -204,7 +333,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m, tea.Quit
+		return m.exitTerminal(false)
 	case "down":
 		if m.editIdx < len(m.editor.Members)-1 {
 			m.editIdx++
@@ -340,6 +469,30 @@ func (m model) render() string {
 	case scrReview:
 		m.viewReview(&b)
 	}
+	panel := asciiFold(b.String())
+	b.Reset()
+	var terminal strings.Builder
+	if m.screen == scrRoom {
+		if m.validMsg != "" {
+			fmt.Fprintln(&terminal, m.validMsg)
+		}
+		if m.termFrame.text != "" {
+			fmt.Fprintln(&terminal, "")
+			fmt.Fprintln(&terminal, m.termFrame.render(m.width, max(0, m.height-10)))
+		}
+		if m.termFrame.provisional {
+			fmt.Fprintln(&terminal, "provisional byte replay; use an explicit child repaint if needed")
+		}
+		if m.termFrame.control != "" {
+			fmt.Fprintln(&terminal, m.termFrame.control)
+		}
+		if m.termFrame.held {
+			fmt.Fprintln(&terminal, "synchronized output held; history unavailable")
+		}
+		if m.termFrame.problem != "" {
+			fmt.Fprintln(&terminal, m.termFrame.problem)
+		}
+	}
 	fmt.Fprintln(&b, rule(m.width))
 	if m.termMode {
 		fmt.Fprintln(&b, i18n.T("term"))
@@ -348,7 +501,7 @@ func (m model) render() string {
 	} else {
 		fmt.Fprintln(&b, i18n.T("keys"))
 	}
-	return asciiFold(b.String())
+	return panel + terminal.String() + asciiFold(b.String())
 }
 
 func (m model) viewHome(b *strings.Builder) {
@@ -389,6 +542,15 @@ func (m model) viewRoom(b *strings.Builder) {
 		if msn.ID == m.missionID {
 			title = msn.Title
 			break
+		}
+	}
+	for _, candidate := range m.sessions {
+		if m.missionID == "" || candidate.MissionID == m.missionID {
+			marker := "  "
+			if candidate.ID == m.sessID {
+				marker = "> "
+			}
+			fmt.Fprintf(b, "%s%s  member=%s  account=%s  workspace=%s\n", marker, candidate.ID, candidate.MemberID, candidate.AccountID, candidate.WorkspaceID)
 		}
 	}
 	sess := m.roomSession()
@@ -434,30 +596,15 @@ func (m model) viewRoom(b *strings.Builder) {
 	if owner == "tui" && m.termMode {
 		fmt.Fprintln(b, "TUI CONTROLS INPUT  [ctrl+] navigation]")
 	} else {
-		fmt.Fprintln(b, "[t] take control   closing this client does not stop the process")
+		fmt.Fprintln(b, "[ / ] select  v view/reconnect  t take  u release  i input  x stop  ctrl+] detach")
 	}
-	if m.ptyOut != "" {
-		fmt.Fprintln(b, "")
-		fmt.Fprintln(b, m.ptyOut)
-	}
+
 }
 
 func (m model) roomSession() *domain.Session {
 	for i := range m.sessions {
 		s := &m.sessions[i]
 		if m.sessID != "" && s.ID == m.sessID {
-			return s
-		}
-	}
-	for i := range m.sessions {
-		s := &m.sessions[i]
-		if s.Process == "running" && (m.missionID == "" || s.MissionID == m.missionID) {
-			return s
-		}
-	}
-	for i := range m.sessions {
-		s := &m.sessions[i]
-		if m.missionID == "" || s.MissionID == m.missionID {
 			return s
 		}
 	}
@@ -617,6 +764,42 @@ func Run(api *client.Client) error {
 		_, _ = fmt.Fprint(os.Stdout, m.render())
 		return nil
 	}
-	_, err := tea.NewProgram(m).Run()
+	return runTerminalProgram(m)
+}
+
+func runTerminalProgram(m model, options ...tea.ProgramOption) error {
+	defer m.lifetime.close()
+	options = append(options, tea.WithoutSignalHandler(), tea.WithFilter(func(current tea.Model, msg tea.Msg) tea.Msg {
+		state := current.(model)
+		switch msg.(type) {
+		case tea.QuitMsg, tea.InterruptMsg:
+			if !state.exitReady {
+				return terminalExitRequest{}
+			}
+		case tea.SuspendMsg:
+			return terminalExitRequest{suspend: true}
+		}
+		return msg
+	}))
+	p := tea.NewProgram(m, options...)
+	signals := make(chan os.Signal, 4)
+	signal.Notify(signals, terminalSignals()...)
+	done, joined := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(joined)
+		for {
+			select {
+			case <-done:
+				return
+			case sig := <-signals:
+				p.Send(terminalExitRequest{suspend: terminalIsSuspend(sig)})
+			}
+		}
+	}()
+	defer func() { signal.Stop(signals); close(done); <-joined }()
+	final, err := p.Run()
+	if current, ok := final.(model); ok {
+		current.lifetime.close()
+	}
 	return err
 }

@@ -25,10 +25,19 @@ subsequent alternate entry cannot associate that cursor with a new grid.
 If that alternate buffer was discarded, only size
 clamping remains; no discarded text is reconstructed. SaveCursor records the
 buffer identity, which reset/soft-reset clear. Non-resize feed, charset, mode
-and rendering behavior is unchanged. The patch
+and rendered output is unchanged. The resize patch
 is local and must not be described as an upstream v0.1.0 fix. One-row scrolling
 remains defective and unsupported by Console. No local Go module replacement
 is used. Updates must recheck origin, license, patch and unchanged regressions.
+
+The local render formatting patch caches at most 64 complete foreground,
+background and style combinations while rendering one cell row. It reuses
+the original renderStyle result without changing its bytes. Each cache is
+discarded when that row returns; parser, cells, cursor, selection and held
+screen state are not cached or changed. This reduces repeated RGB formatting
+in large styled screens. Exact rendered bytes are checked against the
+unchanged published module, including more than 64 styles, cursor and
+selection overlays, hidden cells and synchronized output.
 
 Before distributing binaries that include this package, include the complete
 MIT license and copyright in THIRD_PARTY_NOTICES in every archive. This is a

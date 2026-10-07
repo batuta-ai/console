@@ -23,7 +23,7 @@ archives:
   - ids: [console, consoled]
     formats: [tar.gz]
     name_template: 'console_{{ .Env.CONSOLE_VERSION }}_{{ .Os }}_{{ .Arch }}'
-    files: [LICENSE, README.md]
+    files: [LICENSE, README.md, THIRD_PARTY_NOTICES]
 checksum:
   name_template: checksums.txt
 snapshot:

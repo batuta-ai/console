@@ -1968,6 +1968,24 @@ func (s *Screen) renderCells(cells []Cell, cursorRow bool, row int) string {
 	var b strings.Builder
 	var lastFG, lastBG lipgloss.Color
 	var lastStyle StyleBits
+	// Cache only formatting, never cell state. A local, bounded cache avoids
+	// repeatedly parsing the same RGB colors in long styled rows.
+	type styleKey struct {
+		fg, bg lipgloss.Color
+		bits   StyleBits
+	}
+	styles := make(map[styleKey]string)
+	formattedStyle := func(fg, bg lipgloss.Color, bits StyleBits) string {
+		key := styleKey{fg, bg, bits}
+		if text, ok := styles[key]; ok {
+			return text
+		}
+		text := renderStyle(fg, bg, bits)
+		if len(styles) < 64 {
+			styles[key] = text
+		}
+		return text
+	}
 
 	for c := 0; c < s.cols; c++ {
 		cell := Cell{Rune: ' '}
@@ -2006,7 +2024,7 @@ func (s *Screen) renderCells(cells []Cell, cursorRow bool, row int) string {
 			b.WriteString("\x1b[0m")
 			// Re-emit the cell's style for subsequent cells.
 			if cell.FG != "" || cell.BG != "" || cell.Style != 0 {
-				b.WriteString(renderStyle(cell.FG, cell.BG, cell.Style))
+				b.WriteString(formattedStyle(cell.FG, cell.BG, cell.Style))
 				lastFG = cell.FG
 				lastBG = cell.BG
 				lastStyle = cell.Style
@@ -2020,7 +2038,7 @@ func (s *Screen) renderCells(cells []Cell, cursorRow bool, row int) string {
 
 		// Emit style changes only when needed
 		if cell.FG != lastFG || cell.BG != lastBG || cell.Style != lastStyle {
-			b.WriteString(renderStyle(cell.FG, cell.BG, cell.Style))
+			b.WriteString(formattedStyle(cell.FG, cell.BG, cell.Style))
 			lastFG = cell.FG
 			lastBG = cell.BG
 			lastStyle = cell.Style
