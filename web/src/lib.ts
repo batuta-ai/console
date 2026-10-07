@@ -94,6 +94,7 @@ export type Limit = {
   observed_at?: string;
 };
 export type Session = {
+  member_id?: string;
   id: string;
   process: string;
   owner: string;

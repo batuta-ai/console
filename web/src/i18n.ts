@@ -1,6 +1,26 @@
 export type Lang = "en" | "pt";
 
 const en = {
+  terminal_failed: "Terminal disconnected: {id}",
+  terminal_connecting: "Connecting terminal: {id}",
+  terminal_reconnect: "Reconnect terminal",
+  creation_edit_draft: "Edit draft",
+  creation_previous_uncertain: "The previous attempt’s outcome remains unconfirmed. Editing changes only the local draft.",
+  creation_conflict: "The saved squad changed. Inspect its revision before continuing; this draft has not been replayed.",
+  session_select: "Session",
+  session_choose: "Choose an exact session",
+  session_inspect: "Inspect session",
+
+  creation_resume: "Resume creation",
+  creation_use_squad: "Use squad {id}",
+  creation_use_mission: "Use mission {id}",
+  creation_inspect: "Inspect creation",
+  creation_recovery: "Creation needs attention",
+  creation_retry: "Target inspected. Retry the remaining action explicitly.",
+  creation_no_match: "No matching target found. Inspect the catalog before retrying explicitly.",
+  creation_choose: "Select the actual created identity to continue. Nothing has been replayed.",
+  creation_use_account: "Use account {id}",
+
   sync_timeout: "Request timed out. Retrying reads automatically; inspect uncertain actions before retrying.",
   sync_reconnecting: "Connection lost. Reconnecting…",
   sync_invalid: "Invalid event stream. Reconnecting…",
@@ -145,6 +165,8 @@ const en = {
   return_control: "Return control",
   tui_controls: "TUI controls input",
   other_controls: "another client controls input",
+  no_owner_controls: "nobody controls input",
+  readonly_unowned: "read only — nobody controls input",
   take_control: "Take control",
   readonly_note: "read only — the TUI or another client controls input",
   start_session_for_log: "Start a session for the live log. Closing this client does not end the process.",
@@ -388,6 +410,26 @@ const en = {
 export type Msg = keyof typeof en;
 
 const pt: Record<Msg, string> = {
+  terminal_failed: "Terminal desconectado: {id}",
+  terminal_connecting: "Conectando terminal: {id}",
+  terminal_reconnect: "Reconectar terminal",
+  creation_edit_draft: "Editar rascunho",
+  creation_previous_uncertain: "O resultado da tentativa anterior continua sem confirmação. A edição altera apenas o rascunho local.",
+  creation_conflict: "O squad salvo mudou. Inspecione sua revisão antes de continuar; este rascunho não foi repetido.",
+  session_select: "Sessão",
+  session_choose: "Escolha uma sessão exata",
+  session_inspect: "Inspecionar sessão",
+
+  creation_resume: "Retomar criação",
+  creation_use_squad: "Usar squad {id}",
+  creation_use_mission: "Usar missão {id}",
+  creation_inspect: "Inspecionar criação",
+  creation_recovery: "A criação precisa de atenção",
+  creation_retry: "Destino inspecionado. Repita explicitamente a ação restante.",
+  creation_no_match: "Nenhum destino correspondente encontrado. Inspecione o catálogo antes de repetir explicitamente.",
+  creation_choose: "Selecione a identidade criada para continuar. Nada foi repetido.",
+  creation_use_account: "Usar conta {id}",
+
   sync_timeout: "A solicitação expirou. As leituras serão repetidas; inspecione ações incertas antes de tentar novamente.",
   sync_reconnecting: "Conexão perdida. Reconectando…",
   sync_invalid: "Fluxo de eventos inválido. Reconectando…",
@@ -532,6 +574,8 @@ const pt: Record<Msg, string> = {
   return_control: "Devolver controle",
   tui_controls: "TUI controla a entrada",
   other_controls: "outro cliente controla",
+  no_owner_controls: "ninguém controla a entrada",
+  readonly_unowned: "somente leitura — ninguém controla a entrada",
   take_control: "Assumir controle",
   readonly_note: "somente leitura — a TUI ou outro cliente controla a entrada",
   start_session_for_log: "Inicie uma sessão para o log ao vivo. Fechar este cliente não encerra o processo.",

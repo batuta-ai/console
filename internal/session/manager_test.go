@@ -207,3 +207,34 @@ func newTestManager(t *testing.T) *Manager {
 	})
 	return m
 }
+
+func TestRelinquishRequiresCurrentClientAndClearsIdentity(t *testing.T) {
+	m := newTestManager(t)
+	_, err := m.Start(domain.Session{ID: "release", Argv: []string{"/bin/cat"}}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop("release")
+	if _, err = m.Take("release", "web", "browser-one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.Take("release", "none", "terminal-two"); !os.IsPermission(err) {
+		t.Fatalf("foreign release: %v", err)
+	}
+	released, err := m.Take("release", "none", "browser-one")
+	if err != nil || released.Owner != "none" || released.OwnerClient != "" {
+		t.Fatalf("release: %+v %v", released, err)
+	}
+	if err := m.Input("release", "browser-one", []byte("forbidden\n")); !os.IsPermission(err) {
+		t.Fatalf("released input: %v", err)
+	}
+	if err := m.Resize("release", "browser-one", 80, 24); !os.IsPermission(err) {
+		t.Fatalf("released resize: %v", err)
+	}
+	if _, err = m.Take("release", "tui", "terminal-two"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Input("release", "terminal-two", []byte("accepted\n")); err != nil {
+		t.Fatal(err)
+	}
+}

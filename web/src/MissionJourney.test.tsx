@@ -21,10 +21,11 @@ function journeyAPI() {
   const sessions: Session[] = [];
   const requests: { path: string; init?: RequestInit }[] = [];
   const controls: { planning?: Promise<Response>; route?: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined } = {};
-  const sockets: { onmessage: ((event: { data: string }) => void) | null }[] = [];
+  const sockets: { url: string; onerror: (() => void) | null; onmessage: ((event: { data: string }) => void) | null }[] = [];
   vi.stubGlobal("WebSocket", class {
     onmessage: ((event: { data: string }) => void) | null = null;
-    constructor() { sockets.push(this); }
+    onerror: (() => void) | null = null;
+    constructor(public url: string) { sockets.push(this); }
     close() {}
   });
   vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
@@ -945,5 +946,173 @@ test.each(["mission_id", "workspace_id", "delivery", "opened_digest"] as const)(
   expect(screen.getByText("Recovered new question")).toBeVisible();
   expect(screen.getAllByRole("textbox").find(input => !(input as HTMLInputElement).disabled)).toHaveValue("");
   expect(screen.getByRole("button", { name: "Send reply" })).toBeDisabled();
+  expect(mutations(api.requests)).toHaveLength(0);
+});
+
+test("room selects actual member sessions and relinquishes without inventing a recipient", async () => {
+  const api = journeyAPI();
+  api.sessions.push(
+    { id: "lead-session", member_id: "lead", mission_id: "m1", process: "running", adapter: "claude", owner: "none" },
+    { id: "worker-session", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" },
+  );
+  api.controls.route = (path, init) => {
+    if (path.endsWith("/control")) {
+      const body = JSON.parse(String(init?.body));
+      const s = api.sessions.find(s => path === `/v0/sessions/${s.id}/control`)!;
+      s.owner = body.surface; s.owner_client = body.surface === "none" ? "" : body.client;
+      return Response.json(s);
+    }
+    if (path.endsWith("/stop")) return Response.json({ id: "worker-session", process: "exited" });
+    return undefined;
+  };
+  const user = await openMission();
+  await user.click(screen.getByRole("button", { name: /›\s*Builder/ }));
+  await user.click(screen.getByRole("button", { name: "Take control" }));
+  expect(mutations(api.requests)[0].path).toBe("/v0/sessions/worker-session/control");
+  const owner = JSON.parse(String(mutations(api.requests)[0].init?.body)).client;
+  expect(owner).toMatch(/^web-/);
+  await user.click(await screen.findByRole("button", { name: "Return control" }));
+  expect(JSON.parse(String(mutations(api.requests)[1].init?.body))).toEqual({ surface: "none", client: owner });
+  expect(await screen.findByText("nobody controls input")).toBeVisible();
+  expect(screen.getByText("read only — nobody controls input")).toBeVisible();
+  expect(screen.queryByText("another client controls input")).toBeNull();
+  await user.click(await screen.findByRole("button", { name: "Stop session" }));
+  expect(mutations(api.requests)[2].path).toBe("/v0/sessions/worker-session/stop");
+});
+
+test("native task identity survives reorder and never acquires a positional member session", async () => {
+  const api = nativeAPI(); openedLive(api);
+  api.watch.waves = [{ rows: [{ task: "second", title: "Second task", state: "running" }, { task: "first", title: "First task", state: "pending" }] }];
+  api.sessions.push({ id: "foreign-to-task", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  await openLiveMission();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Second task/ })); });
+  expect(screen.queryByRole("button", { name: "Take control" })).toBeNull();
+  expect(document.querySelector(".detail dd")?.textContent).toBe("unknown");
+  api.watch.waves[0].rows!.reverse(); api.sessions.reverse();
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+  expect(document.querySelector(".task-sel")?.textContent).toContain("Second task");
+  expect(screen.queryByRole("button", { name: "Stop session" })).toBeNull();
+  expect(mutations(api.requests)).toHaveLength(0);
+});
+
+test("home retains catalog done missions until the exact Core gate clears", async () => {
+  const api = nativeAPI(); openedLive(api);
+  api.mission.status = "done"; api.state.active = false;
+  api.watch.header = { state: "done" }; api.state.gate = { delivery: "delivery-1", required: true, cleared: false };
+  api.watch.progression = api.state.gate;
+  const user = await openMission();
+  await screen.findByText("Review blocked");
+  await user.click(screen.getByRole("button", { name: "Home" }));
+  expect(screen.getByText("1 active")).toBeVisible();
+  expect(screen.getByText(/1 mission in progress/)).toBeVisible();
+  expect(screen.queryByText("Completed")).toBeNull();
+  expect(screen.getByText("Review blocked")).toBeVisible();
+});
+
+test("lost selected-session control survives room navigation and cannot be replayed before inspection", async () => {
+  const api = journeyAPI();
+  api.sessions.push({ id: "worker-session", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  api.controls.route = path => path.endsWith("/control") ? Promise.reject(Error("lost selected control")) : undefined;
+  const user = await openMission();
+  await user.click(screen.getByRole("button", { name: /›\s*Builder/ }));
+  await user.dblClick(screen.getByRole("button", { name: "Take control" }));
+  await screen.findByText(/worker-session.*lost selected control/);
+  expect(document.querySelector("p p")).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("worker-session");
+  await user.click(screen.getByRole("button", { name: "Home" }));
+  await user.click(screen.getAllByRole("button", { name: "Missions" })[0]);
+  await user.click(screen.getByRole("button", { name: /Exact journey/ }));
+  await user.click(screen.getByRole("button", { name: /›\s*Builder/ }));
+  expect(screen.getByRole("button", { name: "Take control" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Inspect session" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Take control" })).toBeEnabled());
+  expect(mutations(api.requests)).toHaveLength(1);
+});
+
+test("a selected member never silently switches to a replacement session after refresh", async () => {
+  const api = nativeAPI(); openedLive(api);
+  api.sessions.push({ id: "original", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  await openLiveMission();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /›\s*Builder/ })); });
+  expect(screen.getByRole("button", { name: "Stop session" })).toBeEnabled();
+  api.sessions.splice(0, 1, { ...api.sessions[0], id: "replacement" });
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+  expect(screen.queryByRole("button", { name: "Stop session" })).toBeNull();
+  expect(mutations(api.requests)).toHaveLength(0);
+});
+
+
+test("terminal attachment errors identify the selected session and reconnect only that session", async () => {
+  const api = journeyAPI();
+  api.sessions.push({ id: "selected-attachment", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  const user = await openMission();
+  await user.click(screen.getByRole("button", { name: /›\s*Builder/ }));
+  const terminal = api.sockets.find(s => s.url.includes("/terminal?"))!;
+  await act(async () => { terminal.onerror?.(); });
+  expect(await screen.findByText(/Terminal disconnected.*selected-attachment/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Reconnect terminal" }));
+  const attachments = api.sockets.filter(s => s.url.includes("/terminal?"));
+  expect(attachments).toHaveLength(2);
+  expect(attachments[1].url).toBe(attachments[0].url);
+  expect(mutations(api.requests)).toHaveLength(0);
+});
+
+test("home workspace counters distinguish a cleared selected mission from an unverified catalog completion", async () => {
+  const api = nativeAPI(); openedLive(api);
+  api.mission.status = "done"; api.state.active = false;
+  api.watch.header = { state: "done" }; api.state.gate = { delivery: "delivery-1", required: true, cleared: true };
+  api.watch.progression = api.state.gate;
+  api.missions.push({ id: "unverified", workspace_id: "w2", title: "Other catalog done", status: "done" });
+  api.control.override = path => path === "/v0/workspaces" ? Response.json([
+    { id: "w1", name: "Workspace", root: "/tmp/workspace", profile: true },
+    { id: "w2", name: "Other workspace", root: "/tmp/other", profile: true },
+  ]) : undefined;
+  const user = await openMission();
+  await screen.findByText("Completed");
+  await user.click(screen.getByRole("button", { name: "Home" }));
+  expect(within(screen.getByRole("button", { name: /Workspace.*idle/ })).getByText("idle")).toBeVisible();
+  expect(within(screen.getByRole("button", { name: /Other workspace.*1 active/ })).getByText("1 active")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Other catalog done/ })).toBeNull();
+});
+
+
+test("unknown and duplicate Room identities stay inert without duplicate render keys", async () => {
+  const errors = vi.spyOn(console, "error");
+  const api = nativeAPI(); openedLive(api);
+  api.watch.waves = [{ rows: [
+    { title: "Unknown task A" }, { title: "Unknown task B" },
+    { task: "duplicate", title: "Duplicate task A" }, { task: "duplicate", title: "Duplicate task B" },
+  ] }];
+  api.mission.squad_snapshot!.members = [
+    { ...members[0], id: undefined, role: "Unknown member A" },
+    { ...members[0], id: undefined, role: "Unknown member B" },
+    { ...members[0], role: "Duplicate member A" }, { ...members[0], role: "Duplicate member B" },
+  ];
+  api.sessions.push({ id: "never-target", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  await openLiveMission();
+  for (const layout of ["List", "Grid", "Terminal"]) {
+    await act(async () => { fireEvent.click(screen.getByRole("tab", { name: layout })); });
+    for (const button of screen.getAllByRole("button", { name: /Unknown (task|member)|Duplicate (task|member)/ })) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-pressed", "false");
+    }
+    expect(screen.queryByRole("button", { name: "Take control" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop session" })).toBeNull();
+  }
+  expect(mutations(api.requests)).toHaveLength(0);
+  expect(errors.mock.calls.filter(args => /same key|unique.*key/i.test(args.join(" ")))).toEqual([]);
+});
+
+test("a selected member becomes inert when its identity becomes ambiguous on refresh", async () => {
+  const api = nativeAPI(); openedLive(api);
+  api.sessions.push({ id: "original", member_id: "worker", mission_id: "m1", process: "running", adapter: "codex", owner: "none" });
+  await openLiveMission();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /›\s*Builder/ })); });
+  expect(screen.getByRole("button", { name: "Stop session" })).toBeEnabled();
+  api.mission.squad_snapshot!.members!.push({ ...members[0], role: "Ambiguous builder" });
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+  expect(screen.queryByRole("button", { name: "Stop session" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Take control" })).toBeNull();
   expect(mutations(api.requests)).toHaveLength(0);
 });

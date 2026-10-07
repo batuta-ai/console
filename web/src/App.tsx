@@ -40,7 +40,7 @@ import {
   type Workspace,
   plural,
 } from "./lib";
-import { bounded, followEvents, READ_INTERVAL } from "./sync";
+import { bounded, followEvents, READ_INTERVAL, REQUEST_DEADLINE } from "./sync";
 import { T } from "./i18n";
 import { MissionPlanning } from "./MissionPlanning";
 import { MissionJourney } from "./MissionJourney";
@@ -114,6 +114,36 @@ export function App() {
   const [setupWs, setSetupWs] = useState<Workspace | null>(null);
   const [setupDrafts, setSetupDrafts] = useState<Record<string, SetupDraft>>({});
 
+  const [sessionAction, setSessionAction] = useState({ pending: false, target: "", error: "" });
+  const sessionBusy = useRef(false);
+  async function controlSession(id: string, action: "stop" | "web" | "none") {
+    if (sessionBusy.current || sessionAction.target) return;
+    sessionBusy.current = true; setSessionAction({ pending: true, target: id, error: "" });
+    try {
+      const result = await bounded(signal => api<Session>(`/v0/sessions/${id}/${action === "stop" ? "stop" : "control"}`, {
+        method: "POST", ...(action === "stop" ? {} : { body: JSON.stringify({ surface: action, client: webClient }) }), signal,
+      }));
+      if (result?.id !== id || (action === "stop" ? result.process !== "exited" : result.owner !== action || (action === "none" ? !!result.owner_client : result.owner_client !== webClient))) throw new Error(T("journey_invalid_state"));
+      ++refreshGeneration.current;
+      setSessions(previous => previous.map(s => s.id === id ? { ...s, ...result } : s));
+      setSessionAction({ pending: false, target: "", error: "" });
+      void refresh();
+    } catch (e) { setSessionAction({ pending: false, target: id, error: `${id}: ${String(e)}` }); }
+    finally { sessionBusy.current = false; }
+  }
+  async function inspectSession() {
+    if (sessionBusy.current || !sessionAction.target) return;
+    sessionBusy.current = true; setSessionAction(previous => ({ ...previous, pending: true }));
+    try {
+      const catalog = await bounded(signal => api<Session[]>("/v0/sessions", { signal }));
+      if (!Array.isArray(catalog) || !catalog.some(s => s.id === sessionAction.target)) throw new Error(T("journey_invalid_state"));
+      ++refreshGeneration.current; setSessions(catalog);
+      setSessionAction({ pending: false, target: "", error: "" });
+      void refresh();
+    } catch (e) { setSessionAction(previous => ({ ...previous, pending: false, error: `${previous.target}: ${String(e)}` })); }
+    finally { sessionBusy.current = false; }
+  }
+
   const currentWs = workspaces.find((w) => w.id === wsId) || workspaces[0];
   useEffect(() => {
     if (currentWs && currentWs.id !== wsId) {
@@ -124,9 +154,10 @@ export function App() {
 
   const refreshGeneration = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
+  const refreshQueued = useRef(false);
 
-  async function refresh() {
-    if (refreshController.current) return;
+  async function refresh(queue = true) {
+    if (refreshController.current) { if (queue) refreshQueued.current = true; return; }
     const controller = new AbortController();
     refreshController.current = controller;
     const generation = ++refreshGeneration.current;
@@ -164,12 +195,15 @@ export function App() {
       if (generation === refreshGeneration.current) setErr(e instanceof Error ? e.message : String(e));
     } finally {
       controller.abort();
-      if (refreshController.current === controller) refreshController.current = null;
+      if (refreshController.current === controller) {
+        refreshController.current = null;
+        if (refreshQueued.current) { refreshQueued.current = false; void refresh(); }
+      }
     }
   }
 
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
+  const refreshRef = useRef(() => refresh(false));
+  refreshRef.current = () => refresh(false);
 
   useEffect(() => {
     void refreshRef.current();
@@ -177,6 +211,7 @@ export function App() {
     const stopEvents = followEvents(() => { void refreshRef.current(); }, setEventError);
     return () => {
       ++refreshGeneration.current;
+      refreshQueued.current = false;
       refreshController.current?.abort();
       refreshController.current = null;
       window.clearInterval(timer);
@@ -304,12 +339,14 @@ export function App() {
         {screen === "home" && (
           <Home
             workspaces={workspaces}
-            missions={wsMissions}
+            missions={missions}
+            selectedState={selectedState}
             accounts={accounts}
             limits={limits}
             sessions={sessions}
             attention={attention}
             wsName={currentWs?.name || "—"}
+            workspaceID={currentWs?.id || ""}
             onOpenRoom={(m) => {
               setActiveMission(m);
               go("room");
@@ -355,54 +392,50 @@ export function App() {
             skillsRoot={skillsRoot}
             onRefresh={refresh}
             onReview={() => setScreen("review")}
+            sessionAction={sessionAction}
+            onSessionAction={controlSession}
+            onInspectSession={inspectSession}
           />
         ) : null}
         </MissionJourney>
         {screen === "squads" && (
           <Squads
+            locked={!!editing}
             squads={squads}
             skills={skills}
             skillsRoot={skillsRoot}
-            onCreate={async () => {
-              const q = await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify({ name: T("new_squad_name"), purpose: "", origin: "custom", members: [] }) });
-              setEditing(q);
-              setScreen("editor");
-              refresh();
-            }}
-            onEdit={(q) => {
-              setEditing(q);
+            onCreate={() => {
+              if (!editing) setEditing({ id: "", name: T("new_squad_name"), purpose: "", origin: "custom", members: [], version: 0, draft: true });
               setScreen("editor");
             }}
-            onDuplicate={async (q) => {
-              await api("/v0/squads", {
-                method: "POST",
-                body: JSON.stringify({ name: `${q.name}${T("copy_suffix")}`, purpose: q.purpose || "", origin: "custom", members: q.members || [] }),
-              });
-              refresh();
+            onEdit={(q) => { if (!editing) setEditing(q); setScreen("editor"); }}
+            onDuplicate={(q) => {
+              if (!editing) setEditing({ ...q, id: "", version: 0, name: `${q.name}${T("copy_suffix")}`, origin: "custom", members: q.members.map(({ id: _id, ...member }) => member) });
+              setScreen("editor");
             }}
           />
         )}
-        {screen === "editor" && editing && (
-          <SquadEditor
+        {screen === "squads" && editing ? <Button onClick={() => setScreen("editor")}>{T("creation_resume")}</Button> : null}
+        {editing && (
+          <div hidden={screen !== "editor"}><SquadEditor
             squad={editing}
             accounts={accounts}
             skills={skills}
             workspaceId={currentWs?.id}
-            onClose={() => go("squads")}
+            onClose={(retained) => { if (!retained) setEditing(null); go("squads"); }}
             onSaved={() => {
-              go("squads");
+              setEditing(null);
+              setScreen(current => current === "editor" ? "squads" : current);
               refresh();
             }}
-          />
+          /></div>
         )}
         {screen === "accounts" && (
           <Accounts
             accounts={accounts}
             limits={limits}
             sessions={sessions}
-            open={addAccount}
             onOpen={() => setAddAccount(true)}
-            onClose={() => setAddAccount(false)}
             onSaved={() => {
               setAddAccount(false);
               refresh();
@@ -487,6 +520,7 @@ export function App() {
           onSelect={(id) => go(id as Screen)}
         />
       ) : null}
+      <AddAccount open={addAccount && screen === "accounts"} onClose={() => setAddAccount(false)} onSaved={() => { setAddAccount(false); void refresh(); }} />
       <CreateWorkspaceDialog
         open={wsDialog}
         onClose={() => setWsDialog(false)}
@@ -520,8 +554,14 @@ function squadReady(q: Squad, accounts: Account[]) {
   });
 }
 
-function Home({
+function missionCompleted(mission: Mission, state: ExecutionState | null) {
+  return state?.target.mission_id === mission.id && state.target.binding.workspace_id === mission.workspace_id &&
+    !!state.opened_digest && !state.active && !state.watch?.pending_question && state.watch?.header?.state === "done" &&
+    !!state.gate && (!state.gate.required || state.gate.cleared);
+}
 
+function Home({
+  selectedState,
   workspaces,
   missions,
   accounts,
@@ -529,6 +569,7 @@ function Home({
   sessions,
   attention,
   wsName,
+  workspaceID,
   onOpenRoom,
   onPickWorkspace,
   onNewWorkspace,
@@ -538,11 +579,13 @@ function Home({
 }: {
   workspaces: Workspace[];
   missions: Mission[];
+  selectedState: ExecutionState | null;
   accounts: Account[];
   limits: Limit[];
   sessions: Session[];
   attention: string;
   wsName: string;
+  workspaceID: string;
   onOpenRoom: (m: Mission) => void;
   onPickWorkspace: (id: string) => void;
   onNewWorkspace: () => void;
@@ -550,7 +593,8 @@ function Home({
   onAccounts: () => void;
   onRoom: () => void;
 }) {
-  const active = missions.filter((m) => !/done|complete|conclu/i.test(m.status));
+  const allActive = missions.filter(m => !missionCompleted(m, selectedState));
+  const active = allActive.filter(m => !workspaceID || m.workspace_id === workspaceID);
   return (
     <div className="page" data-screen-label={T("home")}>
       <PageHeader
@@ -580,7 +624,7 @@ function Home({
       ) : null}
       <div className="cards">
         {workspaces.map((w) => {
-          const n = missions.filter((m) => m.workspace_id === w.id && !/done|complete|conclu/i.test(m.status)).length;
+          const n = allActive.filter(m => m.workspace_id === w.id).length;
           return (
             <Card asChild interactive key={w.id}>
               <button type="button" className="ws-card" onClick={() => onPickWorkspace(w.id)}>
@@ -619,8 +663,8 @@ function Home({
                 {m.squad_snapshot?.name || "—"} · {m.attention || T("follow_gates")}
               </span>
               <span style={{ justifySelf: "end" }}>
-                <Badge tone={missionTone(m.status, m.attention)} dot>
-                  {missionStatusLabel(m.status, m.attention)}
+                <Badge tone={missionTone(/done|complete|conclu/i.test(m.status) ? "unknown" : m.status, m.attention)} dot>
+                  {selectedState?.target.mission_id === m.id && selectedState.target.binding.workspace_id === m.workspace_id ? executionLabel(selectedState, true, false) : missionStatusLabel(/done|complete|conclu/i.test(m.status) ? "unknown" : m.status, m.attention)}
                 </Badge>
               </span>
             </button>
@@ -679,10 +723,7 @@ function Missions({
   const [filter, setFilter] = useState("all");
   const [creating, setCreating] = useState(false);
   const stateFor = (m: Mission) => selectedState?.target.mission_id === m.id && selectedState.target.binding.workspace_id === m.workspace_id ? selectedState : null;
-  const completed = (m: Mission) => {
-    const state = stateFor(m);
-    return !!state?.opened_digest && !state.active && !state.watch?.pending_question && state.watch?.header?.state === "done" && !!state.gate && (!state.gate.required || state.gate.cleared);
-  };
+  const completed = (m: Mission) => missionCompleted(m, selectedState);
   const active = missions.filter(m => !completed(m));
   const done = missions.filter(completed);
   const shown = filter === "active" ? active : filter === "done" ? done : missions;
@@ -886,6 +927,9 @@ function Room({
   skillsRoot,
   onRefresh,
   onReview,
+  sessionAction,
+  onSessionAction,
+  onInspectSession,
 }: {
   mission: Mission | null;
   journey: ReactNode;
@@ -897,44 +941,52 @@ function Room({
   skillsRoot: string;
   onRefresh: () => void;
   onReview: () => void;
+  sessionAction: { pending: boolean; target: string; error: string };
+  onSessionAction: (id: string, action: "stop" | "web" | "none") => Promise<void>;
+  onInspectSession: () => Promise<void>;
 }) {
   const [layout, setLayout] = useState<"list" | "grid" | "terminal">("list");
   const [logTab, setLogTab] = useState("log");
-  const [sel, setSel] = useState(0);
-  const live = sessions.find((s) => s.process === "running");
-  const shown = live || sessions[0];
-  const owns = live?.owner === "web" && live.owner_client === client;
+  const [selection, setSelection] = useState("");
+  const [sessionSelection, setSessionSelection] = useState("");
+  const { pending, target: uncertainSession, error: actionError } = sessionAction;
   const members = mission?.squad_snapshot?.members || [];
   const attn = attentionLine(watch);
   const rows = taskRows(watch);
-  const tasks = rows.length
-    ? rows.map((r, i) => ({
-        key: r.task || String(i),
-        name: r.title,
-        role: members[i]?.role || T("agent_default"),
-        memberId: members[i]?.id || "",
-        state: r.state,
-        account: accounts.find((a) => a.id === members[i]?.account_id)?.label || members[i]?.account_id || "—",
-        cli: members[i]?.cli || "",
-        model: members[i]?.model || T("inherit"),
-        task: r.task,
-        gates: r.gates,
-        commit: r.commit,
-      }))
-    : members.map((mb, i) => ({
-        key: mb.id || String(i),
-        name: mb.role || T("member_default"),
-        role: mb.role || T("agent_default"),
-        memberId: mb.id,
-        state: "",
-        account: accounts.find((a) => a.id === mb.account_id)?.label || mb.account_id || "—",
-        cli: mb.cli,
-        model: mb.model || T("inherit"),
-        task: "",
-        gates: ["pending", "pending", "pending", "pending"],
-        commit: "",
-      }));
-  const selected = tasks[sel] || tasks[0];
+  const tasks = [
+    ...rows.map((r) => ({
+      key: r.task ? `task:${r.task}` : "",
+      name: r.title, role: T("unknown"), memberId: "", state: r.state,
+      account: T("unknown"), cli: "", model: T("unknown"), task: r.task, gates: r.gates, commit: r.commit,
+    })),
+    ...members.map(mb => ({
+      key: mb.id ? `member:${mb.id}` : "",
+      name: mb.role || T("member_default"), role: mb.role || T("agent_default"), memberId: mb.id,
+      state: "", account: accounts.find(a => a.id === mb.account_id)?.label || mb.account_id || "—",
+      cli: mb.cli, model: mb.model || T("inherit"), task: "", gates: ["pending", "pending", "pending", "pending"], commit: "",
+    })),
+  ];
+  const identityCounts = new Map<string, number>();
+  for (const task of tasks) identityCounts.set(task.key, (identityCounts.get(task.key) || 0) + 1);
+  const selectable = (key: string) => !!key && identityCounts.get(key) === 1;
+  // Fallback keys identify presentation slots only; selection always uses the actual unique ID.
+  const renderKey = (key: string, index: number) => selectable(key) ? key : `unknown-row:${index}`;
+  const selected = selectable(selection) ? tasks.find(t => t.key === selection) : undefined;
+  const sel = selected ? tasks.indexOf(selected) : -1;
+  function select(key: string) {
+    if (!selectable(key)) return;
+    setSelection(key);
+    const member = tasks.find(t => t.key === key)?.memberId;
+    const choices = member ? sessions.filter(s => s.mission_id === mission?.id && s.member_id === member) : [];
+    setSessionSelection(choices.length === 1 ? choices[0].id : "");
+  }
+  const memberSessions = selected?.memberId ? sessions.filter(s => s.mission_id === mission?.id && s.member_id === selected.memberId) : [];
+  const shown = memberSessions.find(s => s.id === sessionSelection);
+  const live = shown?.process === "running" ? shown : undefined;
+  const owns = live?.owner === "web" && live.owner_client === client;
+  function actSession(action: "stop" | "web" | "none") {
+    if (live) void onSessionAction(live.id, action);
+  }
   const stageMarks = (selected?.gates || ["pending", "pending", "pending", "pending"]).map((state) => gateMark(state));
   const crit = criteria(watch);
   const ev = evidence(watch);
@@ -955,7 +1007,7 @@ function Room({
           T("room_sub", {
             id: mission?.id || "—",
             done: integrated,
-            total: Math.max(tasks.length, 1),
+            total: Math.max(rows.length || members.length, 1),
             live: live ? T("running_one") : T("no_live_session"),
           }) + (shown?.process === "unknown" ? T("catalog_only_process") : "")
         }
@@ -972,10 +1024,8 @@ function Room({
             {mission && live ? (
               <Button
                 variant="secondary"
-                onClick={async () => {
-                  await api(`/v0/sessions/${live.id}/stop`, { method: "POST" });
-                  onRefresh();
-                }}
+                loading={pending} disabled={pending || !!uncertainSession}
+                onClick={() => actSession("stop")}
               >
                 {T("stop_session")}
               </Button>
@@ -1017,7 +1067,7 @@ function Room({
             size="sm"
             onClick={() => {
               const i = tasks.findIndex((t) => t.task && t.task === watch?.attention?.task);
-              if (i >= 0) setSel(i);
+              if (i >= 0) select(tasks[i].key);
               setLogTab("log");
             }}
           >
@@ -1049,7 +1099,7 @@ function Room({
             {tasks.map((t, i) => {
               const mark = taskSym(t.state);
               return (
-                <button key={t.key} type="button" className={i === sel ? "task-grid task-sel" : "task-grid"} onClick={() => setSel(i)}>
+                <button key={renderKey(t.key, i)} type="button" className={i === sel ? "task-grid task-sel" : "task-grid"} disabled={!selectable(t.key)} aria-pressed={i === sel} onClick={() => select(t.key)}>
                   <span className="mono" style={{ color: mark.c, fontWeight: 600 }}>
                     {mark.s}
                   </span>
@@ -1116,7 +1166,7 @@ function Room({
       {layout === "grid" && (
         <div className="grid-cards">
           {tasks.map((t, i) => (
-            <button key={t.key} type="button" className={i === sel ? "agent-card agent-card--sel" : "agent-card"} onClick={() => setSel(i)}>
+            <button key={renderKey(t.key, i)} type="button" className={i === sel ? "agent-card agent-card--sel" : "agent-card"} disabled={!selectable(t.key)} aria-pressed={i === sel} onClick={() => select(t.key)}>
               <strong>{t.name}</strong>
               <span className="muted">
                 {t.role} · {t.account}
@@ -1129,13 +1179,16 @@ function Room({
       {layout === "terminal" && (
         <div className="chips">
           {tasks.map((t, i) => (
-            <button key={t.key} type="button" className={i === sel ? "chip chip--sel" : "chip"} onClick={() => setSel(i)}>
+            <button key={renderKey(t.key, i)} type="button" className={i === sel ? "chip chip--sel" : "chip"} disabled={!selectable(t.key)} aria-pressed={i === sel} onClick={() => select(t.key)}>
               <Avatar name={t.role} size="xs" />
               {t.role} · {t.name}
             </button>
           ))}
         </div>
       )}
+      {selected?.memberId && memberSessions.length > 0 ? <Field label={T("session_select")}><Select aria-label={T("session_select")} value={sessionSelection} onChange={e => setSessionSelection(e.target.value)}><option value="">{T("session_choose")}</option>{memberSessions.map(s => <option key={s.id} value={s.id}>{s.id} · {s.process}</option>)}</Select></Field> : null}
+      {shown ? <p className="mono">{shown.id} · {selected?.memberId}</p> : null}
+      {actionError ? <Alert tone="warning" title={T("creation_recovery")}><span role="alert">{actionError}</span><br /><Button disabled={pending} onClick={onInspectSession}>{T("session_inspect")}</Button></Alert> : null}
       <section className={layout === "terminal" ? "log-panel log-panel--fill" : "log-panel"}>
         <div className="log-head">
           <Tabs
@@ -1153,22 +1206,17 @@ function Room({
               owns ? (
                 <>
                   <span className="owner-accent">{T("you_control")}</span>
-                  <Button variant="secondary" size="sm" onClick={async () => {
-                    await api(`/v0/sessions/${live.id}/control`, { method: "POST", body: JSON.stringify({ surface: "tui", client }) });
-                    onRefresh();
-                  }}>
+                  <Button variant="secondary" size="sm" loading={pending} disabled={pending || !!uncertainSession} onClick={() => actSession("none")}>
                     {T("return_control")}
                   </Button>
                 </>
               ) : (
                 <>
-                  <span className="owner-muted">{live.owner === "tui" ? T("tui_controls") : T("other_controls")}</span>
+                  <span className="owner-muted">{live.owner === "none" ? T("no_owner_controls") : live.owner === "tui" ? T("tui_controls") : T("other_controls")}</span>
                   <Button
                     size="sm"
-                    onClick={async () => {
-                      await api(`/v0/sessions/${live.id}/control`, { method: "POST", body: JSON.stringify({ surface: "web", client }) });
-                      onRefresh();
-                    }}
+                    loading={pending} disabled={pending || !!uncertainSession}
+                    onClick={() => actSession("web")}
                   >
                     {T("take_control")}
                   </Button>
@@ -1181,8 +1229,8 @@ function Room({
         </div>
         {logTab === "log" && live && (layout === "terminal" || layout === "list") ? (
           <>
-            {!owns ? <div className="readonly-note">{T("readonly_note")}</div> : null}
-            <XTerm sessionId={live.id} inputEnabled={!!owns} client={client} />
+            {!owns ? <div className="readonly-note">{T(live.owner === "none" ? "readonly_unowned" : "readonly_note")}</div> : null}
+            <XTerm sessionId={live.id} inputEnabled={!!owns && !pending && !uncertainSession} client={client} />
           </>
         ) : null}
         {logTab === "log" && !live ? <div className="empty">{T("start_session_for_log")}</div> : null}
@@ -1239,7 +1287,11 @@ function Room({
 
 function XTerm({ sessionId, inputEnabled, client }: { sessionId: string; inputEnabled: boolean; client: string }) {
   const host = useRef<HTMLDivElement>(null);
+  const [connection, setConnection] = useState<"connecting" | "attached" | "failed">("connecting");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    setConnection("connecting");
+    let attached = false;
     const term = new Terminal({
       convertEol: true,
       fontFamily: "IBM Plex Mono, monospace",
@@ -1254,8 +1306,12 @@ function XTerm({ sessionId, inputEnabled, client }: { sessionId: string; inputEn
     const token = localStorage.getItem("bt-token") || "";
     const ws = new WebSocket(`${proto}://${location.host}/v0/sessions/${sessionId}/terminal?token=${encodeURIComponent(token)}&client=${encodeURIComponent(client)}`);
     ws.binaryType = "arraybuffer";
+    const failed = () => { attached = false; setConnection("failed"); };
+    const deadline = window.setTimeout(() => { failed(); ws.close(); }, REQUEST_DEADLINE);
+    ws.onerror = () => { window.clearTimeout(deadline); failed(); };
+    ws.onclose = () => { window.clearTimeout(deadline); failed(); };
     const sendResize = () => {
-      if (!inputEnabled || ws.readyState !== WebSocket.OPEN) return;
+      if (!attached || !inputEnabled || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = (ev) => {
@@ -1263,15 +1319,17 @@ function XTerm({ sessionId, inputEnabled, client }: { sessionId: string; inputEn
       else term.write(new Uint8Array(ev.data as ArrayBuffer));
     };
     ws.onopen = () => {
+      window.clearTimeout(deadline);
+      attached = true; setConnection("attached");
       fit.fit();
       sendResize();
     };
     const subData = term.onData((d) => {
-      if (!inputEnabled) return;
+      if (!attached || !inputEnabled) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(d);
     });
     const subResize = term.onResize(({ cols, rows }) => {
-      if (!inputEnabled || ws.readyState !== WebSocket.OPEN) return;
+      if (!attached || !inputEnabled || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "resize", cols, rows }));
     });
     const onWin = () => fit.fit();
@@ -1279,6 +1337,8 @@ function XTerm({ sessionId, inputEnabled, client }: { sessionId: string; inputEn
     const ro = host.current && typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => fit.fit()) : null;
     if (host.current && ro) ro.observe(host.current);
     return () => {
+      window.clearTimeout(deadline);
+      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
       window.removeEventListener("resize", onWin);
       ro?.disconnect();
       subData.dispose();
@@ -1286,11 +1346,17 @@ function XTerm({ sessionId, inputEnabled, client }: { sessionId: string; inputEn
       ws.close();
       term.dispose();
     };
-  }, [sessionId, inputEnabled, client]);
-  return <div className="xterm-host" ref={host} />;
+  }, [sessionId, inputEnabled, client, attempt]);
+  return <>
+    {connection !== "attached" ? <div role="status">{T(connection === "failed" ? "terminal_failed" : "terminal_connecting", { id: sessionId })}
+      {connection === "failed" ? <Button variant="secondary" onClick={() => setAttempt(value => value + 1)}>{T("terminal_reconnect")}</Button> : null}
+    </div> : null}
+    <div className="xterm-host" ref={host} />
+  </>;
 }
 
 function Squads({
+  locked,
   squads,
   skills,
   skillsRoot,
@@ -1299,6 +1365,7 @@ function Squads({
   onDuplicate,
 }: {
   squads: Squad[];
+  locked: boolean;
   skills: Skill[];
   skillsRoot: string;
   onCreate: () => void;
@@ -1309,14 +1376,14 @@ function Squads({
   const custom = squads.filter((q) => q.origin !== "batuta");
   return (
     <div className="page">
-      <PageHeader title={T("squads")} description={T("squads_sub")} actions={<Button onClick={onCreate}>{T("create_squad")}</Button>} />
+      <PageHeader title={T("squads")} description={T("squads_sub")} actions={<Button disabled={locked} onClick={onCreate}>{T("create_squad")}</Button>} />
       {!skillsRoot ? (
         <Alert tone="warning" title={T("catalog_no_disk_title")}>
           {T("catalog_no_disk_body")}
         </Alert>
       ) : null}
-      <SquadGroup title={T("batuta_squads")} hint={T("batuta_squads_hint")} squads={batuta} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("batuta_squads_empty")} />
-      <SquadGroup title={T("your_squads")} hint={T("your_squads_hint")} squads={custom} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("your_squads_empty")} />
+      <SquadGroup locked={locked} title={T("batuta_squads")} hint={T("batuta_squads_hint")} squads={batuta} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("batuta_squads_empty")} />
+      <SquadGroup locked={locked} title={T("your_squads")} hint={T("your_squads_hint")} squads={custom} onEdit={onEdit} onDuplicate={onDuplicate} empty={T("your_squads_empty")} />
       <section className="panel">
         <div className="panel-h">
           <span>{T("skills_batuta")}</span>
@@ -1344,6 +1411,7 @@ function Squads({
 }
 
 function SquadGroup({
+  locked,
   title,
   hint,
   squads,
@@ -1351,6 +1419,7 @@ function SquadGroup({
   onEdit,
   onDuplicate,
 }: {
+  locked: boolean;
   title: string;
   hint: string;
   squads: Squad[];
@@ -1368,9 +1437,9 @@ function SquadGroup({
       <div className="cards">
         {squads.map((q) => (
           <Card asChild interactive key={q.id}>
-          <button type="button" className="sq-card" onClick={() => onEdit(q)}>
+          <div className="sq-card">
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span style={{ fontSize: 16, fontWeight: 600 }}>{q.name || T("unnamed")}</span>
+              <button type="button" disabled={locked} className="linkish" style={{ fontSize: 16, fontWeight: 600 }} onClick={() => onEdit(q)}>{q.name || T("unnamed")}</button>
               <span className="inline-actions">
                 {q.origin === "batuta" ? <Badge tone="accent">Batuta</Badge> : <Badge tone="neutral">{T("yours")}</Badge>}
                 <Badge tone={q.draft ? "warning" : "success"}>{q.draft ? T("draft") : T("valid_v", { v: q.version })}</Badge>
@@ -1388,7 +1457,7 @@ function SquadGroup({
               <span>
                 v{q.version} · {plural(q.members?.length || 0, "member_one", "member_many")}
               </span>
-              <span
+              <button type="button" disabled={locked}
                 className="linkish"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1396,9 +1465,9 @@ function SquadGroup({
                 }}
               >
                 {T("duplicate")}
-              </span>
+              </button>
             </div>
-          </button>
+          </div>
           </Card>
         ))}
       </div>
@@ -1418,7 +1487,7 @@ function SquadEditor({
   accounts: Account[];
   skills: Skill[];
   workspaceId?: string;
-  onClose: () => void;
+  onClose: (retained: boolean) => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(squad.name);
@@ -1426,6 +1495,74 @@ function SquadEditor({
   const [members, setMembers] = useState<Member[]>(squad.members || []);
   const [msg, setMsg] = useState("");
   const [tone, setTone] = useState<"success" | "warning" | "danger" | "">("");
+
+  const [pending, setPending] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const [saved, setSaved] = useState<Squad | null>(null);
+  const [matches, setMatches] = useState<Squad[]>([]);
+  const [missionMatches, setMissionMatches] = useState<Mission[]>([]);
+  const operation = useRef<{ draft: Squad; workspace?: string; mission: boolean; error?: string; returnedID?: string } | null>(null);
+  const [editable, setEditable] = useState(false);
+  const [previousAttempts, setPreviousAttempts] = useState<NonNullable<typeof operation.current>[]>([]);
+  const busy = useRef(false);
+
+  async function save(withMission: boolean) {
+    if (busy.current || uncertain) return;
+    busy.current = true; setPending(true); setEditable(false); setMsg("");
+    const intent: NonNullable<typeof operation.current> = operation.current || { draft, workspace: workspaceId, mission: withMission };
+    operation.current = intent;
+    try {
+      await bounded(async signal => {
+        const result = saved || await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify(intent.draft), signal });
+        if (result?.id) intent.returnedID = result.id;
+        if (!result?.id || (intent.draft.id && result.id !== intent.draft.id) || !Array.isArray(result.members) || result.members.some(m => !m.id)) throw new Error(T("journey_invalid_state"));
+        setSaved(result);
+        if (intent.mission) {
+          const mission = await api<Mission>("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: intent.workspace, title: intent.draft.name || T("new_mission_title"), squad_id: result.id }), signal });
+          if (!mission?.id || mission.workspace_id !== intent.workspace || mission.squad_id !== result.id) throw new Error(T("journey_invalid_state"));
+        }
+        onSaved();
+      });
+    } catch (e) { intent.error = String(e); setMsg(String(e)); setTone("danger"); setUncertain(true); }
+    finally { busy.current = false; setPending(false); }
+  }
+  async function inspect() {
+    const intent = operation.current;
+    if (busy.current || !intent) return;
+    busy.current = true; setPending(true); setEditable(false);
+    try {
+      await bounded(async signal => {
+        const catalog = await api<Squad[]>("/v0/squads", { signal });
+        if (!Array.isArray(catalog)) throw new Error(T("journey_invalid_state"));
+        const sameDraft = (q: Squad) => q.name === intent.draft.name && (q.purpose || "") === (intent.draft.purpose || "") &&
+          q.members.length === intent.draft.members.length && q.members.every((member, index) => {
+            const expected = intent.draft.members[index];
+            return (!expected.id || member.id === expected.id) && member.role === expected.role && member.cli === expected.cli &&
+              member.account_id === expected.account_id && !!member.maestro === !!expected.maestro &&
+              (member.model || "") === (expected.model || "") && (member.effort || "") === (expected.effort || "") &&
+              JSON.stringify(member.skills || []) === JSON.stringify(expected.skills || []);
+          });
+        const found = catalog.filter(q => saved ? q.id === saved.id : (!intent.returnedID || q.id === intent.returnedID) && sameDraft(q) &&
+          (!intent.draft.id || (q.id === intent.draft.id && q.version > intent.draft.version)));
+        if (!saved && intent.draft.id && catalog.some(q => q.id === intent.draft.id && q.version > intent.draft.version && !sameDraft(q))) throw new Error(T("creation_conflict"));
+        if (saved) {
+          if (!found.some(q => q.version === saved.version)) throw new Error(T("creation_choose"));
+          const missions = intent.mission ? await api<Mission[]>("/v0/missions", { signal }) : [];
+          if (!Array.isArray(missions)) throw new Error(T("journey_invalid_state"));
+          const matching = missions.filter(m => m.workspace_id === intent.workspace && m.squad_id === saved.id && m.title === (intent.draft.name || T("new_mission_title")));
+          setMissionMatches(matching); setUncertain(matching.length > 0);
+          setMsg(T(matching.length ? "creation_choose" : "creation_retry"));
+        } else {
+          const original = catalog.filter(q => q.id === intent.draft.id);
+          const unchangedOriginal = original.length === 1 && Number.isSafeInteger(intent.draft.version) && intent.draft.version >= 0 && original[0].version === intent.draft.version;
+          setMatches(found); setUncertain(!!intent.returnedID || found.length > 0 || (!!intent.draft.id && !unchangedOriginal)); setMsg(T(found.length ? "creation_choose" : "creation_no_match"));
+          setEditable(!intent.returnedID && found.length === 0 && (!intent.draft.id || unchangedOriginal));
+        }
+        setTone("warning");
+      });
+    } catch (e) { setMsg(String(e)); setTone("danger"); }
+    finally { busy.current = false; setPending(false); }
+  }
 
   function patch(i: number, part: Partial<Member>) {
     setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, ...part } : m)));
@@ -1444,7 +1581,7 @@ function SquadEditor({
         eyebrow={T("squads_crumb", { name: name || T("nameless") })}
         title={name || T("squad_editor")}
         actions={
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={() => onClose(!!operation.current || previousAttempts.length > 0)}>
             {T("back")}
           </Button>
         }
@@ -1454,6 +1591,22 @@ function SquadEditor({
           <Badge tone="neutral">{squad.draft ? T("draft_v", { v: squad.version }) : T("version_v", { v: squad.version })}</Badge>
         </div>
       </PageHeader>
+      {uncertain ? <div><Button disabled={pending} onClick={inspect}>{T("creation_inspect")}</Button>
+        <p>{operation.current?.workspace} · {saved?.id || operation.current?.returnedID || operation.current?.draft.id || T("unknown")} · {saved?.members.map(m => m.id).join(", ")}</p></div> : null}
+      {editable && !saved && matches.length === 0 && missionMatches.length === 0 ? <Button disabled={pending} onClick={() => {
+        const intent = operation.current;
+        if (busy.current || !editable || !intent || intent.returnedID || saved) return;
+        setPreviousAttempts(attempts => [...attempts, intent]);
+        operation.current = null; setEditable(false); setUncertain(false); setMsg("");
+      }}>{T("creation_edit_draft")}</Button> : null}
+      {previousAttempts.map((attempt, i) => <Alert key={i} tone="warning" title={T("creation_previous_uncertain")}>
+        <span>{attempt.draft.name} · {attempt.workspace || T("unknown")} · {attempt.draft.id || T("unknown")}</span><br />
+        <span>{attempt.draft.purpose} · {attempt.draft.members.map(m => `${m.role} · ${m.id || T("unknown")}`).join(", ")}</span><br />
+        <span>{attempt.error}</span>
+      </Alert>)}
+      {matches.map(q => <Button key={q.id} disabled={pending} onClick={() => { setSaved(q); setMatches([]); setUncertain(!!operation.current?.mission); setMsg(T("creation_retry")); }}>{T("creation_use_squad", { id: q.id })} · v{q.version} · {q.members.map(m => m.id).join(", ")}</Button>)}
+      {missionMatches.map(m => <Button key={m.id} disabled={pending} onClick={onSaved}>{T("creation_use_mission", { id: m.id })}</Button>)}
+      <fieldset disabled={pending || !!operation.current} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--gap)" }}>
       <div className="cards-wide">
         <Field label={T("field_name")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -1544,8 +1697,10 @@ function SquadEditor({
         </table>
         </div>
       </section>
+      </fieldset>
       <div className="inline-actions">
         <Button
+          disabled={pending || !!operation.current}
           variant="soft"
           onClick={() =>
             setMembers((ms) => [...ms, { role: "", cli: "codex", account_id: accounts[0]?.id || "", maestro: ms.length === 0, effort: "medium" }])
@@ -1557,13 +1712,15 @@ function SquadEditor({
         <span style={{ flex: 1 }} />
         <Button
           variant="secondary"
+          disabled={pending || !!operation.current || (!name.trim() && members.length === 0)}
           onClick={async () => {
-            const v = await api<{ validation: { title: string; text: string; ready: boolean; tone: string } }>(`/v0/squads/${squad.id}/validate`, {
-              method: "POST",
-              body: JSON.stringify(draft),
-            });
-            setTone((v.validation.tone as "success" | "warning" | "danger") || "info");
-            setMsg(`${v.validation.title}. ${v.validation.text}`);
+            if (busy.current) return;
+            busy.current = true; setPending(true);
+            try {
+              const v = await bounded(signal => api<{ validation: { title: string; text: string } }>(`/v0/squads/${squad.id || "draft"}/validate`, { method: "POST", body: JSON.stringify(draft), signal }));
+              setTone("warning"); setMsg(`${v.validation.title}. ${v.validation.text}`);
+            } catch (e) { setTone("danger"); setMsg(String(e)); }
+            finally { busy.current = false; setPending(false); }
           }}
         >
           {T("validate")}
@@ -1571,20 +1728,17 @@ function SquadEditor({
         {workspaceId ? (
           <Button
             variant="secondary"
-            onClick={async () => {
-              const saved = await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify(draft) });
-              await api("/v0/missions", { method: "POST", body: JSON.stringify({ workspace_id: workspaceId, title: name || T("new_mission_title"), squad_id: saved.id }) });
-              onSaved();
-            }}
+            disabled={pending || uncertain || (!!operation.current && !operation.current.mission)}
+            loading={pending}
+            onClick={() => save(true)}
           >
             {T("create_mission_squad")}
           </Button>
         ) : null}
         <Button
-          onClick={async () => {
-            await api<Squad>("/v0/squads", { method: "POST", body: JSON.stringify(draft) });
-            onSaved();
-          }}
+          disabled={pending || uncertain || !!operation.current?.mission}
+          loading={pending}
+          onClick={() => save(false)}
         >
           {T("save_version")}
         </Button>
@@ -1807,18 +1961,14 @@ function Accounts({
   accounts,
   limits,
   sessions,
-  open,
   onOpen,
-  onClose,
   onSaved,
   onLogin,
 }: {
   accounts: Account[];
   limits: Limit[];
   sessions: Session[];
-  open: boolean;
   onOpen: () => void;
-  onClose: () => void;
   onSaved: () => void;
   onLogin: (a: Account) => void;
 }) {
@@ -1859,12 +2009,12 @@ function Accounts({
           const iso = isolationLabel(a.isolation);
           const used = live.filter((s) => s.account_id === a.id).length;
           return (
-            <button key={a.id} type="button" className="acct-grid" onClick={() => setEdit(a)}>
+            <div key={a.id} className="acct-grid">
               <span>
-                <span className="mono" style={{ fontWeight: 500 }}>
+                <button type="button" className="linkish mono" onClick={() => setEdit(a)} style={{ fontWeight: 500 }}>
                   {a.authed ? "● " : a.connected ? "◐ " : "○ "}
                   {a.label}
-                </span>
+                </button>
                 <div className="muted" style={{ fontSize: 11.5 }}>
                   {a.authed ? T("signed_in") : a.connected ? T("folder_only") : "—"}
                 </div>
@@ -1898,13 +2048,12 @@ function Accounts({
                 {lim?.origin || lim?.source || "—"}
                 {lim?.observed_at ? <div>{relTime(lim.observed_at)}</div> : null}
               </span>
-            </button>
+            </div>
           );
         })}
         {accounts.length === 0 ? <EmptyState title={T("no_accounts_yet")} /> : null}
       </section>
       <p className="muted">{T("limits_footnote")}</p>
-      <AddAccount open={open} onClose={onClose} onSaved={onSaved} />
       <RenameAccount account={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); onSaved(); }} />
     </div>
   );
@@ -1972,6 +2121,57 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
   const [adapter, setAdapter] = useState("codex");
   const [draft, setDraft] = useState<Account | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  const [matches, setMatches] = useState<Account[]>([]);
+  const [editable, setEditable] = useState(false);
+  const [previousAttempts, setPreviousAttempts] = useState<{ label: string; adapter: string; error: string }[]>([]);
+  const returnedID = useRef("");
+  const failure = useRef("");
+  const busy = useRef(false);
+  const submitted = useRef(false);
+  function reset() {
+    setStep(1); setLabel(""); setAdapter("codex"); setDraft(null);
+    setError(""); setUncertain(false); setMatches([]); setEditable(false); setPreviousAttempts([]); returnedID.current = ""; failure.current = ""; submitted.current = false;
+  }
+  function close() {
+    if (!busy.current && step === 3 && draft?.id && !uncertain) {
+      reset(); onSaved(); return;
+    }
+    if (!submitted.current && previousAttempts.length === 0) reset();
+    onClose();
+  }
+  async function connect() {
+    if (busy.current || uncertain || editable) return;
+    busy.current = true; submitted.current = true; setLoading(true); setError("");
+    try {
+      await bounded(async signal => {
+        const account = draft || await api<Account>("/v0/accounts", { method: "POST", body: JSON.stringify({ label, adapter }), signal });
+        if (account?.id) returnedID.current = account.id;
+        if (!account?.id || account.adapter !== adapter || account.label !== label) throw new Error(T("journey_invalid_state"));
+        setDraft(account);
+        const connected = await api<Account>(`/v0/accounts/${account.id}/connect`, { method: "POST", body: "{}", signal });
+        if (connected?.id !== account.id) throw new Error(T("journey_invalid_state"));
+        setDraft(connected); setStep(3);
+      });
+    } catch (e) { failure.current = String(e); setError(failure.current); setUncertain(true); }
+    finally { busy.current = false; setLoading(false); }
+  }
+  async function inspect() {
+    if (busy.current) return;
+    busy.current = true; setLoading(true);
+    setEditable(false);
+    try {
+      const catalog = await bounded(signal => api<Account[]>("/v0/accounts", { signal }));
+      if (!Array.isArray(catalog)) throw new Error(T("journey_invalid_state"));
+      const found = catalog.filter(a => draft ? a.id === draft.id : a.label === label && a.adapter === adapter && (!returnedID.current || a.id === returnedID.current));
+      setMatches(draft ? [] : found);
+      if (draft && found.length === 1) { setUncertain(false); setError(T("creation_retry")); }
+      else if (!draft && !found.length) { setUncertain(!!returnedID.current); setEditable(!returnedID.current); setError(T("creation_no_match")); }
+      else setError(T("creation_choose"));
+    } catch (e) { setError(String(e)); }
+    finally { busy.current = false; setLoading(false); }
+  }
   const isolation =
     adapter === "codex" || adapter === "opencode" ? "supported" : adapter === "gemini" ? "unsupported" : "not_yet_qualified";
   const iso = isolationLabel(isolation);
@@ -1986,11 +2186,11 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
     <Drawer
       open={open}
       title={T("add_account")}
-      onClose={onClose}
+      onClose={close}
       footer={
         step === 1 ? (
           <>
-            <Button variant="secondary" onClick={onClose}>
+            <Button variant="secondary" onClick={close}>
               {T("cancel")}
             </Button>
             <Button disabled={!label} onClick={() => setStep(2)}>
@@ -1999,32 +2199,34 @@ function AddAccount({ open, onClose, onSaved }: { open: boolean; onClose: () => 
           </>
         ) : step === 2 ? (
           <>
-            <Button variant="secondary" onClick={() => setStep(1)}>
+            <Button variant="secondary" disabled={loading || submitted.current} onClick={() => setStep(1)}>
               {T("back")}
             </Button>
             <Button
               loading={loading}
               full
-              onClick={async () => {
-                setLoading(true);
-                try {
-                  const a = await api<Account>("/v0/accounts", { method: "POST", body: JSON.stringify({ label, adapter }) });
-                  const connected = await api<Account>(`/v0/accounts/${a.id}/connect`, { method: "POST", body: "{}" });
-                  setDraft(connected);
-                  setStep(3);
-                } finally {
-                  setLoading(false);
-                }
-              }}
+              disabled={loading || uncertain || editable}
+              onClick={connect}
             >
               {T("connect_official")}
             </Button>
           </>
         ) : (
-          <Button onClick={onSaved}>{T("save_account")}</Button>
+          <Button onClick={() => { reset(); onSaved(); }}>{T("save_account")}</Button>
         )
       }
     >
+      {error ? <Alert tone="warning" title={T("creation_recovery")}><span role="alert">{error}</span><br /><span>{label} · {adapter} · {draft?.id || returnedID.current || T("unknown")}</span></Alert> : null}
+      {uncertain ? <Button disabled={loading} onClick={inspect}>{T("creation_inspect")}</Button> : null}
+      {editable ? <Button disabled={loading} onClick={() => {
+        if (busy.current || !editable || draft?.id || returnedID.current) return;
+        setPreviousAttempts(attempts => [...attempts, { label, adapter, error: failure.current }]);
+        submitted.current = false; setEditable(false); setUncertain(false); setError(""); setMatches([]); setStep(1);
+      }}>{T("creation_edit_draft")}</Button> : null}
+      {previousAttempts.map((attempt, i) => <Alert key={i} tone="warning" title={T("creation_previous_uncertain")}>
+        <span>{attempt.label} · {attempt.adapter}</span><br /><span>{attempt.error}</span>
+      </Alert>)}
+      {matches.map(a => <Button key={a.id} disabled={loading} onClick={() => { setDraft(a); setMatches([]); setUncertain(false); setError(T("creation_retry")); }}>{T("creation_use_account", { id: a.id })}</Button>)}
       <Stepper steps={[T("step_provider"), T("step_connect"), T("step_confirm")]} current={step} />
       {step === 1 && (
         <div className="radio-col" style={{ marginTop: 16 }}>

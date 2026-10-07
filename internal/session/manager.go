@@ -15,6 +15,8 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 )
 
+var ErrInvalidControl = errors.New("control requires web, tui, or none and a client identity")
+
 type Subscriber func([]byte)
 
 type live struct {
@@ -203,12 +205,21 @@ func (m *Manager) Resize(id, ownerClient string, cols, rows int) error {
 }
 
 func (m *Manager) Take(id, surface, client string) (domain.Session, error) {
+	if client == "" || (surface != "web" && surface != "tui" && surface != "none") {
+		return domain.Session{}, ErrInvalidControl
+	}
 	l, ok := m.Live(id)
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if surface == "none" {
+		if l.sess.OwnerClient != client {
+			return domain.Session{}, os.ErrPermission
+		}
+		client = ""
+	}
 	l.sess.Owner = surface
 	l.sess.OwnerClient = client
 	return l.sess, nil

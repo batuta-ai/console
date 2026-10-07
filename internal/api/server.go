@@ -452,6 +452,14 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.Svc.Session.Take(r.PathValue("id"), in.Surface, in.Client)
+	if errors.Is(err, os.ErrPermission) {
+		writeErr(w, 403, "not_owner", err.Error())
+		return
+	}
+	if errors.Is(err, session.ErrInvalidControl) {
+		writeErr(w, 400, "invalid_control", err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, 404, "not_found", err.Error())
 		return
