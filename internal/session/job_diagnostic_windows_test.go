@@ -87,6 +87,11 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 		child.Stdout, child.Stderr = nil, nil
 	}
 	fmt.Fprintln(os.Stdout, "before child start")
+	if len(os.Args) > 4 && os.Args[4] == "thread-labeled" {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		fmt.Fprintf(os.Stdout, "native creator thread=%d\n", windows.GetCurrentThreadId())
+	}
 	timer := time.AfterFunc(200*time.Millisecond, func() {
 		buf := make([]byte, 24<<10)
 		n := runtime.Stack(buf, true)
@@ -431,6 +436,9 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
 		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" || variant == "minimal-child-env" || variant == "system-child-dir" || variant == "system-child-image" || variant == "detached-child" {
 			argv = append(argv, variant)
+		}
+		if variant == "detached-thread-state" {
+			argv = append(argv, "thread-labeled")
 		}
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)

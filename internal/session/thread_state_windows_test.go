@@ -49,7 +49,7 @@ func task43ObserveNativeThreadState(t *testing.T, pids map[uintptr]bool, root wi
 	}
 	native := windows.NewLazySystemDLL("ntdll.dll")
 	names := map[uint16]string{}
-	for _, name := range []string{"NtCreateUserProcess", "NtAlpcSendWaitReceivePort", "NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtDelayExecution", "NtResumeThread", "NtCreateThreadEx"} {
+	for _, name := range []string{"NtCreateUserProcess", "NtAlpcSendWaitReceivePort", "NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtDelayExecution", "NtResumeThread", "NtCreateThreadEx", "NtWaitForDebugEvent", "NtRemoveIoCompletion", "NtRemoveIoCompletionEx", "NtWaitForWorkViaWorkerFactory", "NtWaitForAlertByThreadId", "NtWaitForKeyedEvent"} {
 		proc := native.NewProc(name)
 		if err := proc.Find(); err != nil {
 			t.Log("syscall export observation", name, err)
@@ -101,6 +101,7 @@ func task43ObserveNativeThreadState(t *testing.T, pids map[uintptr]bool, root wi
 			return
 		}
 		if pids[process.UniqueProcessID] {
+			t.Logf("native process=%d kernelTime=%d userTime=%d creation=%d threads=%d", process.UniqueProcessID, process.KernelTime, process.UserTime, process.CreateTime, process.NumberOfThreads)
 			for i := uint32(0); i < process.NumberOfThreads; i++ {
 				at := offset + headerSize + uintptr(i)*threadSize
 				if at+threadSize > end {
