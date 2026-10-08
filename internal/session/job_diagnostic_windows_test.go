@@ -275,18 +275,22 @@ func task43ObserveRootModulesAndToken(t *testing.T, root windows.Handle) {
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
-	task43DirectJobDiagnosis(t, true, false)
+	task43DirectJobDiagnosis(t, true, false, false)
 }
 
 func TestTask43WindowsJobWithoutCompletionPortDiagnosis(t *testing.T) {
-	task43DirectJobDiagnosis(t, false, false)
+	task43DirectJobDiagnosis(t, false, false, false)
 }
 
 func TestTask43WindowsJobSuspendedAssignmentDiagnosis(t *testing.T) {
-	task43DirectJobDiagnosis(t, true, true)
+	task43DirectJobDiagnosis(t, true, true, false)
 }
 
-func task43DirectJobDiagnosis(t *testing.T, completion, assignment bool) {
+func TestTask43WindowsJobOriginalThreadSnapshot(t *testing.T) {
+	task43DirectJobDiagnosis(t, true, false, true)
+}
+
+func task43DirectJobDiagnosis(t *testing.T, completion, assignment, snapshot bool) {
 	home := task43SessionHome(t)
 	env, privateHome, err := accounts.SessionEnvironment()
 	if err != nil {
@@ -356,6 +360,9 @@ func task43DirectJobDiagnosis(t *testing.T, completion, assignment bool) {
 		t.Fatal(err)
 	}
 	argv := task43ProbeArgv(t, "descendant")
+	if snapshot {
+		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis", "thread-labeled"}
+	}
 	app, err := windows.UTF16PtrFromString(argv[0])
 	if err != nil {
 		t.Fatal(err)
@@ -410,6 +417,12 @@ func task43DirectJobDiagnosis(t *testing.T, completion, assignment bool) {
 	go func() { _, err := io.Copy(probeWriter{output: output, stdout: true}, reader); done <- err }()
 	status, observeErr := windows.WaitForSingleObject(owned.root, 1000)
 	t.Log("direct creation root wait", status, observeErr)
+	if snapshot {
+		output.mu.Lock()
+		capturedOutput := string(output.stdout)
+		output.mu.Unlock()
+		task43ObserveOriginalCreationThread(t, owned.anchor, capturedOutput)
+	}
 	cleanupErr := owned.retire(nil)
 	readErr := <-done
 	output.mu.Lock()
