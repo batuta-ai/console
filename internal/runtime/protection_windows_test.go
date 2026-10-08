@@ -73,7 +73,14 @@ func TestWindowsRuntimeProtectionRefusesUnsafeWithoutMutation(t *testing.T) {
 }
 
 func TestWindowsReadLockPreservesIdentityAndErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lock with space.json")
+	path := filepath.Join(task43PrivateHome(t), "lock with space.json")
+	f, err := WriteLock(path, LockInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	raw := []byte(`{"pid":42,"addr":"127.0.0.1:9477","home":"C:\\synthetic ç\\console"}`)
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)

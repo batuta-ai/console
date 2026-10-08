@@ -186,6 +186,65 @@ func TestTask43WindowsReadLockBounded(t *testing.T) {
 	}
 }
 
+func TestTask43WindowsReadLockWaitsForPublication(t *testing.T) {
+	home := task43PrivateHome(t)
+	path := filepath.Join(home, "consoled.lock")
+	want := LockInfo{PID: os.Getpid(), Addr: "127.0.0.1:12345", Home: home}
+	f, err := WriteLock(path, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	overlap := windows.Overlapped{Offset: 0x7ffffffe}
+	if err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlap); err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			if err := windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlap); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	if err := f.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	type response struct {
+		info LockInfo
+		err  error
+	}
+	result := make(chan response, 1)
+	go func() { info, err := ReadLock(path); result <- response{info, err} }()
+	select {
+	case got := <-result:
+		t.Fatalf("reader observed unpublished metadata: %+v error=%v", got.info, got.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteAt(data, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlap); err != nil {
+		t.Fatal(err)
+	}
+	locked = false
+	select {
+	case got := <-result:
+		if got.err != nil || got.info != want {
+			t.Fatalf("publication not preserved: %+v %v", got.info, got.err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("discovery did not finish after publication")
+	}
+}
+
 func TestTask43WindowsAuthDoesNotAdoptStaging(t *testing.T) {
 	home := task43PrivateHome(t)
 	leftover := filepath.Join(home, ".auth.secret.abrupt.tmp")
