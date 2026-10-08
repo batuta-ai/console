@@ -10,8 +10,7 @@ import (
 func PrivateHome(t testing.TB) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "private home")
-	_, err := runtime.EnsurePrivateDirectory(path)
-	if err != nil {
+	if err := runtime.EnsurePrivateDirectory(path); err != nil {
 		t.Fatal(err)
 	}
 	return path
