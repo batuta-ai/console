@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	consoleruntime "github.com/batuta-ai/console/internal/runtime"
 	"golang.org/x/sys/windows"
@@ -49,9 +50,11 @@ func TestTask43WindowsProbeProcessFixture(t *testing.T) {
 	}
 	switch os.Args[at+1] {
 	case "environment":
-		var inJob bool
-		if err := windows.IsProcessInJob(windows.CurrentProcess(), 0, &inJob); err != nil {
-			t.Fatal(err)
+		var inJob int32
+		query := windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
+		ok, _, callErr := query.Call(uintptr(windows.CurrentProcess()), 0, uintptr(unsafe.Pointer(&inJob)))
+		if ok == 0 {
+			t.Fatal(callErr)
 		}
 		values := map[string]string{}
 		for _, entry := range os.Environ() {
@@ -64,7 +67,7 @@ func TestTask43WindowsProbeProcessFixture(t *testing.T) {
 			Environment map[string]string `json:"environment"`
 			Arg         string            `json:"arg"`
 			InJob       bool              `json:"in_job"`
-		}{values, os.Args[at+2], inJob}
+		}{values, os.Args[at+2], inJob != 0}
 		if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 			t.Fatal(err)
 		}
