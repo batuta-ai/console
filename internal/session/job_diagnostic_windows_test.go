@@ -27,6 +27,9 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 	}
 	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", mode)
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
+	if len(os.Args) > 4 && os.Args[4] == "headless-child" {
+		child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
+	}
 	if len(os.Args) > 4 && os.Args[4] == "null-child-io" {
 		child.Stdout, child.Stderr = nil, nil
 	}
@@ -74,6 +77,10 @@ func TestTask43WindowsJobExitingChildDiagnosis(t *testing.T) {
 
 func TestTask43WindowsJobLongCreationObservation(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "long-observation")
+}
+
+func TestTask43WindowsJobHeadlessChildDiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "headless-child")
 }
 
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
@@ -279,7 +286,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
-		if variant == "null-child-io" || variant == "exiting-child" {
+		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" {
 			argv = append(argv, variant)
 		}
 	}
