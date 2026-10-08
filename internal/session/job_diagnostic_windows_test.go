@@ -20,6 +20,37 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 	if len(os.Args) < 4 || os.Args[3] != "task43-job-diagnosis" {
 		return
 	}
+	if len(os.Args) > 4 && os.Args[4] == "native-child" {
+		app, err := windows.UTF16PtrFromString(os.Args[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv := []string{os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", "hold"}
+		command, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, err := windowsEnvironmentBlock(os.Environ())
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := windows.StartupInfo{}
+		info.Cb = uint32(unsafe.Sizeof(info))
+		var child windows.ProcessInformation
+		fmt.Fprintln(os.Stdout, "before native child start")
+		if err := windows.CreateProcess(app, command, nil, nil, false, windows.CREATE_NO_WINDOW|windows.CREATE_UNICODE_ENVIRONMENT, &block[0], nil, &info, &child); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintln(os.Stdout, "after native child start")
+		var created, exited, kernel, user windows.Filetime
+		if err := windows.GetProcessTimes(child.Process, &created, &exited, &kernel, &user); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(os.Stdout, "%d:%d\nNATIVE-ROOT-EXIT\n", child.ProcessId, uint64(created.HighDateTime)<<32|uint64(created.LowDateTime))
+		windows.CloseHandle(child.Thread)
+		windows.CloseHandle(child.Process)
+		os.Exit(0)
+	}
 	fmt.Fprintln(os.Stdout, "before child command")
 	mode := "hold"
 	if len(os.Args) > 4 && os.Args[4] == "exiting-child" {
@@ -81,6 +112,10 @@ func TestTask43WindowsJobLongCreationObservation(t *testing.T) {
 
 func TestTask43WindowsJobHeadlessChildDiagnosis(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "headless-child")
+}
+
+func TestTask43WindowsJobNativeDescendantDiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "native-child")
 }
 
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
@@ -286,7 +321,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
-		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" {
+		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" {
 			argv = append(argv, variant)
 		}
 	}
