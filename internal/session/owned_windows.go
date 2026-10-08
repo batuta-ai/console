@@ -55,8 +55,8 @@ func windowsTokenState(token windows.Token) (windowsTokenStatistics, error) {
 	return state, err
 }
 
-// Change only the fresh suspended anchor's distinct primary token. Descendants
-// inherit this owner, so ordinary provider credential creation stays private.
+// Set only the fresh suspended anchor's distinct primary token default owner,
+// so the launched command can create credentials owned by the selected user.
 func (p *ownedProcess) setAnchorOwner() error {
 	var token windows.Token
 	if err := windows.OpenProcessToken(p.anchor.Process, windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT, &token); err != nil {

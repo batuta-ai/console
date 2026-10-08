@@ -176,6 +176,10 @@ func TestTask43WindowsJobRootSystemDirectory(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "root-system-dir")
 }
 
+func TestTask43WindowsJobDetachedThreadState(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "detached-thread-state")
+}
+
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
 	advapi := windows.NewLazySystemDLL("advapi32.dll")
 	session, _, err := advapi.NewProc("OpenThreadWaitChainSession").Call(0, 0)
@@ -257,11 +261,11 @@ func task43ObserveRootModulesAndToken(t *testing.T, root windows.Handle) {
 			t.Log("root token default owner", sid.String())
 		}
 	}
-	var stats [56]byte
-	if err := windows.GetTokenInformation(token, windows.TokenStatistics, &stats[0], uint32(len(stats)), &n); err != nil {
+	stats, err := windowsTokenState(token)
+	if err != nil {
 		t.Log(err)
 	} else {
-		t.Log("root token instance", binary.LittleEndian.Uint64(stats[:8]))
+		t.Log("root token instance", stats.ID, "modified", stats.Modified)
 	}
 }
 
@@ -454,14 +458,14 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	output := &probeOutput{overflow: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = probeWriter{output: output, stdout: true}, probeWriter{output: output, stdout: true}
 	var owned *ownedProcess
-	if variant == "hidden-console" || variant == "detached-root" || variant == "new-root-console" {
+	if variant == "hidden-console" || variant == "detached-root" || variant == "new-root-console" || variant == "detached-thread-state" {
 		owned, err = newWindowsJob()
 		if err == nil {
 			err = owned.createAnchor(cmd)
 		}
 		if err == nil {
 			flags := uint32(0)
-			if variant == "detached-root" {
+			if variant == "detached-root" || variant == "detached-thread-state" {
 				flags = windows.DETACHED_PROCESS
 			}
 			if variant == "new-root-console" {
@@ -519,6 +523,13 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 		err = windows.QueryFullProcessImageName(h, 0, &name[0], &size)
 		t.Logf("job member PID=%d image=%s query=%v", members.PIDs[i], windows.UTF16ToString(name[:size]), err)
 		windows.CloseHandle(h)
+	}
+	if variant == "detached-thread-state" {
+		pids := make(map[uintptr]bool)
+		for i := uint32(0); i < members.Listed && i < 16; i++ {
+			pids[members.PIDs[i]] = true
+		}
+		task43ObserveNativeThreadState(t, pids)
 	}
 	output.mu.Lock()
 	t.Logf("root PID=%d wait=%d error=%v active=%d query=%v output=%q", cmd.Process.Pid, status, observeErr, accounting.ActiveProcesses, queryErr, output.stdout)
