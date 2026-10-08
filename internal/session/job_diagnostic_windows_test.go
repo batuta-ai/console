@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -53,6 +54,102 @@ func TestTask43WindowsJobHiddenConsoleDiagnosis(t *testing.T) {
 
 func TestTask43WindowsJobRetiredAnchorDiagnosis(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "retired-anchor")
+}
+
+func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
+	home := task43SessionHome(t)
+	env, privateHome, err := accounts.SessionEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(privateHome)
+	owned, err := newWindowsJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if !owned.retired {
+			_ = owned.retire(nil)
+		}
+	}()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	input, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	var files [2]windows.Handle
+	for i, f := range []*os.File{input, writer} {
+		if err := windows.DuplicateHandle(windows.CurrentProcess(), windows.Handle(f.Fd()), windows.CurrentProcess(), &files[i], 0, true, windows.DUPLICATE_SAME_ACCESS); err != nil {
+			t.Fatal(err)
+		}
+		defer windows.CloseHandle(files[i])
+	}
+	attrs, err := windows.NewProcThreadAttributeList(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attrs.Delete()
+	if err := attrs.Update(windowsJobListAttribute, unsafe.Pointer(&owned.job), unsafe.Sizeof(owned.job)); err != nil {
+		t.Fatal(err)
+	}
+	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&files[0]), unsafe.Sizeof(files)); err != nil {
+		t.Fatal(err)
+	}
+	argv := task43ProbeArgv(t, "descendant")
+	app, err := windows.UTF16PtrFromString(argv[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := windows.UTF16PtrFromString(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := windowsEnvironmentBlock(accounts.RuntimeEnvironment(os.Environ(), env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
+	info.Cb = uint32(unsafe.Sizeof(info))
+	info.Flags = windows.STARTF_USESTDHANDLES
+	info.StdInput = files[0]
+	info.StdOutput = files[1]
+	info.StdErr = files[1]
+	if err := windows.CreateProcess(app, command, nil, nil, true, windows.CREATE_NO_WINDOW|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT, &block[0], dir, &info.StartupInfo, &owned.anchor); err != nil {
+		t.Fatal(err)
+	}
+	var root windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), owned.anchor.Process, windows.CurrentProcess(), &root, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		t.Fatal(err)
+	}
+	owned.root = root
+	for i := range files {
+		windows.CloseHandle(files[i])
+		files[i] = 0
+	}
+	writer.Close()
+	output := &probeOutput{overflow: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { _, err := io.Copy(probeWriter{output: output, stdout: true}, reader); done <- err }()
+	status, observeErr := windows.WaitForSingleObject(owned.root, 1000)
+	t.Log("direct creation root wait", status, observeErr)
+	cleanupErr := owned.retire(nil)
+	readErr := <-done
+	output.mu.Lock()
+	t.Logf("direct output=%q cleanup=%v read=%v", output.stdout, cleanupErr, readErr)
+	output.mu.Unlock()
+	if status != windows.WAIT_OBJECT_0 || observeErr != nil {
+		t.Fatal("direct-created root did not exit")
+	}
 }
 
 func TestTask43WindowsJobRootExitDiagnosis(t *testing.T) {
