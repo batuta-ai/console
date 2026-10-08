@@ -26,6 +26,11 @@ func writeTerminalChunk(f terminalPTY, data []byte) (int, error) {
 	if err := raw.Control(func(handle uintptr) {
 		writeErr = windows.WriteFile(windows.Handle(handle), data, &written, nil)
 	}); err != nil {
+		// RawConn exposes Go's internal closing error. Only a file whose
+		// public descriptor is invalid is classified as a closed terminal.
+		if terminal, ok := f.(*windowsTerminal); ok && windows.Handle(terminal.input.Fd()) == windows.InvalidHandle {
+			return int(written), errors.Join(os.ErrClosed, err)
+		}
 		return int(written), err
 	}
 	// A PIPE_NOWAIT byte write reports a successful zero-byte operation when
