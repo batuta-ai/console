@@ -172,7 +172,7 @@
 
 - [ ] 42. Fechar a portabilidade e build nativo Windows — backend/high
       Depends on: 4, 19, 20
-      Scope: cmd/console/**, cmd/consoled/**, internal/runtime/**, internal/accounts/**, internal/adapters/**, internal/session/**, internal/service/**, internal/api/**, internal/store/**, internal/hostfs/**, internal/tui/**, integrations/batuta/**, scripts/**, docs/release-qualification.md
+      Scope: cmd/console/**, cmd/consoled/**, internal/runtime/**, internal/accounts/**, internal/adapters/**, internal/session/**, internal/service/**, internal/api/**, internal/store/**, internal/hostfs/**, internal/tui/**, integrations/batuta/**, plugins/limits/*_test.go (somente portabilidade de fixtures, preservando todas as obrigações/assertions originais; bloqueio syscall.Mkfifo provado nativamente em2026-10-08), scripts/**, docs/release-qualification.md
       Accept: Fonte e testes compilam e os testes de portabilidade/backend independentes de PTY e o perfil web executam no Windows amd64 com SDKs oficiais registrados; Caminhos/setup/SQLite/snapshot e interfaces de daemon/arquivos têm provas nativas e falhas observáveis; Nenhum caso obrigatório é descartado por skip de plataforma: a suíte completa, lifecycle/PTY/credenciais e proteção efetiva ficam obrigatórios em43 antes de anunciar operação
 - [ ] 43. Qualificar PTY, processos e isolamento no Windows nativo — backend/critical
       Depends on: 42, 8, 9, 10, 11, 13, 14, 15, 16, 28
