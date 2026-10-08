@@ -4,7 +4,7 @@ package batuta
 
 import (
 	"bytes"
-	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -52,12 +52,12 @@ func TestWindowsExactPlanContentCatalogPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			workspace := windowsPlanFixture(t, tc.path)
 			plan, body, err := ExactPlanContent(workspace, tc.path)
-			// Valid catalog identity must reach the unsupported secure reader.
-			if err != ErrArtifactIO {
-				t.Errorf("ExactPlanContent(%q): got %v, want ErrArtifactIO from unsupported secure reader", tc.path, err)
+			want, readErr := os.ReadFile(filepath.Join(workspace, tc.path))
+			if readErr != nil {
+				t.Fatal(readErr)
 			}
-			if body != nil || !reflect.DeepEqual(plan, routing.Plan{}) {
-				t.Errorf("unsupported reader returned content: plan=%+v body=%q", plan, body)
+			if err != nil || plan.Path != tc.path || plan.Slug != "alpha" || !bytes.Equal(body, want) {
+				t.Errorf("ExactPlanContent(%q): plan=%+v bytes=%q error=%v", tc.path, plan, body, err)
 			}
 		})
 	}
@@ -112,7 +112,7 @@ func TestWindowsExactPlanContentRejectsInvalidPaths(t *testing.T) {
 	}
 }
 
-func TestWindowsPlanSafeReaderRefuses(t *testing.T) {
+func TestWindowsPlanSafeReaderPreservesBytes(t *testing.T) {
 	for _, tc := range windowsPlanPaths() {
 		t.Run(tc.name, func(t *testing.T) {
 			workspace := windowsPlanFixture(t, tc.path)
@@ -122,15 +122,17 @@ func TestWindowsPlanSafeReaderRefuses(t *testing.T) {
 			}
 			defer root.Close()
 			file, err := openSetupFile(root, tc.path)
-			if file != nil {
-				file.Close()
-				t.Error("Windows safe reader returned a file")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !errors.Is(err, errors.ErrUnsupported) {
-				t.Errorf("openSetupFile(%q): got %v, want errors.ErrUnsupported", tc.path, err)
+			defer file.Close()
+			want, err := os.ReadFile(filepath.Join(workspace, tc.path))
+			if err != nil {
+				t.Fatal(err)
 			}
-			if got := artifactError(err); got != ErrArtifactIO {
-				t.Errorf("artifactError(%v): got %v, want ErrArtifactIO", err, got)
+			got, err := io.ReadAll(file)
+			if err != nil || !bytes.Equal(got, want) {
+				t.Errorf("safe reader lost exact bytes: bytes=%q error=%v", got, err)
 			}
 		})
 	}
