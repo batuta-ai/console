@@ -22,7 +22,8 @@ type Subscriber func([]byte)
 type live struct {
 	sess         domain.Session
 	cmd          *exec.Cmd
-	pty          terminalPTY
+	pty          *os.File
+	terminal     terminalPTY
 	mu           sync.Mutex
 	terminalSubs map[int]*TerminalSubscription
 	inputErr     error
@@ -165,7 +166,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		return nil, errors.Join(err, cleanupErr)
 	}
 	pty, inputErr := prepareTerminalPTY(pty)
-	l := &live{sess: sess, cmd: cmd, pty: pty, inputErr: inputErr, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
+	l := &live{sess: sess, cmd: cmd, pty: terminalFile(pty), terminal: pty, inputErr: inputErr, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
 	m.mu.Lock()
 	m.live[sess.ID] = l
 	closing := m.closing
@@ -198,7 +199,7 @@ func (m *Manager) Resize(id, ownerClient string, cols, rows int) error {
 	if cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
 		return fmt.Errorf("invalid terminal dimensions")
 	}
-	if err := resizePTY(l.pty, cols, rows); err != nil {
+	if err := resizePTY(l.terminalPTY(), cols, rows); err != nil {
 		return err
 	}
 	l.sess.Cols, l.sess.Rows = cols, rows
@@ -306,7 +307,7 @@ func (l *live) readLoop(m *Manager) {
 	defer close(l.readDone)
 	buf := make([]byte, 4096)
 	for {
-		n, err := l.pty.Read(buf)
+		n, err := l.terminalPTY().Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
 			if info, err := l.log.Stat(); err == nil && info.Size() > 1<<20 {
@@ -350,7 +351,7 @@ func (l *live) wait(m *Manager) {
 	if m.OnExit != nil {
 		m.OnExit(snap)
 	}
-	cleanupErr = errors.Join(cleanupErr, l.pty.Close())
+	cleanupErr = errors.Join(cleanupErr, l.terminalPTY().Close())
 	<-l.readDone
 	l.mu.Lock()
 	for _, sub := range l.terminalSubs {

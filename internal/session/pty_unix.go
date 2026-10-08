@@ -26,6 +26,7 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 }
 
 func ownedProcessID(cmd *exec.Cmd, _ *ownedProcess) int { return cmd.Process.Pid }
+func terminalFile(f terminalPTY) *os.File               { return f.(*os.File) }
 func ownedProcessExited(cmd *exec.Cmd, _ *ownedProcess) bool {
 	return cmd.ProcessState != nil
 }

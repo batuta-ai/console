@@ -125,6 +125,7 @@ type ownedProcess struct {
 	pid      uint32
 	native   bool
 	exited   bool
+	exitCode uint32
 	retired  bool
 	signaled bool
 	err      error
@@ -354,6 +355,9 @@ func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 		observeErr = fmt.Errorf("owned root exit returned wait status %d", status)
 	}
 	if p.native {
+		if observeErr == nil {
+			observeErr = windows.GetExitCodeProcess(p.root, &p.exitCode)
+		}
 		p.mu.Lock()
 		p.exited = observeErr == nil && status == windows.WAIT_OBJECT_0
 		p.mu.Unlock()

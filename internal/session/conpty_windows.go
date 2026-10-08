@@ -234,6 +234,8 @@ func (f *windowsTerminal) resize(cols, rows int) error {
 	return windows.ResizePseudoConsole(f.console, size)
 }
 
+func terminalFile(f terminalPTY) *os.File { return f.(*windowsTerminal).output }
+
 func ownedProcessID(cmd *exec.Cmd, p *ownedProcess) int {
 	if p.native {
 		return int(p.pid)

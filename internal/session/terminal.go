@@ -14,3 +14,10 @@ type terminalPTY interface {
 	Stat() (os.FileInfo, error)
 	SyscallConn() (syscall.RawConn, error)
 }
+
+func (l *live) terminalPTY() terminalPTY {
+	if l.terminal != nil {
+		return l.terminal
+	}
+	return l.pty
+}
