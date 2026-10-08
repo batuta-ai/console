@@ -12,9 +12,11 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/batuta-ai/console/internal/accounts"
+	consoleruntime "github.com/batuta-ai/console/internal/runtime"
 	"golang.org/x/sys/windows"
 )
 
@@ -437,8 +439,26 @@ func TestTask43WindowsJobRootExitDiagnosis(t *testing.T) {
 	task43JobRootDiagnosis(t, false, "")
 }
 
+func TestTask43WindowsJobShortPrivatePathsDiagnosis(t *testing.T) {
+	for _, variant := range []string{"root-short-temp", "root-short-identity"} {
+		t.Run(variant, func(t *testing.T) { task43JobRootDiagnosis(t, true, variant) })
+	}
+}
+
 func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	home := task43SessionHome(t)
+	shortHome := ""
+	if variant == "root-short-temp" || variant == "root-short-identity" {
+		var err error
+		shortHome, err = consoleruntime.NewPrivateTemp(os.Getenv("USERPROFILE"), "bc43-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(shortHome)
+		if variant == "root-short-identity" {
+			t.Setenv("LOCALAPPDATA", shortHome)
+		}
+	}
 	env, privateHome, err := accounts.SessionEnvironment()
 	if err != nil {
 		t.Fatal(err)
@@ -456,6 +476,22 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env, cmd.Dir = accounts.RuntimeEnvironment(os.Environ(), env), home
+	if variant == "root-short-temp" {
+		for i, entry := range cmd.Env {
+			key, _, _ := strings.Cut(entry, "=")
+			if key == "TEMP" || key == "TMP" || key == "TMPDIR" {
+				cmd.Env[i] = key + "=" + shortHome
+			}
+		}
+	}
+	if variant == "root-short-temp" || variant == "root-short-identity" {
+		for _, entry := range cmd.Env {
+			key, value, _ := strings.Cut(entry, "=")
+			if key == "TEMP" || key == "TMP" || key == "USERPROFILE" || key == "LOCALAPPDATA" {
+				t.Logf("controlled root path key=%s UTF16length=%d", key, len(utf16.Encode([]rune(value))))
+			}
+		}
+	}
 	if variant == "root-system-dir" {
 		cmd.Dir, err = windows.GetSystemDirectory()
 		if err != nil {

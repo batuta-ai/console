@@ -73,19 +73,20 @@ func task43ObserveOriginalCreationThread(t *testing.T, original windows.ProcessI
 			t.Log("original module mapping", err)
 			continue
 		}
-		if pc < info.BaseOfDll || pc-info.BaseOfDll >= uintptr(info.SizeOfImage) {
-			continue
-		}
 		var name [1024]uint16
 		if err := windows.GetModuleFileNameEx(original.Process, modules[i], &name[0], uint32(len(name))); err != nil {
 			t.Log("original module name", err)
 			return
 		}
-		t.Logf("original creator PC module=%s offset=%x base=%x imageSize=%x", filepath.Base(windows.UTF16ToString(name[:])), pc-info.BaseOfDll, info.BaseOfDll, info.SizeOfImage)
-		task43ObserveModuleSymbol(t, original.Process, pc, info, windows.UTF16ToString(name[:]))
-		return
+		image := windows.UTF16ToString(name[:])
+		if pc >= info.BaseOfDll && pc-info.BaseOfDll < uintptr(info.SizeOfImage) {
+			t.Logf("original creator PC module=%s offset=%x base=%x imageSize=%x", filepath.Base(image), pc-info.BaseOfDll, info.BaseOfDll, info.SizeOfImage)
+			task43ObserveModuleSymbol(t, original.Process, pc, info, image)
+		} else if strings.EqualFold(filepath.Base(image), "KERNELBASE.dll") {
+			t.Log("mapping retained prior original-thread capture KERNELBASE.dll+f0bda, not the current sampled PC")
+			task43ObserveModuleSymbol(t, original.Process, info.BaseOfDll+0xf0bda, info, image)
+		}
 	}
-	t.Log("original creator PC does not map to an observed module")
 }
 
 func task43ObserveModuleSymbol(t *testing.T, process windows.Handle, pc uintptr, module windows.ModuleInfo, image string) {
@@ -141,6 +142,13 @@ func task43ObserveModuleSymbol(t *testing.T, process windows.Handle, pc uintptr,
 		t.Log("original PC symbol lookup", err)
 	} else if symbol.NameLen <= uint32(len(symbol.Name)) {
 		t.Logf("original PC nearest symbol=%s displacement=%x flags=%x address=%x", symbol.Name[:symbol.NameLen], displacement, symbol.Flags, symbol.Address)
+	}
+	if strings.EqualFold(filepath.Base(image), "ntdll.dll") {
+		if ok, _, err := dbg.NewProc("SymFromAddr").Call(uintptr(process), module.BaseOfDll+0xb70cf, uintptr(unsafe.Pointer(&displacement)), uintptr(unsafe.Pointer(&symbol))); ok == 0 {
+			t.Log("prior native offset symbol lookup", err)
+		} else if symbol.NameLen <= uint32(len(symbol.Name)) {
+			t.Logf("retained prior capture ntdll+b70cf symbol=%s displacement=%x flags=%x address=%x", symbol.Name[:symbol.NameLen], displacement, symbol.Flags, symbol.Address)
+		}
 	}
 	f, err := os.Open(image)
 	if err != nil {
