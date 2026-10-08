@@ -111,6 +111,7 @@ func TestPrepareSupportedLayoutsMatchPublishedCore(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			home, ws, base := t.TempDir(), t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			unsetSkills(t)
 			collection := filepath.Join(base, "skills")
 			switch kind {
