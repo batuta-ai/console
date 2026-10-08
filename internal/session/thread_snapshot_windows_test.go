@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crypto/sha256"
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
@@ -91,7 +92,13 @@ func task43ObserveModuleSymbol(t *testing.T, process windows.Handle, pc uintptr,
 	t.Helper()
 	// Only this controlled process has a symbol session. An explicit private
 	// directory avoids personal symbol paths and any implicit remote lookup.
-	directory, err := windows.BytePtrFromString(t.TempDir())
+	symbolDirectory := t.TempDir()
+	retained := filepath.Join(os.Getenv("USERPROFILE"), "batuta-console-qa-private43-probe-original-creator-symbol-d6168485ce6d1e55e06e6fb83aece3952ebd9995")
+	if data, err := os.ReadFile(filepath.Join(retained, "ntdll.pdb")); err == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == "9b321cb4788f36399147c28e5e0b057cb8fa295355cf9f91855de16888a20e33" {
+		symbolDirectory = retained
+		t.Log("using hash-verified Microsoft ntdll symbols in the retained private diagnostic directory")
+	}
+	directory, err := windows.BytePtrFromString(symbolDirectory)
 	if err != nil {
 		t.Log("private symbol path", err)
 		return
