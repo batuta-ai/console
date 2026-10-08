@@ -33,7 +33,7 @@ func LoadOrCreateAuth(path string) (token string, err error) {
 		}
 	}()
 	name := filepath.Base(path)
-	lock, err := windowsPrivateFileAt(dir, name+".lock", windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, windows.FILE_OPEN_IF)
+	lock, err := windowsPrivateFileAtMode(dir, name+".lock", windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, windows.FILE_OPEN_IF, false)
 	if err != nil {
 		return "", err
 	}
@@ -127,13 +127,26 @@ func createWindowsAuthAt(dir *os.File, name string) (token string, err error) {
 	return token, nil
 }
 
-func WriteLock(path string, info LockInfo) (*os.File, error) {
+func WriteLock(path string, info LockInfo) (owned *os.File, err error) {
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) > windowsMaxLockBytes {
+		return nil, fmt.Errorf("daemon lock metadata exceeds the bounded size")
+	}
 	dir, err := OpenPrivateDirectory(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = errors.Join(err, dir.Close())
+		if err != nil && owned != nil {
+			err = errors.Join(err, owned.Close())
+			owned = nil
+		}
+	}()
 	f, err := windowsPrivateFileAt(dir, filepath.Base(path), windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, windows.FILE_OPEN_IF)
-	err = errors.Join(err, dir.Close())
 	if err != nil {
 		if f != nil {
 			err = errors.Join(err, f.Close())
@@ -143,17 +156,7 @@ func WriteLock(path string, info LockInfo) (*os.File, error) {
 	if err := windowsLockFile(f, true); err != nil {
 		return nil, errors.Join(fmt.Errorf("daemon already running: %w", err), f.Close())
 	}
-	if err := f.Truncate(0); err != nil {
-		return nil, errors.Join(err, f.Close())
-	}
-	encoded, err := json.Marshal(info)
-	if err != nil {
-		return nil, errors.Join(err, f.Close())
-	}
-	if _, err := f.Write(encoded); err != nil {
-		return nil, errors.Join(err, f.Close())
-	}
-	if err := f.Sync(); err != nil {
+	if err := writeWindowsLockMetadata(dir, f, filepath.Base(path), encoded); err != nil {
 		return nil, errors.Join(err, f.Close())
 	}
 	return f, nil

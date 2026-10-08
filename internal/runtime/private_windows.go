@@ -109,6 +109,10 @@ func safeWindowsParent(handle windows.Handle) error {
 }
 
 func windowsFileAt(parent windows.Handle, name string, access, disposition uint32, directory bool, sd *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
+	return windowsFileAtMode(parent, name, access, disposition, directory, sd, true)
+}
+
+func windowsFileAtMode(parent windows.Handle, name string, access, disposition uint32, directory bool, sd *windows.SECURITY_DESCRIPTOR, synchronous bool) (windows.Handle, error) {
 	if !windowsLocalComponent(name) {
 		return 0, os.ErrInvalid
 	}
@@ -118,7 +122,10 @@ func windowsFileAt(parent windows.Handle, name string, access, disposition uint3
 	}
 	oa := windows.OBJECT_ATTRIBUTES{RootDirectory: parent, ObjectName: objectName, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: sd}
 	oa.Length = uint32(unsafe.Sizeof(oa))
-	options := uint32(windows.FILE_OPEN_REPARSE_POINT | windows.FILE_SYNCHRONOUS_IO_NONALERT)
+	options := uint32(windows.FILE_OPEN_REPARSE_POINT)
+	if synchronous {
+		options |= windows.FILE_SYNCHRONOUS_IO_NONALERT
+	}
 	if directory {
 		options |= windows.FILE_DIRECTORY_FILE
 	} else {
@@ -217,11 +224,15 @@ func EnsurePrivateDirectory(path string) error {
 }
 
 func windowsPrivateFileAt(dir *os.File, name string, access, disposition uint32) (*os.File, error) {
+	return windowsPrivateFileAtMode(dir, name, access, disposition, true)
+}
+
+func windowsPrivateFileAtMode(dir *os.File, name string, access, disposition uint32, synchronous bool) (*os.File, error) {
 	sd, err := privateWindowsDescriptor(false)
 	if err != nil {
 		return nil, err
 	}
-	handle, err := windowsFileAt(windows.Handle(dir.Fd()), name, access|windows.READ_CONTROL, disposition, false, sd)
+	handle, err := windowsFileAtMode(windows.Handle(dir.Fd()), name, access|windows.READ_CONTROL, disposition, false, sd, synchronous)
 	if err != nil {
 		return nil, &os.PathError{Op: "open private file", Path: filepath.Join(dir.Name(), name), Err: err}
 	}
@@ -249,11 +260,6 @@ func OpenPrivateFile(path string) (*os.File, error) {
 }
 
 func windowsLockFile(f *os.File, nonblocking bool) error {
-	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
-	if nonblocking {
-		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
-	}
 	// Lock beyond bounded metadata so separate discovery readers remain usable.
-	overlap := windows.Overlapped{Offset: 0x7fffffff}
-	return windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, &overlap)
+	return windowsLockRange(f, windowsOwnershipOffset, true, nonblocking)
 }

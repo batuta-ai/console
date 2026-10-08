@@ -75,7 +75,7 @@ type LockInfo struct {
 }
 
 func ReadLock(path string) (LockInfo, error) {
-	b, err := os.ReadFile(path)
+	b, err := readLockBytes(path)
 	if err != nil {
 		return LockInfo{}, err
 	}
