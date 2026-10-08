@@ -23,13 +23,15 @@ func RuntimeEnvironment(ambient, explicit []string) []string {
 	values := map[string]string{}
 	for _, entry := range ambient {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok && runtimeKeys[key] {
+		key = environmentKey(key)
+		if ok && (runtimeKeys[key] || platformRuntimeKey(key)) {
 			values[key] = value
 		}
 	}
 	for _, entry := range explicit {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok && (runtimeKeys[key] || controlledKeys[key]) {
+		key = environmentKey(key)
+		if ok && (runtimeKeys[key] || platformRuntimeKey(key) || controlledKeys[key] || platformIdentityKey(key)) {
 			values[key] = value
 		}
 	}
@@ -50,7 +52,7 @@ func ExplicitHome(env []string) string {
 	home := ""
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok && key == "HOME" {
+		if ok && environmentKey(key) == "HOME" {
 			home = value
 		}
 	}
@@ -60,7 +62,7 @@ func ExplicitHome(env []string) string {
 // SessionEnvironment owns a new credentialless home. The caller removes only
 // this returned directory after its complete process/reader lifecycle.
 func SessionEnvironment() (env []string, home string, err error) {
-	home, err = os.MkdirTemp("", "batuta-console-session-")
+	home, err = newSessionHome()
 	if err != nil {
 		return nil, "", err
 	}
@@ -77,11 +79,15 @@ func prepareSessionEnvironment(home string) (env []string, err error) {
 		"HOME": home, "TMPDIR": filepath.Join(home, "tmp"), "XDG_CONFIG_HOME": filepath.Join(home, ".config"), "XDG_DATA_HOME": filepath.Join(home, ".local", "share"), "XDG_CACHE_HOME": filepath.Join(home, ".cache"), "XDG_STATE_HOME": filepath.Join(home, ".local", "state"),
 		"CODEX_HOME": filepath.Join(home, ".codex"), "CLAUDE_CONFIG_DIR": filepath.Join(home, ".claude"), "CURSOR_CONFIG_DIR": filepath.Join(home, ".cursor"),
 	}
+	for key, path := range platformIdentityPaths(home) {
+		paths[key] = path
+	}
 	for key, path := range paths {
-		if err = os.MkdirAll(path, 0700); err != nil {
+		if err = createIdentityDirectory(path); err != nil {
 			return nil, errors.Join(err, os.RemoveAll(home))
 		}
 		env = append(env, key+"="+path)
 	}
+	env = append(env, platformHomeMetadata(home)...)
 	return env, nil
 }

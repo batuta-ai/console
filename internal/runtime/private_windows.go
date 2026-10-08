@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +27,10 @@ func privateWindowsDescriptor(directory bool) (*windows.SECURITY_DESCRIPTOR, err
 }
 
 func privateWindowsHandle(handle windows.Handle) error {
+	return privateWindowsACL(handle, true)
+}
+
+func privateWindowsACL(handle windows.Handle, requireProtected bool) error {
 	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return err
@@ -38,7 +44,7 @@ func privateWindowsHandle(handle windows.Handle) error {
 		return fmt.Errorf("private object must belong to the current Windows user")
 	}
 	control, _, err := sd.Control()
-	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+	if err != nil || (requireProtected && control&windows.SE_DACL_PROTECTED == 0) {
 		return fmt.Errorf("private Windows DACL must prevent inherited access")
 	}
 	acl, _, err := sd.DACL()
@@ -195,8 +201,7 @@ func windowsDirectory(path string, create bool) (*os.File, error) {
 	if err := windows.GetVolumeInformationByHandle(parent, nil, 0, nil, nil, &flags, &fileSystem[0], uint32(len(fileSystem))); err != nil {
 		return nil, err
 	}
-	const persistentACLs = 0x00000008
-	if !strings.EqualFold(windows.UTF16ToString(fileSystem[:]), "NTFS") || flags&persistentACLs == 0 {
+	if !strings.EqualFold(windows.UTF16ToString(fileSystem[:]), "NTFS") || flags&windows.FILE_PERSISTENT_ACLS == 0 {
 		return nil, fmt.Errorf("private Windows homes require persistent NTFS access controls")
 	}
 	var finalPath [windows.MAX_PATH + 1]uint16
@@ -250,6 +255,42 @@ func EnsurePrivateDirectory(path string) error {
 	return f.Close()
 }
 
+// NewPrivateTemp exclusively creates a fresh current-SID directory below a
+// validated private parent. Existing entries are never adopted or removed.
+func NewPrivateTemp(parent, prefix string) (path string, err error) {
+	if !windowsLocalComponent(prefix) {
+		return "", os.ErrInvalid
+	}
+	dir, err := OpenPrivateDirectory(parent)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		err = errors.Join(err, dir.Close())
+		if err != nil {
+			path = ""
+		}
+	}()
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	name := prefix + hex.EncodeToString(suffix[:])
+	sd, err := privateWindowsDescriptor(true)
+	if err != nil {
+		return "", err
+	}
+	handle, err := windowsFileAt(windows.Handle(dir.Fd()), name, windows.FILE_GENERIC_READ, windows.FILE_CREATE, true, sd)
+	if err != nil {
+		return "", err
+	}
+	err = errors.Join(privateWindowsHandle(handle), windows.CloseHandle(handle))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, name), nil
+}
+
 func windowsPrivateFileAt(dir *os.File, name string, access, disposition uint32) (*os.File, error) {
 	return windowsPrivateFileAtMode(dir, name, access, disposition, true)
 }
@@ -270,13 +311,23 @@ func windowsPrivateFileAtMode(dir *os.File, name string, access, disposition uin
 	return os.NewFile(uintptr(handle), filepath.Join(dir.Name(), name)), nil
 }
 
-// OpenPrivateFile opens a regular single-linked Windows file in a private home.
+// OpenPrivateFile opens a regular single-linked current-SID file in a protected
+// private directory. Provider-created files may inherit its current-SID grant.
 func OpenPrivateFile(path string) (*os.File, error) {
 	dir, err := OpenPrivateDirectory(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	f, err := windowsPrivateFileAt(dir, filepath.Base(path), windows.FILE_GENERIC_READ, windows.FILE_OPEN)
+	handle, err := windowsFileAt(windows.Handle(dir.Fd()), filepath.Base(path), windows.FILE_GENERIC_READ, windows.FILE_OPEN, false, nil)
+	var f *os.File
+	if err == nil {
+		err = privateWindowsACL(handle, false)
+		if err == nil {
+			f = os.NewFile(uintptr(handle), path)
+		} else {
+			err = errors.Join(err, windows.CloseHandle(handle))
+		}
+	}
 	if closeErr := dir.Close(); closeErr != nil {
 		if f != nil {
 			closeErr = errors.Join(closeErr, f.Close())
