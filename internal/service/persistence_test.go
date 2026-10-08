@@ -15,6 +15,7 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/core/loop"
 )
 
@@ -31,7 +32,7 @@ func persistenceSvc(t *testing.T) (*Service, *sql.DB) {
 	}
 	t.Cleanup(func() { st.Close(); db.Close() })
 	svc := New(st, session.New(t.TempDir()), nil)
-	svc.Home = t.TempDir()
+	svc.Home = testfixture.PrivateHome(t)
 	return svc, db
 }
 func sqlExec(t *testing.T, db *sql.DB, q string) {
