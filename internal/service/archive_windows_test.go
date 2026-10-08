@@ -3,13 +3,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/core/journal"
+	"github.com/batuta-ai/core/loop"
 )
 
 func TestTask43WindowsArchivedPlanTransitions(t *testing.T) {
@@ -50,6 +55,43 @@ func TestTask43WindowsArchivedPlanTransitions(t *testing.T) {
 			req := domain.ExecutionRequest{Target: detail.Identity, ApprovalID: receipt.ID}
 			if _, err := svc.executionApproval(context.Background(), req); !errors.Is(err, domain.ErrPlanTransition) {
 				t.Fatalf("archived receipt became executable: %v", err)
+			}
+			b := detail.Identity.Binding
+			b.DeliveryID = batuta.ExecutionDelivery(receipt)
+			js, err := journal.Open(b.CanonicalRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opening, err := json.Marshal(map[string]string{"slug": b.PlanSlug, "plan_path": b.PlanPath, "plan_digest": b.PlanDigest, "workspace": b.CanonicalRoot, "approval_receipt_id": receipt.ID, "plan_content_digest": receipt.Identity.Version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened, err := js.Append(b.DeliveryID, journal.Record{Kind: loop.KindOpened, Detail: opening, Graph: json.RawMessage(`{"tasks":[],"waves":[]}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.OpenedDigest = opened.Digest
+			if err := svc.Store.BindMission("m", b); err != nil {
+				t.Fatal(err)
+			}
+			// Qualify rejection before any native runner is available or admitted.
+			svc.native = nil
+			state, err := svc.ExecutionState(context.Background(), "m", "w", receipt.ID)
+			if err != nil || state.Target != detail.Identity || state.OpenedDigest != opened.Digest || !state.Bound {
+				t.Fatalf("invalid resume fixture: %+v error=%v", state, err)
+			}
+			before, err := os.ReadFile(js.Path(b.DeliveryID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resume := domain.ResumeRequest{Target: detail.Identity, ApprovalID: receipt.ID, Delivery: b.DeliveryID, OpenedDigest: b.OpenedDigest}
+			result, err := svc.ResumeExecution(context.Background(), resume)
+			if !errors.Is(err, domain.ErrPlanTransition) || result.Effect != domain.ExecutionRejected {
+				t.Fatalf("archived source eligible for native resume: %+v error=%v", result, err)
+			}
+			after, err := os.ReadFile(js.Path(b.DeliveryID))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("archive rejection changed journal", err)
 			}
 		})
 	}
