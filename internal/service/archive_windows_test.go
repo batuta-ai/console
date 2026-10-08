@@ -80,6 +80,9 @@ func TestTask43WindowsArchivedPlanTransitions(t *testing.T) {
 			if err != nil || state.Target != detail.Identity || state.OpenedDigest != opened.Digest || !state.Bound {
 				t.Fatalf("invalid resume fixture: %+v error=%v", state, err)
 			}
+			if state.Watch == nil || len(state.Watch.Plans) != 1 || !state.Watch.Plans[0].Done {
+				t.Fatalf("native archived plan lost archive status: %+v", state.Watch)
+			}
 			before, err := os.ReadFile(js.Path(b.DeliveryID))
 			if err != nil {
 				t.Fatal(err)
