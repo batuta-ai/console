@@ -87,7 +87,8 @@ func safeWindowsParent(handle windows.Handle) error {
 	if err != nil || acl == nil {
 		return fmt.Errorf("runtime parent must have a restrictive Windows DACL")
 	}
-	const unsafeRights = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.FILE_DELETE_CHILD | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.GENERIC_WRITE | windows.GENERIC_ALL
+	const fileDeleteChild = 0x40
+	const unsafeRights = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | fileDeleteChild | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.GENERIC_WRITE | windows.GENERIC_ALL
 	for i := uint16(0); i < acl.AceCount; i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(acl, uint32(i), &ace); err != nil {
