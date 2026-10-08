@@ -308,6 +308,8 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 	}
 	info := windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
 	info.Cb = uint32(unsafe.Sizeof(info))
+	// Null standard handles bind to ConPTY instead of the caller's redirected I/O.
+	info.Flags = windows.STARTF_USESTDHANDLES
 	var root windows.ProcessInformation
 	if err := windows.CreateProcess(app, command, nil, nil, false, windows.CREATE_SUSPENDED|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT, &env[0], directory, &info.StartupInfo, &root); err != nil {
 		return fail(err)
