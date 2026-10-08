@@ -13,7 +13,7 @@ import (
 
 func TestStartInputStop(t *testing.T) {
 	m := newTestManager(t)
-	sess, err := m.Start(domain.Session{ID: "s1", Argv: sessionTestArgv(t, []string{"/bin/cat"}, Cols: 80, Rows: 24}), nil, "")
+	sess, err := m.Start(domain.Session{ID: "s1", Argv: sessionTestArgv(t, []string{"/bin/cat"}), Cols: 80, Rows: 24}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestStartInputStop(t *testing.T) {
 
 func TestReconnectDoesNotRequireNewProcess(t *testing.T) {
 	m := newTestManager(t)
-	sess, err := m.Start(domain.Session{ID: "s2", Argv: sessionTestArgv(t, []string{"/bin/sleep", "8"}}), nil, "")
+	sess, err := m.Start(domain.Session{ID: "s2", Argv: sessionTestArgv(t, []string{"/bin/sleep", "8"})}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestReconnectDoesNotRequireNewProcess(t *testing.T) {
 
 func TestInputRequiresOwner(t *testing.T) {
 	m := newTestManager(t)
-	sess, err := m.Start(domain.Session{ID: "s3", Argv: sessionTestArgv(t, []string{"/bin/cat"}}), nil, "")
+	sess, err := m.Start(domain.Session{ID: "s3", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestStartUsesWorkspaceDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := make(chan []byte, 8)
-	sess, err := m.Start(domain.Session{ID: "s4", Argv: sessionTestArgv(t, []string{"/bin/ls", "here"}}), nil, dir)
+	sess, err := m.Start(domain.Session{ID: "s4", Argv: sessionTestArgv(t, []string{"/bin/ls", "here"})}, nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestStartUsesWorkspaceDir(t *testing.T) {
 
 func TestSubscribeReplays(t *testing.T) {
 	m := newTestManager(t)
-	sess, err := m.Start(domain.Session{ID: "s5", Argv: sessionTestArgv(t, []string{"/bin/sh", "-c", "printf hi; read answer"}}), nil, "")
+	sess, err := m.Start(domain.Session{ID: "s5", Argv: sessionTestArgv(t, []string{"/bin/sh", "-c", "printf hi; read answer"})}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestOnExitPersists(t *testing.T) {
 	m := newTestManager(t)
 	done := make(chan domain.Session, 1)
 	m.OnExit = func(s domain.Session) { done <- s }
-	if _, err := m.Start(domain.Session{ID: "s6", Argv: sessionTestArgv(t, []string{"/usr/bin/true"}}), nil, ""); err != nil {
+	if _, err := m.Start(domain.Session{ID: "s6", Argv: sessionTestArgv(t, []string{"/usr/bin/true"})}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -210,7 +210,7 @@ func newTestManager(t *testing.T) *Manager {
 
 func TestRelinquishRequiresCurrentClientAndClearsIdentity(t *testing.T) {
 	m := newTestManager(t)
-	_, err := m.Start(domain.Session{ID: "release", Argv: sessionTestArgv(t, []string{"/bin/cat"}}), nil, "")
+	_, err := m.Start(domain.Session{ID: "release", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
