@@ -115,3 +115,54 @@ func TestNativeRawInputDiagnostic(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRawShellInputDiagnostic(t *testing.T) {
+	for _, consumer := range []string{"builtin", "head"} {
+		t.Run(consumer, func(t *testing.T) {
+			root := t.TempDir()
+			record := filepath.Join(root, "actual-shell-input.bin")
+			quoted := "'" + strings.ReplaceAll(record, "'", "'\\''") + "'"
+			read := "IFS= read -r -N 6 captured; printf '%s' \"$captured\" > " + quoted
+			if consumer == "head" {
+				read = "head -c 6 > " + quoted
+			}
+			script := "stty raw -echo; printf RAW-SHELL-READY; " + read + "; printf RAW-SHELL-CAPTURED; IFS= read -r waiting"
+			manager := New(root)
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := manager.Shutdown(ctx); err != nil {
+					t.Error(err)
+				}
+			})
+			pending, err := manager.StartPending(domain.Session{ID: "raw-shell", Owner: "tui", OwnerClient: "raw-shell-client", Argv: testfixture.Argv(t, []string{"/bin/sh", "-c", script})}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pending.Persist(func(domain.Session) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			sub, err := manager.SubscribeTerminal("raw-shell")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sub.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var output strings.Builder
+			task43ConsoleReadUntil(t, ctx, sub, &output, "RAW-SHELL-READY")
+			want := []byte{'q', 27, 3, 26, 28, 4}
+			for _, b := range want {
+				if err := manager.Input("raw-shell", "raw-shell-client", []byte{b}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			task43ConsoleReadUntil(t, ctx, sub, &output, "RAW-SHELL-CAPTURED")
+			got, err := os.ReadFile(record)
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("actual shell input=%x want=%x err=%v output=%q", got, want, err, output.String())
+			}
+			t.Logf("actual shell trace %q; independent input=%x", output.String(), got)
+		})
+	}
+}
