@@ -35,6 +35,83 @@ type windowsJobCompletionPort struct {
 	Port windows.Handle
 }
 
+type windowsTokenStatistics struct {
+	ID             windows.LUID
+	Authentication windows.LUID
+	Expiration     int64
+	Type           uint32
+	Impersonation  uint32
+	Charged        uint32
+	Available      uint32
+	Groups         uint32
+	Privileges     uint32
+	Modified       windows.LUID
+}
+
+func windowsTokenState(token windows.Token) (windowsTokenStatistics, error) {
+	var state windowsTokenStatistics
+	var size uint32
+	err := windows.GetTokenInformation(token, windows.TokenStatistics, (*byte)(unsafe.Pointer(&state)), uint32(unsafe.Sizeof(state)), &size)
+	return state, err
+}
+
+// Change only the fresh suspended anchor's distinct primary token. Descendants
+// inherit this owner, so ordinary provider credential creation stays private.
+func (p *ownedProcess) setAnchorOwner() error {
+	var token windows.Token
+	if err := windows.OpenProcessToken(p.anchor.Process, windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT, &token); err != nil {
+		return err
+	}
+	defer token.Close()
+	caller := windows.GetCurrentProcessToken()
+	callerState, err := windowsTokenState(caller)
+	if err != nil {
+		return err
+	}
+	childState, err := windowsTokenState(token)
+	if err != nil {
+		return err
+	}
+	if childState.Type != windows.TokenPrimary || childState.ID == callerState.ID {
+		return errors.New("Windows anchor does not have a distinct primary token")
+	}
+	user, err := caller.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	childUser, err := token.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	if !windows.EqualSid(user.User.Sid, childUser.User.Sid) {
+		return errors.New("Windows anchor user differs from the caller")
+	}
+	owner := struct{ SID *windows.SID }{user.User.Sid}
+	if err := windows.SetTokenInformation(token, windows.TokenOwner, (*byte)(unsafe.Pointer(&owner)), uint32(unsafe.Sizeof(owner))); err != nil {
+		return err
+	}
+	var size uint32
+	_ = windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &size)
+	buf := make([]byte, size)
+	if len(buf) == 0 {
+		return errors.New("Windows anchor owner is missing")
+	}
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, &buf[0], uint32(len(buf)), &size); err != nil {
+		return err
+	}
+	if !windows.EqualSid(user.User.Sid, *(**windows.SID)(unsafe.Pointer(&buf[0]))) {
+		return errors.New("Windows anchor owner was not set to the selected user")
+	}
+	after, err := windowsTokenState(caller)
+	if err != nil {
+		return err
+	}
+	if after != callerState {
+		return errors.New("caller token changed while preparing the Windows anchor")
+	}
+	return nil
+}
+
 // Authority comes from a newly created private job and original creation
 // handles. Catalog PIDs and later membership observations cannot create it.
 type ownedProcess struct {
@@ -123,7 +200,10 @@ func (p *ownedProcess) createAnchor(cmd *exec.Cmd) error {
 	// This system image never resumes. Go's ParentProcess attribute inherits its
 	// job atomically while preserving Cmd's standard handle and I/O ownership.
 	// The host alone retains the job handle, so host exit also terminates the job.
-	return windows.CreateProcess(app, command, nil, nil, false, flags, &env[0], dir, &info.StartupInfo, &p.anchor)
+	if err := windows.CreateProcess(app, command, nil, nil, false, flags, &env[0], dir, &info.StartupInfo, &p.anchor); err != nil {
+		return err
+	}
+	return p.setAnchorOwner()
 }
 
 var windowsProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
@@ -154,7 +234,7 @@ func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
 		return nil, err
 	}
 	if err := p.createAnchor(cmd); err != nil {
-		return nil, errors.Join(err, p.closeHandles())
+		return nil, errors.Join(err, p.retire(nil))
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{ParentProcess: syscall.Handle(p.anchor.Process), CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
 	if err := cmd.Start(); err != nil {
