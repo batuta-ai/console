@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/batuta-ai/console/internal/accounts"
 	"golang.org/x/sys/windows"
 )
 
@@ -229,6 +231,19 @@ func (p *ownedProcess) captureRoot(cmd *exec.Cmd) error {
 }
 
 func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
+	if err := accounts.ValidateWindowsTemporaryEnvironment(cmd.Env); err != nil {
+		return nil, err
+	}
+	// CreateProcess can also consult its creator's effective GetTempPathW
+	// fallback. Observe that length without calling the overflowing API.
+	for _, key := range []string{"TMP", "TEMP", "USERPROFILE", "WINDIR"} {
+		if path := os.Getenv(key); path != "" {
+			if len(utf16.Encode([]rune(path))) > 258 {
+				return nil, fmt.Errorf("Windows creator temporary directory exceeds the native path contract: %w", os.ErrInvalid)
+			}
+			break
+		}
+	}
 	p, err := newWindowsJob()
 	if err != nil {
 		return nil, err
