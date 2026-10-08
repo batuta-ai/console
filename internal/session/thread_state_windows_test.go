@@ -32,8 +32,13 @@ type task43LastSyscall struct {
 	WaitTime      uint64
 }
 
-func task43ObserveNativeThreadState(t *testing.T, pids map[uintptr]bool) {
+func task43ObserveNativeThreadState(t *testing.T, pids map[uintptr]bool, root windows.Handle) {
 	t.Helper()
+	for _, process := range []windows.Handle{windows.CurrentProcess(), root} {
+		var port uintptr
+		err := windows.NtQueryInformationProcess(process, windows.ProcessDebugPort, unsafe.Pointer(&port), uint32(unsafe.Sizeof(port)), nil)
+		t.Logf("native original process handle=%x debugPort=%x query=%v", process, port, err)
+	}
 	var currentInJob int32
 	ok, _, callErr := windowsProcessInJob.Call(uintptr(windows.CurrentProcess()), 0, uintptr(unsafe.Pointer(&currentInJob)))
 	t.Log("observer current-process Job membership", currentInJob, "query", ok, callErr)
@@ -107,7 +112,7 @@ func task43ObserveNativeThreadState(t *testing.T, pids map[uintptr]bool) {
 					t.Log("native thread identity differs from process row")
 					break
 				}
-				handle, err := windows.OpenThread(windows.THREAD_QUERY_INFORMATION, false, uint32(thread.Thread))
+				handle, err := windows.OpenThread(windows.THREAD_QUERY_INFORMATION|windows.THREAD_GET_CONTEXT, false, uint32(thread.Thread))
 				if err != nil {
 					t.Log("native thread query handle", thread.Thread, err)
 					continue

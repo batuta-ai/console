@@ -529,7 +529,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 		for i := uint32(0); i < members.Listed && i < 16; i++ {
 			pids[members.PIDs[i]] = true
 		}
-		task43ObserveNativeThreadState(t, pids)
+		task43ObserveNativeThreadState(t, pids, owned.root)
 	}
 	output.mu.Lock()
 	t.Logf("root PID=%d wait=%d error=%v active=%d query=%v output=%q", cmd.Process.Pid, status, observeErr, accounting.ActiveProcesses, queryErr, output.stdout)
