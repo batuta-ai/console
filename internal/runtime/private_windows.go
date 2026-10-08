@@ -159,6 +159,9 @@ func windowsFileAtMode(parent windows.Handle, name string, access, disposition u
 }
 
 func windowsDirectory(path string, create bool) (*os.File, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("private Windows homes require an absolute local drive path")
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -166,6 +169,13 @@ func windowsDirectory(path string, create bool) (*os.File, error) {
 	volume := filepath.VolumeName(absolute)
 	if len(volume) != 2 || volume[1] != ':' {
 		return nil, fmt.Errorf("private Windows homes require a local drive path")
+	}
+	rootName, err := windows.UTF16PtrFromString(volume + `\`)
+	if err != nil {
+		return nil, err
+	}
+	if windows.GetDriveType(rootName) != windows.DRIVE_FIXED {
+		return nil, fmt.Errorf("private Windows homes require a fixed local NTFS drive")
 	}
 	parts := strings.Split(strings.TrimPrefix(absolute[len(volume):], `\`), `\`)
 	if len(parts) == 0 {
@@ -180,6 +190,23 @@ func windowsDirectory(path string, create bool) (*os.File, error) {
 		return nil, err
 	}
 	defer windows.CloseHandle(parent)
+	var fileSystem [windows.MAX_PATH + 1]uint16
+	var flags uint32
+	if err := windows.GetVolumeInformationByHandle(parent, nil, 0, nil, nil, &flags, &fileSystem[0], uint32(len(fileSystem))); err != nil {
+		return nil, err
+	}
+	const persistentACLs = 0x00000008
+	if !strings.EqualFold(windows.UTF16ToString(fileSystem[:]), "NTFS") || flags&persistentACLs == 0 {
+		return nil, fmt.Errorf("private Windows homes require persistent NTFS access controls")
+	}
+	var finalPath [windows.MAX_PATH + 1]uint16
+	length, err := windows.GetFinalPathNameByHandle(parent, &finalPath[0], uint32(len(finalPath)), 0)
+	if err != nil {
+		return nil, err
+	}
+	if length >= uint32(len(finalPath)) || !strings.EqualFold(windows.UTF16ToString(finalPath[:length]), `\\?\`+volume+`\`) {
+		return nil, fmt.Errorf("private Windows homes refuse drive aliases")
+	}
 	sd, err := privateWindowsDescriptor(true)
 	if err != nil {
 		return nil, err

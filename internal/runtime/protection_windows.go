@@ -21,6 +21,14 @@ func prepareRuntimeHome(home string) error {
 	return EnsurePrivateDirectory(filepath.Join(home, "logs"))
 }
 
+func defaultRuntimeHome() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "Batuta", "Console"), nil
+}
+
 func LoadOrCreateAuth(path string) (token string, err error) {
 	dir, err := OpenPrivateDirectory(filepath.Dir(path))
 	if err != nil {

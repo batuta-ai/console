@@ -25,11 +25,11 @@ func Resolve(home, listen string) (Paths, error) {
 		home = os.Getenv("BATUTA_CONSOLE_HOME")
 	}
 	if home == "" {
-		dir, err := os.UserHomeDir()
+		dir, err := defaultRuntimeHome()
 		if err != nil {
 			return Paths{}, err
 		}
-		home = filepath.Join(dir, ".local", "state", "batuta", "console")
+		home = dir
 	}
 	if listen == "" {
 		listen = os.Getenv("BATUTA_CONSOLE_LISTEN")
