@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -73,6 +74,49 @@ func TestTask43WindowsJobExitingChildDiagnosis(t *testing.T) {
 
 func TestTask43WindowsJobLongCreationObservation(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "long-observation")
+}
+
+func task43ObserveThreadWaits(t *testing.T, pid uint32) {
+	advapi := windows.NewLazySystemDLL("advapi32.dll")
+	session, _, err := advapi.NewProc("OpenThreadWaitChainSession").Call(0, 0)
+	if session == 0 {
+		t.Log("WCT observation unavailable", err)
+		return
+	}
+	defer advapi.NewProc("CloseThreadWaitChainSession").Call(session)
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		t.Log(err)
+		return
+	}
+	defer windows.CloseHandle(snapshot)
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	for err := windows.Thread32First(snapshot, &entry); err == nil; err = windows.Thread32Next(snapshot, &entry) {
+		if entry.OwnerProcessID != pid {
+			continue
+		}
+		nodes := [16]struct {
+			Type   uint32
+			Status uint32
+			Data   [34]uint64
+		}{}
+		count := uint32(16)
+		var cycle int32
+		ok, _, callErr := advapi.NewProc("GetThreadWaitChain").Call(session, 0, 0, uintptr(entry.ThreadID), uintptr(unsafe.Pointer(&count)), uintptr(unsafe.Pointer(&nodes[0])), uintptr(unsafe.Pointer(&cycle)))
+		if ok == 0 {
+			t.Log("WCT thread", entry.ThreadID, callErr)
+			continue
+		}
+		for i := uint32(0); i < count && i < 16; i++ {
+			typeID, status := nodes[i].Type, nodes[i].Status
+			if typeID == 8 {
+				data := (*[272]byte)(unsafe.Pointer(&nodes[i].Data))
+				t.Logf("WCT sourceThread=%d node=%d type=%d status=%d process=%d thread=%d cycle=%d", entry.ThreadID, i, typeID, status, binary.LittleEndian.Uint32(data[:4]), binary.LittleEndian.Uint32(data[4:8]), cycle)
+			} else {
+				t.Logf("WCT sourceThread=%d node=%d type=%d status=%d cycle=%d", entry.ThreadID, i, typeID, status, cycle)
+			}
+		}
+	}
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
@@ -279,6 +323,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	start := time.Now()
 	status, observeErr := windows.WaitForSingleObject(owned.root, waitMS)
 	t.Log("observed root wait duration", time.Since(start))
+	task43ObserveThreadWaits(t, uint32(cmd.Process.Pid))
 	var accounting windowsJobAccounting
 	queryErr := windows.QueryInformationJobObject(owned.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
 	var members struct {
