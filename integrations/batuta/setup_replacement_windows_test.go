@@ -132,15 +132,30 @@ func TestTask43WindowsSetupHeldParentJunctionReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	if err := os.Rename(parent, filepath.Join(dir, "old-parent")); err != nil {
-		t.Fatal(err)
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	moved := filepath.Join(dir, "old-parent")
+	if err := os.Rename(parent, moved); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("held child did not prevent intermediate directory replacement: %v", err)
 	}
-	task43Junction(t, parent, target)
+	if _, err := os.Stat(moved); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refused replacement moved the original parent: %v", err)
+	}
 	got, err := io.ReadAll(f)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("held intermediate parent was rebound: %q %v", got, err)
 	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f = nil
+	if err := os.Rename(parent, moved); err != nil {
+		t.Fatal(err)
+	}
+	task43Junction(t, parent, target)
 	other, err := openSetupFile(root, filepath.Join(".batuta", "profile.md"))
 	if other != nil {
 		other.Close()
