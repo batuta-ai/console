@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -449,9 +450,8 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	home := task43SessionHome(t)
 	shortHome := ""
 	if variant == "root-short-temp" || variant == "root-short-identity" {
-		var err error
-		shortHome, err = consoleruntime.NewPrivateTemp(os.Getenv("USERPROFILE"), "bc43-")
-		if err != nil {
+		shortHome = filepath.Join(os.Getenv("USERPROFILE"), "bc43-"+rand.Text())
+		if err := consoleruntime.EnsurePrivateDirectory(shortHome); err != nil {
 			t.Fatal(err)
 		}
 		defer os.RemoveAll(shortHome)
