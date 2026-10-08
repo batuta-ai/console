@@ -20,7 +20,11 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 		return
 	}
 	fmt.Fprintln(os.Stdout, "before child command")
-	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", "hold")
+	mode := "hold"
+	if len(os.Args) > 4 && os.Args[4] == "exiting-child" {
+		mode = "nonzero"
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", mode)
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
 	if len(os.Args) > 4 && os.Args[4] == "null-child-io" {
 		child.Stdout, child.Stderr = nil, nil
@@ -61,6 +65,14 @@ func TestTask43WindowsJobRetiredAnchorDiagnosis(t *testing.T) {
 
 func TestTask43WindowsJobNullChildIODiagnosis(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "null-child-io")
+}
+
+func TestTask43WindowsJobExitingChildDiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "exiting-child")
+}
+
+func TestTask43WindowsJobLongCreationObservation(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "long-observation")
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
@@ -223,7 +235,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
-		if variant == "null-child-io" {
+		if variant == "null-child-io" || variant == "exiting-child" {
 			argv = append(argv, variant)
 		}
 	}
@@ -260,7 +272,13 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 			t.Fatal(err)
 		}
 	}
-	status, observeErr := windows.WaitForSingleObject(owned.root, 1000)
+	waitMS := uint32(1000)
+	if variant == "long-observation" {
+		waitMS = 15000
+	}
+	start := time.Now()
+	status, observeErr := windows.WaitForSingleObject(owned.root, waitMS)
+	t.Log("observed root wait duration", time.Since(start))
 	var accounting windowsJobAccounting
 	queryErr := windows.QueryInformationJobObject(owned.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
 	var members struct {
