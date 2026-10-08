@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"unsafe"
 
@@ -35,14 +36,22 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 }
 
 func TestTask43WindowsJobDescendantStageDiagnosis(t *testing.T) {
-	task43JobRootDiagnosis(t, true)
+	task43JobRootDiagnosis(t, true, "")
+}
+
+func TestTask43WindowsJobHiddenConsoleDiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "hidden-console")
+}
+
+func TestTask43WindowsJobRetiredAnchorDiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "retired-anchor")
 }
 
 func TestTask43WindowsJobRootExitDiagnosis(t *testing.T) {
-	task43JobRootDiagnosis(t, false)
+	task43JobRootDiagnosis(t, false, "")
 }
 
-func task43JobRootDiagnosis(t *testing.T, stages bool) {
+func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	home := task43SessionHome(t)
 	env, privateHome, err := accounts.SessionEnvironment()
 	if err != nil {
@@ -57,9 +66,34 @@ func task43JobRootDiagnosis(t *testing.T, stages bool) {
 	cmd.Env, cmd.Dir = accounts.RuntimeEnvironment(os.Environ(), env), home
 	output := &probeOutput{overflow: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = probeWriter{output: output, stdout: true}, probeWriter{output: output, stdout: true}
-	owned, err := startOwnedCommand(cmd)
+	var owned *ownedProcess
+	if variant == "hidden-console" {
+		owned, err = newWindowsJob()
+		if err == nil {
+			err = owned.createAnchor(cmd)
+		}
+		if err == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{ParentProcess: syscall.Handle(owned.anchor.Process), HideWindow: true}
+			err = cmd.Start()
+		}
+		if err == nil {
+			err = owned.captureRoot(cmd)
+		}
+	} else {
+		owned, err = startOwnedCommand(cmd)
+	}
 	if err != nil {
+		if owned != nil {
+			_ = owned.retire(nil)
+		}
 		t.Fatal(err)
+	}
+	if variant == "retired-anchor" {
+		if err := windows.TerminateProcess(owned.anchor.Process, 0); err != nil {
+			_ = owned.stop()
+			_, _ = waitOwnedOutcome(cmd, owned)
+			t.Fatal(err)
+		}
 	}
 	status, observeErr := windows.WaitForSingleObject(owned.root, 1000)
 	var accounting windowsJobAccounting
