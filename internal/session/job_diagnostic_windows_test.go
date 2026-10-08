@@ -22,6 +22,9 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 	fmt.Fprintln(os.Stdout, "before child command")
 	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", "hold")
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
+	if len(os.Args) > 4 && os.Args[4] == "null-child-io" {
+		child.Stdout, child.Stderr = nil, nil
+	}
 	fmt.Fprintln(os.Stdout, "before child start")
 	timer := time.AfterFunc(200*time.Millisecond, func() {
 		buf := make([]byte, 24<<10)
@@ -54,6 +57,10 @@ func TestTask43WindowsJobHiddenConsoleDiagnosis(t *testing.T) {
 
 func TestTask43WindowsJobRetiredAnchorDiagnosis(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "retired-anchor")
+}
+
+func TestTask43WindowsJobNullChildIODiagnosis(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "null-child-io")
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
@@ -192,6 +199,9 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
+		if variant == "null-child-io" {
+			argv = append(argv, variant)
+		}
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env, cmd.Dir = accounts.RuntimeEnvironment(os.Environ(), env), home
