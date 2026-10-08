@@ -136,10 +136,11 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		// CTRL+C travels to this owned pseudoconsole, not to a console inferred
-		// from a PID or to the daemon's console. No caller console is attached.
-		written, signalErr := writeTerminalChunk(console, []byte{3})
-		if written != 1 {
+		// Win32 input records deliver CTRL+BREAK even when the client inherited
+		// CTRL+C-ignore. Control stays on this freshly owned pseudoconsole.
+		interrupt := []byte("\x1b[3;0;0;1;8;1_\x1b[3;0;0;0;8;1_")
+		written, signalErr := writeTerminalChunk(console, interrupt)
+		if written != len(interrupt) {
 			signalErr = errors.Join(signalErr, io.ErrShortWrite)
 		}
 		timer := time.NewTimer(2 * time.Second)
@@ -168,9 +169,9 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 		}
 	}
 	owned.mu.Lock()
-	stopped, code := owned.signaled, owned.exitCode
+	forced, code := owned.forced, owned.exitCode
 	owned.mu.Unlock()
-	if ctx.Err() == nil && stopped && code != 0 {
+	if ctx.Err() == nil && forced {
 		runErr = errors.Join(runErr, ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved)
 	}
 	if runErr == nil && ctx.Err() == nil {

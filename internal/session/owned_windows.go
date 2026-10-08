@@ -132,6 +132,7 @@ type ownedProcess struct {
 	exitCode uint32
 	retired  bool
 	signaled bool
+	forced   bool
 	err      error
 }
 
@@ -297,6 +298,9 @@ func (p *ownedProcess) signalLocked() error {
 func (p *ownedProcess) stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.retired && !p.exited {
+		p.forced = true
+	}
 	return p.signalLocked()
 }
 
