@@ -66,6 +66,7 @@ func TestPrepareRejectsInvalidSourcesWithoutFallback(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			home, workspace, bad := t.TempDir(), t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			skillFixture(t, filepath.Join(home, ".agents", "skills"), "batuta")
 			skillFixture(t, filepath.Join(workspace, ".agents", "skills"), "batuta")
 			switch kind {
@@ -107,6 +108,9 @@ func TestPrepareRejectsInvalidSourcesWithoutFallback(t *testing.T) {
 }
 
 func TestPrepareSupportedLayoutsMatchPublishedCore(t *testing.T) {
+	isolatedHome := t.TempDir()
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("USERPROFILE", isolatedHome)
 	for _, kind := range []string{"canonical", "collection", "plugin", "relative", "symlink", "workspace-agents", "workspace-claude", "shared", "codex-plugin", "claude-plugin"} {
 		t.Run(kind, func(t *testing.T) {
 			home, ws, base := t.TempDir(), t.TempDir(), t.TempDir()
@@ -167,6 +171,9 @@ func TestPrepareSupportedLayoutsMatchPublishedCore(t *testing.T) {
 }
 
 func TestNativeSkillsRevalidatesRemovedSource(t *testing.T) {
+	isolatedHome := t.TempDir()
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("USERPROFILE", isolatedHome)
 	root := skillFixture(t, t.TempDir(), "batuta")
 	t.Setenv("BATUTA_SKILLS", root)
 	p := Prepare(t.TempDir(), true)
