@@ -7,11 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -112,7 +110,7 @@ func testImportFileKind(t *testing.T, home, adapter, kind string) {
 			}
 			switch kind {
 			case "fifo", "fifo-symlink":
-				if err := syscall.Mkfifo(target, 0o600); err != nil {
+				if err := makeImportFIFO(target); err != nil {
 					t.Fatal(err)
 				}
 			case "directory", "directory-symlink":
@@ -149,19 +147,6 @@ func testImportFileKind(t *testing.T, home, adapter, kind string) {
 			}
 		})
 	}
-}
-
-func openDescriptorCount(t *testing.T) int {
-	t.Helper()
-	path := "/dev/fd"
-	if runtime.GOOS == "linux" {
-		path = "/proc/self/fd"
-	}
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return len(entries)
 }
 
 // gatedDisk delays delivery of one real observation. Channels establish the

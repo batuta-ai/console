@@ -76,15 +76,21 @@ func ExactPlan(workspace, path string) (routing.Plan, error) {
 	return plan, err
 }
 
+// Match only the native catalog location or its canonical slash spelling;
+// the caller's path remains the source identity and is never cleaned.
+func matchesPlanLocation(path, native string) bool {
+	return path == native || path == filepath.ToSlash(native)
+}
+
 // ExactPlanContent returns the bytes parsed by Core from the same bounded read.
 func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 	slug := strings.TrimSuffix(filepath.Base(path), ".md")
-	if strings.HasPrefix(path, ".batuta/plan-") {
+	if strings.HasPrefix(path, ".batuta/plan-") || strings.HasPrefix(path, filepath.Join(".batuta", "plan-")) {
 		slug = strings.TrimPrefix(slug, "plan-")
 	}
 	active := routing.PlanLocations(slug)
-	archived := filepath.ToSlash(filepath.Join(".batuta", "plans", "done", slug+".md"))
-	if path != active[0] && path != active[1] && path != archived {
+	archived := filepath.Join(".batuta", "plans", "done", slug+".md")
+	if !matchesPlanLocation(path, active[0]) && !matchesPlanLocation(path, active[1]) && !matchesPlanLocation(path, archived) {
 		return routing.Plan{}, nil, domain.ErrInvalidReference
 	}
 	root, err := os.OpenRoot(workspace)
@@ -118,9 +124,9 @@ func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 	}
 	// Active and legacy sources must not offer competing identities. Archived
 	// paths remain explicit even when a same-named active replacement exists.
-	if path != archived {
+	if !matchesPlanLocation(path, archived) {
 		for _, other := range active {
-			if other == path {
+			if matchesPlanLocation(path, other) {
 				continue
 			}
 			alt, err := openArtifact(root, other, 1<<20)
