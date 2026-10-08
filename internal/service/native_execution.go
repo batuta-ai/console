@@ -178,6 +178,9 @@ func (s *Service) ResumeExecution(ctx context.Context, req domain.ResumeRequest)
 	if state.Target != req.Target || state.Delivery != req.Delivery || state.OpenedDigest != req.OpenedDigest {
 		return reject(domain.ErrInvalidReference)
 	}
+	if batuta.IsArchivedPlanPath(state.Target.Binding.PlanPath, state.Target.Binding.PlanSlug) {
+		return reject(domain.ErrPlanTransition)
+	}
 	receipt, err := s.PlanApproval(ctx, req.Target.MissionID, req.Target.Binding.WorkspaceID, req.ApprovalID)
 	if err != nil {
 		return reject(err)
