@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -161,6 +162,18 @@ func TestTask43WindowsJobNewRootConsole(t *testing.T) {
 
 func TestTask43WindowsJobDetachedChildConsole(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "detached-child")
+}
+
+func TestTask43WindowsJobRootWithoutTerm(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "root-without-term")
+}
+
+func TestTask43WindowsJobRootIdentityOnly(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "root-identity-only")
+}
+
+func TestTask43WindowsJobRootSystemDirectory(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "root-system-dir")
 }
 
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
@@ -418,6 +431,26 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env, cmd.Dir = accounts.RuntimeEnvironment(os.Environ(), env), home
+	if variant == "root-system-dir" {
+		cmd.Dir, err = windows.GetSystemDirectory()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if variant == "root-without-term" || variant == "root-identity-only" {
+		kept := make([]string, 0, len(cmd.Env))
+		for _, entry := range cmd.Env {
+			key, _, _ := strings.Cut(entry, "=")
+			keep := key != "TERM"
+			if variant == "root-identity-only" {
+				keep = key == "SYSTEMROOT" || key == "WINDIR" || key == "SYSTEMDRIVE" || key == "COMSPEC" || key == "HOME" || key == "USERPROFILE" || key == "TEMP" || key == "TMP" || key == "APPDATA" || key == "LOCALAPPDATA" || key == "CODEX_HOME" || key == "CLAUDE_CONFIG_DIR" || key == "XDG_CONFIG_HOME" || key == "XDG_DATA_HOME" || key == "XDG_CACHE_HOME" || key == "XDG_STATE_HOME" || key == "HOMEDRIVE" || key == "HOMEPATH"
+			}
+			if keep {
+				kept = append(kept, entry)
+			}
+		}
+		cmd.Env = kept
+	}
 	output := &probeOutput{overflow: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = probeWriter{output: output, stdout: true}, probeWriter{output: output, stdout: true}
 	var owned *ownedProcess
