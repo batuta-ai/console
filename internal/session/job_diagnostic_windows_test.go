@@ -57,13 +57,35 @@ func TestTask43WindowsJobRetiredAnchorDiagnosis(t *testing.T) {
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
+	task43DirectJobDiagnosis(t, true)
+}
+
+func TestTask43WindowsJobWithoutCompletionPortDiagnosis(t *testing.T) {
+	task43DirectJobDiagnosis(t, false)
+}
+
+func task43DirectJobDiagnosis(t *testing.T, completion bool) {
 	home := task43SessionHome(t)
 	env, privateHome, err := accounts.SessionEnvironment()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(privateHome)
-	owned, err := newWindowsJob()
+	var owned *ownedProcess
+	if completion {
+		owned, err = newWindowsJob()
+	} else {
+		owned = &ownedProcess{}
+		owned.job, err = windows.CreateJobObject(nil, nil)
+		if err == nil {
+			limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+			limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+			_, err = windows.SetInformationJobObject(owned.job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)))
+		}
+		if err == nil {
+			owned.port, err = windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +110,11 @@ func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
 		if err := windows.DuplicateHandle(windows.CurrentProcess(), windows.Handle(f.Fd()), windows.CurrentProcess(), &files[i], 0, true, windows.DUPLICATE_SAME_ACCESS); err != nil {
 			t.Fatal(err)
 		}
-		defer windows.CloseHandle(files[i])
+		defer func() {
+			if files[i] != 0 {
+				windows.CloseHandle(files[i])
+			}
+		}()
 	}
 	attrs, err := windows.NewProcThreadAttributeList(2)
 	if err != nil {
