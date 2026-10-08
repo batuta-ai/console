@@ -19,6 +19,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // net.Pipe exercises the real HTTP, WebSocket, client, API, store and PTY paths
@@ -112,7 +113,7 @@ func terminalFixture(t *testing.T) (*client.Client, *session.Manager) {
 		}
 	})
 	for _, id := range []string{"a-unrelated", "z-selected"} {
-		pending, err := manager.StartPending(domain.Session{ID: id, Cols: 80, Rows: 24, Argv: []string{"/bin/sh", "-c", "stty raw -echo; printf READY; exec /bin/cat"}}, []string{"HOME=" + root}, root, 0)
+		pending, err := manager.StartPending(domain.Session{ID: id, Cols: 80, Rows: 24, Argv: testfixture.Argv(t, []string{"/bin/sh", "-c", "stty raw -echo; printf READY; exec /bin/cat"})}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
