@@ -82,6 +82,11 @@ func matchesPlanLocation(path, native string) bool {
 	return path == native || path == filepath.ToSlash(native)
 }
 
+// IsArchivedPlanPath recognizes only the explicit archive location for slug.
+func IsArchivedPlanPath(path, slug string) bool {
+	return matchesPlanLocation(path, filepath.Join(".batuta", "plans", "done", slug+".md"))
+}
+
 // ExactPlanContent returns the bytes parsed by Core from the same bounded read.
 func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 	slug := strings.TrimSuffix(filepath.Base(path), ".md")
@@ -201,9 +206,9 @@ func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Recor
 		return nil, ErrArtifactInvalid
 	}
 	pathMatches := opened.PlanPath == b.PlanPath
-	if b.PlanPath == ".batuta/plans/done/"+b.PlanSlug+".md" {
+	if IsArchivedPlanPath(b.PlanPath, b.PlanSlug) {
 		for _, path := range routing.PlanLocations(b.PlanSlug) {
-			pathMatches = pathMatches || opened.PlanPath == path
+			pathMatches = pathMatches || matchesPlanLocation(opened.PlanPath, path)
 		}
 	}
 	if opened.Slug != b.PlanSlug || opened.PlanDigest != b.PlanDigest || opened.Workspace != workspace || !pathMatches {
@@ -236,7 +241,7 @@ func ProjectMission(workspace string, b domain.MissionBinding) (domain.WatchView
 	if plan.Slug != b.PlanSlug || plan.Set.Digest != b.PlanDigest {
 		return out, ErrArtifactInvalid
 	}
-	out.Plans = []domain.PlanRef{{Name: plan.Slug, Status: string(plan.Status), Done: strings.Contains(plan.Path, "/done/") || plan.Status == routing.PlanDone}}
+	out.Plans = []domain.PlanRef{{Name: plan.Slug, Status: string(plan.Status), Done: IsArchivedPlanPath(plan.Path, plan.Slug) || plan.Status == routing.PlanDone}}
 	if b.DeliveryID == "" {
 		out.Message = "delivery_unassigned"
 		return out, nil
