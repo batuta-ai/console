@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,9 +15,6 @@ import (
 
 func (m *Manager) runNativeCommand(ctx context.Context, command publication.Command, explicit []string, graceful bool) (result publication.CommandResult, runErr error) {
 	result.ExitCode = -1
-	if graceful {
-		return result, fmt.Errorf("%w: graceful Windows engine termination is not qualified", ErrProbeUnsupported)
-	}
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -71,6 +67,14 @@ func (m *Manager) runNativeCommand(ctx context.Context, command publication.Comm
 	}
 	if command.StderrObserver != nil {
 		cmd.Stderr = io.MultiWriter(stderr, command.StderrObserver)
+	}
+	if graceful {
+		code, err := m.runWindowsConsoleCommand(ctx, cmd)
+		result = publication.CommandResult{Stdout: append([]byte(nil), stdout.data...), Stderr: append([]byte(nil), stderr.data...), ExitCode: -1, StdoutTruncated: stdout.truncated, StderrTruncated: stderr.truncated}
+		if err == nil && ctx.Err() == nil {
+			result.ExitCode = code
+		}
+		return result, errors.Join(err, ctx.Err())
 	}
 	owned, err := startOwnedCommand(cmd)
 	if err != nil {

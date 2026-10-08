@@ -253,6 +253,13 @@ func ownedProcessExited(cmd *exec.Cmd, p *ownedProcess) bool {
 }
 
 func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess, error) {
+	return startWindowsConsole(cmd, cols, rows, nil)
+}
+
+func startWindowsConsole(cmd *exec.Cmd, cols, rows int, standard []windows.Handle) (terminalPTY, *ownedProcess, error) {
+	if len(standard) != 0 && len(standard) != 3 {
+		return nil, nil, os.ErrInvalid
+	}
 	if err := validateWindowsCommand(cmd); err != nil {
 		return nil, nil, err
 	}
@@ -270,7 +277,11 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 	fail := func(err error) (terminalPTY, *ownedProcess, error) {
 		return nil, nil, errors.Join(err, p.retire(nil), f.Close())
 	}
-	attrs, err := windows.NewProcThreadAttributeList(2)
+	attributeCount := uint32(2)
+	if len(standard) != 0 {
+		attributeCount++
+	}
+	attrs, err := windows.NewProcThreadAttributeList(attributeCount)
 	if err != nil {
 		return fail(err)
 	}
@@ -307,8 +318,14 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 	info.Cb = uint32(unsafe.Sizeof(info))
 	// Null standard handles bind to ConPTY instead of the caller's redirected I/O.
 	info.Flags = windows.STARTF_USESTDHANDLES
+	if len(standard) != 0 {
+		if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&standard[0]), uintptr(len(standard))*unsafe.Sizeof(standard[0])); err != nil {
+			return fail(err)
+		}
+		info.StdInput, info.StdOutput, info.StdErr = standard[0], standard[1], standard[2]
+	}
 	var root windows.ProcessInformation
-	if err := windows.CreateProcess(app, command, nil, nil, false, windows.CREATE_SUSPENDED|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT, &env[0], directory, &info.StartupInfo, &root); err != nil {
+	if err := windows.CreateProcess(app, command, nil, nil, len(standard) != 0, windows.CREATE_SUSPENDED|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT, &env[0], directory, &info.StartupInfo, &root); err != nil {
 		return fail(err)
 	}
 	defer windows.CloseHandle(root.Thread)

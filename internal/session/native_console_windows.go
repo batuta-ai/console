@@ -1,0 +1,180 @@
+package session
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"time"
+
+	"github.com/batuta-ai/core/publication"
+	"golang.org/x/sys/windows"
+)
+
+type windowsCommandStreams struct {
+	input    *os.File
+	output   *os.File
+	stderr   *os.File
+	children []windows.Handle
+}
+
+func (s *windowsCommandStreams) closeChildren() error {
+	var err error
+	for i, handle := range s.children {
+		if handle != 0 {
+			err = errors.Join(err, windows.CloseHandle(handle))
+			s.children[i] = 0
+		}
+	}
+	return err
+}
+
+func (s *windowsCommandStreams) Close() error {
+	err := s.closeChildren()
+	for _, file := range []*os.File{s.input, s.output, s.stderr} {
+		if file != nil {
+			if closeErr := file.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}
+	return err
+}
+
+func newWindowsCommandStreams() (*windowsCommandStreams, error) {
+	s := &windowsCommandStreams{}
+	fail := func(err error) (*windowsCommandStreams, error) { return nil, errors.Join(err, s.Close()) }
+	for i := 0; i < 3; i++ {
+		reader, writer, err := newWindowsConsolePipe(i != 0)
+		if err != nil {
+			return fail(err)
+		}
+		host, child := reader, writer
+		if i == 0 {
+			host, child = writer, reader
+		}
+		var inherited windows.Handle
+		err = windows.DuplicateHandle(windows.CurrentProcess(), child, windows.CurrentProcess(), &inherited, 0, true, windows.DUPLICATE_SAME_ACCESS)
+		closeErr := windows.CloseHandle(child)
+		if inherited != 0 {
+			s.children = append(s.children, inherited)
+		}
+		if err != nil || closeErr != nil {
+			return fail(errors.Join(err, closeErr, windows.CloseHandle(host)))
+		}
+		file := os.NewFile(uintptr(host), "native command stream")
+		switch i {
+		case 0:
+			s.input = file
+		case 1:
+			s.output = file
+		case 2:
+			s.stderr = file
+		}
+	}
+	return s, nil
+}
+
+// Console control has a separate private ConPTY channel. Only the three
+// explicit standard streams are inherited by the freshly born command.
+func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (exitCode int, runErr error) {
+	exitCode = -1
+	streams, err := newWindowsCommandStreams()
+	if err != nil {
+		return exitCode, err
+	}
+	var console *windowsTerminal
+	var owned *ownedProcess
+	registered := false
+	defer func() {
+		runErr = errors.Join(runErr, streams.Close())
+		if console != nil {
+			runErr = errors.Join(runErr, console.Close())
+		}
+		if registered {
+			m.mu.Lock()
+			delete(m.probes, owned)
+			m.mu.Unlock()
+			if runErr != nil {
+				m.CloseAdmission()
+				cleanup := errors.Join(ErrNativeCleanupUnresolved, runErr)
+				m.recordCleanup(cleanup, cleanup)
+			}
+		}
+	}()
+	terminal, process, err := startWindowsConsole(cmd, 80, 24, streams.children)
+	if err != nil {
+		return exitCode, err
+	}
+	console, owned = terminal.(*windowsTerminal), process
+	if err := streams.closeChildren(); err != nil {
+		return exitCode, errors.Join(err, owned.retire(nil))
+	}
+	ioDone := make(chan error, 3)
+	go func() {
+		_, err := io.Copy(streams.input, cmd.Stdin)
+		// Like exec.Cmd's finite stdin, an exited command may close the input
+		// without consuming the rest; output/observer failures remain errors.
+		if errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_NO_DATA) {
+			err = nil
+		}
+		ioDone <- errors.Join(err, streams.input.Close())
+	}()
+	go func() { _, err := io.Copy(cmd.Stdout, streams.output); ioDone <- err }()
+	go func() { _, err := io.Copy(cmd.Stderr, streams.stderr); ioDone <- err }()
+	m.mu.Lock()
+	m.probes[owned] = struct{}{}
+	closing := m.closing
+	m.mu.Unlock()
+	registered = true
+	done := make(chan error, 1)
+	go func() { cleanup, wait := waitOwnedOutcome(cmd, owned); done <- errors.Join(cleanup, wait) }()
+	if closing {
+		runErr = errors.Join(ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved, owned.stop())
+	}
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		// CTRL+C travels to this owned pseudoconsole, not to a console inferred
+		// from a PID or to the daemon's console. No caller console is attached.
+		written, signalErr := writeTerminalChunk(console, []byte{3})
+		if written != 1 {
+			signalErr = errors.Join(signalErr, io.ErrShortWrite)
+		}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case err = <-done:
+			err = errors.Join(signalErr, err)
+		case <-timer.C:
+			err = errors.Join(ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved, signalErr, owned.stop(), <-done)
+		}
+		timer.Stop()
+	}
+	runErr = errors.Join(runErr, err)
+	// Join actual pipe EOF after the whole Job is empty. An externally retained
+	// descriptor or failed observer cannot become a successful engine result.
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	for joined := 0; joined < 3; joined++ {
+		select {
+		case err := <-ioDone:
+			runErr = errors.Join(runErr, err)
+		case <-timer.C:
+			runErr = errors.Join(runErr, exec.ErrWaitDelay, streams.Close())
+			for ; joined < 3; joined++ {
+				runErr = errors.Join(runErr, <-ioDone)
+			}
+		}
+	}
+	owned.mu.Lock()
+	stopped, code := owned.signaled, owned.exitCode
+	owned.mu.Unlock()
+	if ctx.Err() == nil && stopped && code != 0 {
+		runErr = errors.Join(runErr, ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved)
+	}
+	if runErr == nil && ctx.Err() == nil {
+		exitCode = int(int32(code))
+	}
+	return exitCode, runErr
+}
