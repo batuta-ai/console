@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -26,6 +27,14 @@ type ownedProcess struct {
 }
 
 func newOwnedProcess(cmd *exec.Cmd) *ownedProcess { return &ownedProcess{pgid: cmd.Process.Pid} }
+
+func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return newOwnedProcess(cmd), nil
+}
 
 func (p *ownedProcess) stop() error {
 	p.mu.Lock()

@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin || linux || windows
 
 package session
 
@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/batuta-ai/console/internal/accounts"
@@ -94,14 +93,13 @@ func (m *Manager) Probe(ctx context.Context, argv, env []string, dir string) (re
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = accounts.RuntimeEnvironment(os.Environ(), env)
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = probeWriter{output: output, stdout: true}
 	cmd.Stderr = probeWriter{output: output}
 	cmd.WaitDelay = 250 * time.Millisecond
-	if err := cmd.Start(); err != nil {
+	owned, err := startOwnedCommand(cmd)
+	if err != nil {
 		return result, err
 	}
-	owned := newOwnedProcess(cmd)
 	m.mu.Lock()
 	m.probes[owned] = struct{}{}
 	closing := m.closing
