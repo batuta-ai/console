@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/batuta-ai/console/internal/accounts"
 )
 
 func TestTask43WindowsGracefulCommandEnvironmentStreams(t *testing.T) {
