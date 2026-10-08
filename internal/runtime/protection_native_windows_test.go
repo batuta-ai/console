@@ -66,7 +66,8 @@ func task43AssertPrivateACL(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !windows.EqualSid(sid, task43CurrentSID(t)) || uint32(ace.Mask)&windows.FILE_ALL_ACCESS != windows.FILE_ALL_ACCESS {
+	const fileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !windows.EqualSid(sid, task43CurrentSID(t)) || uint32(ace.Mask)&fileAllAccess != fileAllAccess {
 		t.Fatal("private DACL does not grant only the selected current SID")
 	}
 }
