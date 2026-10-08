@@ -30,3 +30,18 @@ func TestTask43WindowsRuntimeRejectsAmbiguousHome(t *testing.T) {
 		})
 	}
 }
+
+func TestTask43WindowsRuntimeDefaultHome(t *testing.T) {
+	profile := task43PrivateHome(t)
+	local := filepath.Join(profile, "AppData", "Local")
+	t.Setenv("BATUTA_CONSOLE_HOME", "")
+	t.Setenv("USERPROFILE", profile)
+	t.Setenv("LOCALAPPDATA", local)
+	paths, err := Resolve("", "127.0.0.1:0")
+	want := filepath.Join(local, "Batuta", "Console")
+	if err != nil || paths.Home != want {
+		t.Fatalf("native data home: got=%s want=%s error=%v", paths.Home, want, err)
+	}
+	task43AssertPrivateACL(t, paths.Home)
+	task43AssertPrivateACL(t, paths.Logs)
+}
