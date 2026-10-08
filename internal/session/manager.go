@@ -403,7 +403,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 				}
 			}
 			for _, p := range probes {
-				if err := p.stop(); err != nil {
+				if err := requestProbeStop(p); err != nil {
 					m.recordCleanup(err, err)
 				}
 			}

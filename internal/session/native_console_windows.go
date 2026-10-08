@@ -80,6 +80,8 @@ func newWindowsCommandStreams() (*windowsCommandStreams, error) {
 // explicit standard streams are inherited by the freshly born command.
 func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (exitCode int, runErr error) {
 	exitCode = -1
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	streams, err := newWindowsCommandStreams()
 	if err != nil {
 		return exitCode, err
@@ -102,6 +104,7 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 				m.recordCleanup(cleanup, cleanup)
 			}
 		}
+		runErr = errors.Join(runErr, ctx.Err())
 	}()
 	terminal, process, err := startWindowsConsole(cmd, 80, 24, streams.children)
 	if err != nil {
@@ -123,6 +126,9 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	}()
 	go func() { _, err := io.Copy(cmd.Stdout, streams.output); ioDone <- err }()
 	go func() { _, err := io.Copy(cmd.Stderr, streams.stderr); ioDone <- err }()
+	owned.mu.Lock()
+	owned.cancel = cancel
+	owned.mu.Unlock()
 	m.mu.Lock()
 	m.probes[owned] = struct{}{}
 	closing := m.closing
@@ -131,7 +137,7 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	done := make(chan error, 1)
 	go func() { cleanup, wait := waitOwnedOutcome(cmd, owned); done <- errors.Join(cleanup, wait) }()
 	if closing {
-		runErr = errors.Join(ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved, owned.stop())
+		cancel()
 	}
 	select {
 	case err = <-done:

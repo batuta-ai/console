@@ -133,6 +133,7 @@ type ownedProcess struct {
 	retired  bool
 	signaled bool
 	forced   bool
+	cancel   context.CancelFunc
 	err      error
 }
 
@@ -293,6 +294,17 @@ func (p *ownedProcess) signalLocked() error {
 	}
 	p.signaled = true
 	return p.err
+}
+
+func requestProbeStop(p *ownedProcess) error {
+	p.mu.Lock()
+	cancel := p.cancel
+	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		return nil
+	}
+	return p.stop()
 }
 
 func (p *ownedProcess) stop() error {
