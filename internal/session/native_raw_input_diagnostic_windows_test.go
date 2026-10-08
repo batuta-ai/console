@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,9 +35,24 @@ func TestNativeRawInputDiagnosticChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Printf("RAW-DIAG-READY:%d:%d:%d\n", before, after, output)
-	data := make([]byte, 6)
-	if _, err := io.ReadFull(os.Stdin, data); err != nil {
-		t.Fatal(err)
+	// Go's console File.Read treats Ctrl-Z as EOF even in raw console mode.
+	// Read the actual Win32 characters independently of that stream policy.
+	data := make([]byte, 0, 6)
+	for len(data) < 6 {
+		var characters [6]uint16
+		var count uint32
+		if err := windows.ReadConsole(input, &characters[0], uint32(6-len(data)), &count, nil); err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			t.Fatal("native console returned no characters")
+		}
+		for _, character := range characters[:count] {
+			if character > 127 {
+				t.Fatalf("unexpected non-ASCII diagnostic input U+%04X", character)
+			}
+			data = append(data, byte(character))
+		}
 	}
 	if err := os.WriteFile(os.Args[4], data, 0600); err != nil {
 		t.Fatal(err)
