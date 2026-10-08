@@ -58,6 +58,13 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 		mode = "nonzero"
 	}
 	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", mode)
+	if len(os.Args) > 4 && os.Args[4] == "system-child-image" {
+		system, err := windows.GetSystemDirectory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child = exec.Command(filepath.Join(system, "whoami.exe"))
+	}
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
 	if len(os.Args) > 4 && os.Args[4] == "minimal-child-env" {
 		child.Env = []string{"SYSTEMROOT=" + os.Getenv("SYSTEMROOT")}
@@ -135,6 +142,10 @@ func TestTask43WindowsJobMinimalChildEnvironment(t *testing.T) {
 
 func TestTask43WindowsJobSystemChildDirectory(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "system-child-dir")
+}
+
+func TestTask43WindowsJobSystemChildImage(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "system-child-image")
 }
 
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
@@ -386,7 +397,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
-		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" || variant == "minimal-child-env" || variant == "system-child-dir" {
+		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" || variant == "minimal-child-env" || variant == "system-child-dir" || variant == "system-child-image" {
 			argv = append(argv, variant)
 		}
 	}
