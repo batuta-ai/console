@@ -17,8 +17,25 @@ func startPTY(cmd *exec.Cmd, cols, rows int) (*os.File, error) {
 	return f, err
 }
 
-func resizePTY(f *os.File, cols, rows int) error {
-	return pty.Setsize(f, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess, error) {
+	f, err := startPTY(cmd, cols, rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, newOwnedProcess(cmd), nil
+}
+
+func ownedProcessID(cmd *exec.Cmd, _ *ownedProcess) int { return cmd.Process.Pid }
+func ownedProcessExited(cmd *exec.Cmd, _ *ownedProcess) bool {
+	return cmd.ProcessState != nil
+}
+
+func resizePTY(f terminalPTY, cols, rows int) error {
+	master, ok := f.(*os.File)
+	if !ok || master == nil {
+		return os.ErrInvalid
+	}
+	return pty.Setsize(master, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 }
 
 // ObservePTY allocates and resizes a native PTY without starting a process.

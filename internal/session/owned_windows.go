@@ -122,6 +122,9 @@ type ownedProcess struct {
 	port     windows.Handle
 	anchor   windows.ProcessInformation
 	root     windows.Handle
+	pid      uint32
+	native   bool
+	exited   bool
 	retired  bool
 	signaled bool
 	err      error
@@ -230,19 +233,26 @@ func (p *ownedProcess) captureRoot(cmd *exec.Cmd) error {
 	return nil
 }
 
-func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
+func validateWindowsCommand(cmd *exec.Cmd) error {
 	if err := accounts.ValidateWindowsTemporaryEnvironment(cmd.Env); err != nil {
-		return nil, err
+		return err
 	}
 	// CreateProcess can also consult its creator's effective GetTempPathW
 	// fallback. Observe that length without calling the overflowing API.
 	for _, key := range []string{"TMP", "TEMP", "USERPROFILE", "WINDIR"} {
 		if path := os.Getenv(key); path != "" {
 			if len(utf16.Encode([]rune(path))) > 258 {
-				return nil, fmt.Errorf("Windows creator temporary directory exceeds the native path contract: %w", os.ErrInvalid)
+				return fmt.Errorf("Windows creator temporary directory exceeds the native path contract: %w", os.ErrInvalid)
 			}
 			break
 		}
+	}
+	return nil
+}
+
+func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
+	if err := validateWindowsCommand(cmd); err != nil {
+		return nil, err
 	}
 	p, err := newWindowsJob()
 	if err != nil {
@@ -342,6 +352,12 @@ func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 	status, observeErr := windows.WaitForSingleObject(p.root, windows.INFINITE)
 	if observeErr == nil && status != windows.WAIT_OBJECT_0 {
 		observeErr = fmt.Errorf("owned root exit returned wait status %d", status)
+	}
+	if p.native {
+		p.mu.Lock()
+		p.exited = observeErr == nil && status == windows.WAIT_OBJECT_0
+		p.mu.Unlock()
+		return p.retire(observeErr), nil
 	}
 	cleanupErr := p.retire(observeErr)
 	waitErr := cmd.Wait()

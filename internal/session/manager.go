@@ -22,7 +22,7 @@ type Subscriber func([]byte)
 type live struct {
 	sess         domain.Session
 	cmd          *exec.Cmd
-	pty          *os.File
+	pty          terminalPTY
 	mu           sync.Mutex
 	terminalSubs map[int]*TerminalSubscription
 	inputErr     error
@@ -139,12 +139,11 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	pty, err := startPTY(cmd, sess.Cols, sess.Rows)
+	pty, owned, err := startManagedPTY(cmd, sess.Cols, sess.Rows)
 	if err != nil {
 		return nil, err
 	}
-	owned := newOwnedProcess(cmd)
-	sess.PID = cmd.Process.Pid
+	sess.PID = ownedProcessID(cmd, owned)
 	sess.ProcessIdentity = ""
 	sess.RecoveryReason = ""
 	if observed, err := InspectProcess(sess.PID); err == nil {
@@ -337,7 +336,7 @@ func (l *live) wait(m *Manager) {
 	cleanupErr := ownershipErr
 	now := time.Now().UTC()
 	l.mu.Lock()
-	if l.cmd.ProcessState != nil {
+	if ownedProcessExited(l.cmd, l.owned) {
 		l.sess.Process = "exited"
 		l.sess.EndedAt = &now
 	} else {
@@ -399,7 +398,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 				l.revokeTerminalInput()
 				l.mu.Unlock()
 				if err := l.owned.stop(); err != nil {
-					m.recordCleanup(fmt.Errorf("shutdown PID %d: %w", l.cmd.Process.Pid, err), nil)
+					m.recordCleanup(fmt.Errorf("shutdown PID %d: %w", l.sess.PID, err), nil)
 				}
 			}
 			for _, p := range probes {
