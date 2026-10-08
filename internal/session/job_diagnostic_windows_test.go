@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"testing"
@@ -176,6 +177,52 @@ func task43ObserveThreadWaits(t *testing.T, pid uint32) {
 				t.Logf("WCT sourceThread=%d node=%d type=%d status=%d cycle=%d", entry.ThreadID, i, typeID, status, cycle)
 			}
 		}
+	}
+}
+
+func task43ObserveRootModulesAndToken(t *testing.T, root windows.Handle) {
+	var modules [128]windows.Handle
+	var needed uint32
+	if err := windows.EnumProcessModulesEx(root, &modules[0], uint32(unsafe.Sizeof(modules)), &needed, 3); err != nil {
+		t.Log("module observation", err)
+	} else {
+		for i := uint32(0); i < needed/uint32(unsafe.Sizeof(modules[0])) && i < 128; i++ {
+			var name [1024]uint16
+			if err := windows.GetModuleFileNameEx(root, modules[i], &name[0], uint32(len(name))); err != nil {
+				t.Log("module observation", err)
+			} else {
+				t.Log("root module", filepath.Base(windows.UTF16ToString(name[:])))
+			}
+		}
+	}
+	var token windows.Token
+	if err := windows.OpenProcessToken(root, windows.TOKEN_QUERY, &token); err != nil {
+		t.Log("token observation", err)
+		return
+	}
+	defer token.Close()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		t.Log(err)
+		return
+	}
+	t.Log("root token user", user.User.Sid.String())
+	var n uint32
+	_ = windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &n)
+	buf := make([]byte, n)
+	if len(buf) > 0 {
+		if err := windows.GetTokenInformation(token, windows.TokenOwner, &buf[0], n, &n); err != nil {
+			t.Log(err)
+		} else {
+			sid := *(**windows.SID)(unsafe.Pointer(&buf[0]))
+			t.Log("root token default owner", sid.String())
+		}
+	}
+	var stats [56]byte
+	if err := windows.GetTokenInformation(token, windows.TokenStatistics, &stats[0], uint32(len(stats)), &n); err != nil {
+		t.Log(err)
+	} else {
+		t.Log("root token instance", binary.LittleEndian.Uint64(stats[:8]))
 	}
 }
 
@@ -383,6 +430,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	start := time.Now()
 	status, observeErr := windows.WaitForSingleObject(owned.root, waitMS)
 	t.Log("observed root wait duration", time.Since(start))
+	task43ObserveRootModulesAndToken(t, owned.root)
 	task43ObserveThreadWaits(t, uint32(cmd.Process.Pid))
 	var accounting windowsJobAccounting
 	queryErr := windows.QueryInformationJobObject(owned.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
