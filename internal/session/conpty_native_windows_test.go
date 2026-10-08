@@ -175,8 +175,11 @@ func TestTask43WindowsConPTYInputResizeReplay(t *testing.T) {
 	if pending.Snapshot().Process != "exited" || !pending.live.owned.retired || pending.live.cleanupErr != nil {
 		t.Fatal("native console retirement incomplete", pending.Snapshot(), pending.live.cleanupErr)
 	}
-	if _, err := pending.live.pty.Stat(); !errors.Is(err, os.ErrClosed) {
+	if _, err := pending.live.pty.Stat(); !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
 		t.Fatal("native console output handle still open", err)
+	}
+	if err := pending.live.pty.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatal("native console Go file was not already closed", err)
 	}
 	for {
 		event, err := sub.Next(ctx)
