@@ -263,9 +263,6 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := p.createAnchor(cmd); err != nil {
-		return nil, nil, errors.Join(err, p.retire(nil))
-	}
 	f, err := newWindowsTerminal(cols, rows, p.stop)
 	if err != nil {
 		return nil, nil, errors.Join(err, p.retire(nil))
@@ -278,7 +275,7 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 		return fail(err)
 	}
 	defer attrs.Delete()
-	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, unsafe.Pointer(&p.anchor.Process), unsafe.Sizeof(p.anchor.Process)); err != nil {
+	if err := attrs.Update(windowsJobListAttribute, unsafe.Pointer(&p.job), unsafe.Sizeof(p.job)); err != nil {
 		return fail(err)
 	}
 	// This attribute takes the opaque HPCON value itself, rather than the
@@ -329,10 +326,13 @@ func startManagedPTY(cmd *exec.Cmd, cols, rows int) (terminalPTY, *ownedProcess,
 	if ok == 0 || member == 0 {
 		stopErr := windows.TerminateProcess(root.Process, 1)
 		_, waitErr := windows.WaitForSingleObject(root.Process, 2000)
-		return fail(errors.Join(fmt.Errorf("native root did not inherit its owned Windows job: %w", memberErr), stopErr, waitErr))
+		return fail(errors.Join(fmt.Errorf("native root was not born in its owned Windows job: %w", memberErr), stopErr, waitErr))
 	}
 	if aborted {
 		return fail(errors.Join(fmt.Errorf("native console startup was stopped"), memberErr))
+	}
+	if err := setSuspendedProcessOwner(root.Process); err != nil {
+		return fail(err)
 	}
 	if err := f.releaseConsoleEndpoints(); err != nil {
 		return fail(err)

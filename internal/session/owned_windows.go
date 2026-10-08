@@ -57,11 +57,11 @@ func windowsTokenState(token windows.Token) (windowsTokenStatistics, error) {
 	return state, err
 }
 
-// Set only the fresh suspended anchor's distinct primary token default owner,
-// so the launched command can create credentials owned by the selected user.
-func (p *ownedProcess) setAnchorOwner() error {
+// Change only the distinct primary token of a freshly created, suspended
+// process, before it can execute the selected command.
+func setSuspendedProcessOwner(process windows.Handle) error {
 	var token windows.Token
-	if err := windows.OpenProcessToken(p.anchor.Process, windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT, &token); err != nil {
+	if err := windows.OpenProcessToken(process, windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT, &token); err != nil {
 		return err
 	}
 	defer token.Close()
@@ -75,7 +75,7 @@ func (p *ownedProcess) setAnchorOwner() error {
 		return err
 	}
 	if childState.Type != windows.TokenPrimary || childState.ID == callerState.ID {
-		return errors.New("Windows anchor does not have a distinct primary token")
+		return errors.New("Windows suspended process does not have a distinct primary token")
 	}
 	user, err := caller.GetTokenUser()
 	if err != nil {
@@ -86,7 +86,7 @@ func (p *ownedProcess) setAnchorOwner() error {
 		return err
 	}
 	if !windows.EqualSid(user.User.Sid, childUser.User.Sid) {
-		return errors.New("Windows anchor user differs from the caller")
+		return errors.New("Windows suspended process user differs from the caller")
 	}
 	owner := struct{ SID *windows.SID }{user.User.Sid}
 	if err := windows.SetTokenInformation(token, windows.TokenOwner, (*byte)(unsafe.Pointer(&owner)), uint32(unsafe.Sizeof(owner))); err != nil {
@@ -96,22 +96,26 @@ func (p *ownedProcess) setAnchorOwner() error {
 	_ = windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &size)
 	buf := make([]byte, size)
 	if len(buf) == 0 {
-		return errors.New("Windows anchor owner is missing")
+		return errors.New("Windows suspended process owner is missing")
 	}
 	if err := windows.GetTokenInformation(token, windows.TokenOwner, &buf[0], uint32(len(buf)), &size); err != nil {
 		return err
 	}
 	if !windows.EqualSid(user.User.Sid, *(**windows.SID)(unsafe.Pointer(&buf[0]))) {
-		return errors.New("Windows anchor owner was not set to the selected user")
+		return errors.New("Windows suspended process owner was not set to the selected user")
 	}
 	after, err := windowsTokenState(caller)
 	if err != nil {
 		return err
 	}
 	if after != callerState {
-		return errors.New("caller token changed while preparing the Windows anchor")
+		return errors.New("caller token changed while preparing the Windows suspended process")
 	}
 	return nil
+}
+
+func (p *ownedProcess) setAnchorOwner() error {
+	return setSuspendedProcessOwner(p.anchor.Process)
 }
 
 // Authority comes from a newly created private job and original creation
