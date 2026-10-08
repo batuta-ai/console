@@ -114,7 +114,7 @@ func ProjectApprovedMission(workspace string, b domain.MissionBinding, a domain.
 		out.Header["state"] = loop.StateReviewBlocked
 	}
 	out.PendingQuestion = pendingQuestion(records, out)
-	out.Plans = []domain.PlanRef{{Name: p.Slug, Status: string(p.Status)}}
+	out.Plans = []domain.PlanRef{{Name: p.Slug, Status: string(p.Status), Done: IsArchivedPlanPath(p.Path, p.Slug) || p.Status == routing.PlanDone}}
 	out.Source = domain.SourceCurrent
 	return out, nil
 }
