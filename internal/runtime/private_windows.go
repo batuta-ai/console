@@ -61,6 +61,52 @@ func windowsLocalComponent(name string) bool {
 	return name != "" && name != "." && name != ".." && filepath.IsLocal(name) && !strings.ContainsAny(name, "/\\<>:\"|?*\x00") && !strings.HasSuffix(name, ".") && !strings.HasSuffix(name, " ")
 }
 
+func safeWindowsParent(handle windows.Handle) error {
+	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	trusted := func(sid *windows.SID) bool {
+		return sid != nil && (windows.EqualSid(sid, u.User.Sid) || sid.IsWellKnown(windows.WinLocalSystemSid) || sid.IsWellKnown(windows.WinBuiltinAdministratorsSid))
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return fmt.Errorf("runtime parent must have a Windows owner")
+	}
+	if !trusted(owner) {
+		installer, _, _, lookupErr := windows.LookupSID("", `NT SERVICE\TrustedInstaller`)
+		if lookupErr != nil || !windows.EqualSid(owner, installer) {
+			return fmt.Errorf("runtime parent has a foreign Windows owner")
+		}
+	}
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
+		return fmt.Errorf("runtime parent must have a restrictive Windows DACL")
+	}
+	const unsafeRights = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.FILE_DELETE_CHILD | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.GENERIC_WRITE | windows.GENERIC_ALL
+	for i := uint16(0); i < acl.AceCount; i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, uint32(i), &ace); err != nil {
+			return err
+		}
+		if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 || ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return fmt.Errorf("runtime parent has an unsupported Windows access rule")
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if uint32(ace.Mask)&unsafeRights != 0 && !trusted(sid) && !windows.EqualSid(sid, owner) {
+			return fmt.Errorf("runtime parent permits foreign replacement or mutation")
+		}
+	}
+	return nil
+}
+
 func windowsFileAt(parent windows.Handle, name string, access, disposition uint32, directory bool, sd *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
 	if !windowsLocalComponent(name) {
 		return 0, os.ErrInvalid
@@ -131,6 +177,9 @@ func windowsDirectory(path string, create bool) (*os.File, error) {
 		return nil, err
 	}
 	for i, part := range parts {
+		if err := safeWindowsParent(parent); err != nil {
+			return nil, err
+		}
 		disposition := uint32(windows.FILE_OPEN)
 		if create {
 			disposition = windows.FILE_OPEN_IF
