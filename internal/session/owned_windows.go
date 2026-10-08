@@ -357,10 +357,18 @@ func (p *ownedProcess) retire(observeErr error) error {
 	if p.retired {
 		return errors.Join(observeErr, p.err)
 	}
+	var remainingErr error
+	if p.native && p.exited {
+		var accounting windowsJobAccounting
+		remainingErr = windows.QueryInformationJobObject(p.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
+		if remainingErr == nil && accounting.ActiveProcesses != 0 {
+			p.forced = true
+		}
+	}
 	_ = p.signalLocked()
 	drainErr := p.drainJob()
 	p.retired = true
-	p.err = errors.Join(observeErr, p.err, drainErr, p.closeHandles())
+	p.err = errors.Join(observeErr, p.err, remainingErr, drainErr, p.closeHandles())
 	return p.err
 }
 
