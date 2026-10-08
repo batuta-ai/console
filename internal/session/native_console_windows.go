@@ -171,7 +171,7 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	owned.mu.Lock()
 	forced, code := owned.forced, owned.exitCode
 	owned.mu.Unlock()
-	if ctx.Err() == nil && forced {
+	if forced || ctx.Err() != nil && code != 0 {
 		runErr = errors.Join(runErr, ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved)
 	}
 	if runErr == nil && ctx.Err() == nil {
