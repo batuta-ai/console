@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestTask43WindowsSetupReader(t *testing.T) {
@@ -121,14 +123,11 @@ func TestTask43WindowsSetupReaderAnchoredRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if err := os.Rename(workspace, filepath.Join(parent, "moved")); err != nil {
-		t.Fatal(err)
+	if err := os.Rename(workspace, filepath.Join(parent, "moved")); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		t.Fatalf("open Root did not prevent replacement: %v", err)
 	}
-	if err := os.Mkdir(workspace, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "WORK.md"), []byte("foreign replacement"), 0600); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(parent, "moved")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement attempt moved selected root: %v", err)
 	}
 	f, err := openSetupFile(root, "WORK.md")
 	if err != nil {
