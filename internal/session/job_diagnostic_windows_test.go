@@ -79,6 +79,9 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 	if len(os.Args) > 4 && os.Args[4] == "headless-child" {
 		child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
 	}
+	if len(os.Args) > 4 && os.Args[4] == "detached-child" {
+		child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS, HideWindow: true}
+	}
 	if len(os.Args) > 4 && os.Args[4] == "null-child-io" {
 		child.Stdout, child.Stderr = nil, nil
 	}
@@ -146,6 +149,18 @@ func TestTask43WindowsJobSystemChildDirectory(t *testing.T) {
 
 func TestTask43WindowsJobSystemChildImage(t *testing.T) {
 	task43JobRootDiagnosis(t, true, "system-child-image")
+}
+
+func TestTask43WindowsJobDetachedRootConsole(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "detached-root")
+}
+
+func TestTask43WindowsJobNewRootConsole(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "new-root-console")
+}
+
+func TestTask43WindowsJobDetachedChildConsole(t *testing.T) {
+	task43JobRootDiagnosis(t, true, "detached-child")
 }
 
 func task43ObserveThreadWaits(t *testing.T, pid uint32) {
@@ -397,7 +412,7 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	argv := task43ProbeArgv(t, "descendant")
 	if stages {
 		argv = []string{argv[0], "-test.run=^TestTask43WindowsJobDescendantDiagnosisFixture$", "--", "task43-job-diagnosis"}
-		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" || variant == "minimal-child-env" || variant == "system-child-dir" || variant == "system-child-image" {
+		if variant == "null-child-io" || variant == "exiting-child" || variant == "headless-child" || variant == "native-child" || variant == "minimal-child-env" || variant == "system-child-dir" || variant == "system-child-image" || variant == "detached-child" {
 			argv = append(argv, variant)
 		}
 	}
@@ -406,13 +421,20 @@ func task43JobRootDiagnosis(t *testing.T, stages bool, variant string) {
 	output := &probeOutput{overflow: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = probeWriter{output: output, stdout: true}, probeWriter{output: output, stdout: true}
 	var owned *ownedProcess
-	if variant == "hidden-console" {
+	if variant == "hidden-console" || variant == "detached-root" || variant == "new-root-console" {
 		owned, err = newWindowsJob()
 		if err == nil {
 			err = owned.createAnchor(cmd)
 		}
 		if err == nil {
-			cmd.SysProcAttr = &syscall.SysProcAttr{ParentProcess: syscall.Handle(owned.anchor.Process), HideWindow: true}
+			flags := uint32(0)
+			if variant == "detached-root" {
+				flags = windows.DETACHED_PROCESS
+			}
+			if variant == "new-root-console" {
+				flags = windows.CREATE_NEW_CONSOLE
+			}
+			cmd.SysProcAttr = &syscall.SysProcAttr{ParentProcess: syscall.Handle(owned.anchor.Process), CreationFlags: flags, HideWindow: true}
 			err = cmd.Start()
 		}
 		if err == nil {
