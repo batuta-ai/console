@@ -64,14 +64,18 @@ func TestTask43WindowsJobNullChildIODiagnosis(t *testing.T) {
 }
 
 func TestTask43WindowsJobDirectCreationDiagnosis(t *testing.T) {
-	task43DirectJobDiagnosis(t, true)
+	task43DirectJobDiagnosis(t, true, false)
 }
 
 func TestTask43WindowsJobWithoutCompletionPortDiagnosis(t *testing.T) {
-	task43DirectJobDiagnosis(t, false)
+	task43DirectJobDiagnosis(t, false, false)
 }
 
-func task43DirectJobDiagnosis(t *testing.T, completion bool) {
+func TestTask43WindowsJobSuspendedAssignmentDiagnosis(t *testing.T) {
+	task43DirectJobDiagnosis(t, true, true)
+}
+
+func task43DirectJobDiagnosis(t *testing.T, completion, assignment bool) {
 	home := task43SessionHome(t)
 	env, privateHome, err := accounts.SessionEnvironment()
 	if err != nil {
@@ -123,13 +127,19 @@ func task43DirectJobDiagnosis(t *testing.T, completion bool) {
 			}
 		}()
 	}
-	attrs, err := windows.NewProcThreadAttributeList(2)
+	attributeCount := uint32(2)
+	if assignment {
+		attributeCount = 1
+	}
+	attrs, err := windows.NewProcThreadAttributeList(attributeCount)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer attrs.Delete()
-	if err := attrs.Update(windowsJobListAttribute, unsafe.Pointer(&owned.job), unsafe.Sizeof(owned.job)); err != nil {
-		t.Fatal(err)
+	if !assignment {
+		if err := attrs.Update(windowsJobListAttribute, unsafe.Pointer(&owned.job), unsafe.Sizeof(owned.job)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&files[0]), unsafe.Sizeof(files)); err != nil {
 		t.Fatal(err)
@@ -157,8 +167,22 @@ func task43DirectJobDiagnosis(t *testing.T, completion bool) {
 	info.StdInput = files[0]
 	info.StdOutput = files[1]
 	info.StdErr = files[1]
-	if err := windows.CreateProcess(app, command, nil, nil, true, windows.CREATE_NO_WINDOW|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT, &block[0], dir, &info.StartupInfo, &owned.anchor); err != nil {
+	flags := uint32(windows.CREATE_NO_WINDOW | windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
+	if assignment {
+		flags |= windows.CREATE_SUSPENDED
+	}
+	if err := windows.CreateProcess(app, command, nil, nil, true, flags, &block[0], dir, &info.StartupInfo, &owned.anchor); err != nil {
 		t.Fatal(err)
+	}
+	if assignment {
+		if err := windows.AssignProcessToJobObject(owned.job, owned.anchor.Process); err != nil {
+			stopErr := windows.TerminateProcess(owned.anchor.Process, 1)
+			_, waitErr := windows.WaitForSingleObject(owned.anchor.Process, 2000)
+			t.Fatal("assign fresh suspended root", err, stopErr, waitErr)
+		}
+		if _, err := windows.ResumeThread(owned.anchor.Thread); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var root windows.Handle
 	if err := windows.DuplicateHandle(windows.CurrentProcess(), owned.anchor.Process, windows.CurrentProcess(), &root, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
