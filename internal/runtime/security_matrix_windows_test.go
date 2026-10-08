@@ -30,7 +30,7 @@ func task43SetDACL(t *testing.T, path, sddl string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flags := windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
+	var flags windows.SECURITY_INFORMATION = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
 	control, _, err := sd.Control()
 	if err != nil {
 		t.Fatal(err)
