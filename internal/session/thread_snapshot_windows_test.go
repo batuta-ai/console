@@ -1,7 +1,10 @@
 package session
 
 import (
+	"debug/pe"
 	"encoding/binary"
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -78,7 +81,112 @@ func task43ObserveOriginalCreationThread(t *testing.T, original windows.ProcessI
 			return
 		}
 		t.Logf("original creator PC module=%s offset=%x base=%x imageSize=%x", filepath.Base(windows.UTF16ToString(name[:])), pc-info.BaseOfDll, info.BaseOfDll, info.SizeOfImage)
+		task43ObserveModuleSymbol(t, original.Process, pc, info, windows.UTF16ToString(name[:]))
 		return
 	}
 	t.Log("original creator PC does not map to an observed module")
+}
+
+func task43ObserveModuleSymbol(t *testing.T, process windows.Handle, pc uintptr, module windows.ModuleInfo, image string) {
+	t.Helper()
+	// Only this controlled process has a symbol session. An explicit private
+	// directory avoids personal symbol paths and any implicit remote lookup.
+	directory, err := windows.BytePtrFromString(t.TempDir())
+	if err != nil {
+		t.Log("private symbol path", err)
+		return
+	}
+	dbg := windows.NewLazySystemDLL("dbghelp.dll")
+	previous, _, _ := dbg.NewProc("SymGetOptions").Call()
+	dbg.NewProc("SymSetOptions").Call(previous | 0x200 | 0x80000 | 0x1000)
+	defer dbg.NewProc("SymSetOptions").Call(previous)
+	if ok, _, err := dbg.NewProc("SymInitialize").Call(uintptr(process), uintptr(unsafe.Pointer(directory)), 0); ok == 0 {
+		t.Log("original process symbol initialization", err)
+		return
+	}
+	defer dbg.NewProc("SymCleanup").Call(uintptr(process))
+	path, err := windows.UTF16PtrFromString(image)
+	if err != nil {
+		t.Log("native image path", err)
+		return
+	}
+	loaded, _, err := dbg.NewProc("SymLoadModuleExW").Call(uintptr(process), 0, uintptr(unsafe.Pointer(path)), 0, module.BaseOfDll, uintptr(module.SizeOfImage), 0, 0)
+	t.Logf("native symbol module load=%x error=%v", loaded, err)
+	symbol := struct {
+		SizeOfStruct uint32
+		TypeIndex    uint32
+		Reserved     [2]uint64
+		Index        uint32
+		Size         uint32
+		ModBase      uint64
+		Flags        uint32
+		Value        uint64
+		Address      uint64
+		Register     uint32
+		Scope        uint32
+		Tag          uint32
+		NameLen      uint32
+		MaxNameLen   uint32
+		Name         [1024]byte
+	}{SizeOfStruct: 88, MaxNameLen: 1024}
+	var displacement uint64
+	if ok, _, err := dbg.NewProc("SymFromAddr").Call(uintptr(process), pc, uintptr(unsafe.Pointer(&displacement)), uintptr(unsafe.Pointer(&symbol))); ok == 0 {
+		t.Log("original PC symbol lookup", err)
+	} else if symbol.NameLen <= uint32(len(symbol.Name)) {
+		t.Logf("original PC nearest symbol=%s displacement=%x flags=%x address=%x", symbol.Name[:symbol.NameLen], displacement, symbol.Flags, symbol.Address)
+	}
+	f, err := os.Open(image)
+	if err != nil {
+		t.Log("native module file observation", err)
+		return
+	}
+	defer f.Close()
+	parsed, err := pe.NewFile(f)
+	if err != nil {
+		t.Log("native PE observation", err)
+		return
+	}
+	header, ok := parsed.OptionalHeader.(*pe.OptionalHeader64)
+	if !ok {
+		t.Log("native module is not PE64")
+		return
+	}
+	rawOffset := func(rva uint32) (int64, bool) {
+		for _, section := range parsed.Sections {
+			if rva >= section.VirtualAddress && rva-section.VirtualAddress < section.Size {
+				return int64(section.Offset) + int64(rva-section.VirtualAddress), true
+			}
+		}
+		return 0, false
+	}
+	if offset, found := rawOffset(uint32(pc - module.BaseOfDll)); found {
+		var code [64]byte
+		if _, err := f.ReadAt(code[:], offset-16); err == nil {
+			t.Logf("native module file PC-16 code bytes=%x", code)
+		}
+	}
+	debug := header.DataDirectory[6]
+	if offset, found := rawOffset(debug.VirtualAddress); found && debug.Size <= 28*128 {
+		entries := make([]byte, debug.Size)
+		if _, err := f.ReadAt(entries, offset); err != nil {
+			t.Log("native PE debug directory", err)
+			return
+		}
+		for i := 0; i+28 <= len(entries); i += 28 {
+			entry := entries[i : i+28]
+			if binary.LittleEndian.Uint32(entry[12:16]) != 2 {
+				continue
+			}
+			size := binary.LittleEndian.Uint32(entry[16:20])
+			if size < 25 || size > 4096 {
+				continue
+			}
+			cv := make([]byte, size)
+			if _, err := f.ReadAt(cv, int64(binary.LittleEndian.Uint32(entry[24:28]))); err != nil || string(cv[:4]) != "RSDS" {
+				continue
+			}
+			guid := fmt.Sprintf("%08X%04X%04X%X", binary.LittleEndian.Uint32(cv[4:8]), binary.LittleEndian.Uint16(cv[8:10]), binary.LittleEndian.Uint16(cv[10:12]), cv[12:20])
+			t.Logf("native module CodeView pdb=%s guid=%s age=%X timestamp=%x", strings.TrimRight(string(cv[24:]), "\x00"), guid, binary.LittleEndian.Uint32(cv[20:24]), parsed.TimeDateStamp)
+		}
+	}
 }
