@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/batuta-ai/console/internal/accounts"
@@ -20,9 +22,15 @@ func TestTask43WindowsJobDescendantDiagnosisFixture(t *testing.T) {
 	child := exec.Command(os.Args[0], "-test.run=^TestTask43WindowsProbeProcessFixture$", "--", "task43-probe-fixture", "hold")
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
 	fmt.Fprintln(os.Stdout, "before child start")
+	timer := time.AfterFunc(200*time.Millisecond, func() {
+		buf := make([]byte, 24<<10)
+		n := runtime.Stack(buf, true)
+		_, _ = os.Stdout.Write(buf[:n])
+	})
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
+	timer.Stop()
 	fmt.Fprintln(os.Stdout, "after child start")
 	var created, exited, kernel, user windows.Filetime
 	var inspectErr error
