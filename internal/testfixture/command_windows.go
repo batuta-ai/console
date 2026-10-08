@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,17 @@ func Argv(t testing.TB, original []string) []string {
 
 func TerminalEnvironment(t testing.TB, original []string) []string {
 	t.Helper()
+	if nativeFixtureGitErr != nil {
+		t.Fatal(nativeFixtureGitErr)
+	}
+	runtimePath := os.Getenv("PATH")
+	for _, entry := range original {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, "PATH") {
+			runtimePath = value
+		}
+	}
+	utilities := filepath.Join(filepath.Dir(filepath.Dir(nativeFixtureGit)), "usr", "bin")
 	temporary := PrivateHome(t)
-	return append(append([]string(nil), original...), "TEMP="+temporary, "TMP="+temporary)
+	return append(append([]string(nil), original...), "TEMP="+temporary, "TMP="+temporary, "PATH="+utilities+string(os.PathListSeparator)+runtimePath)
 }
