@@ -165,17 +165,6 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 			s.recordNativeCleanup(err)
 		}
 	}()
-	commandRunner := session.NativeRunner{Manager: s.Session, Environment: privateEnv}
-	core, err := s.qualifiedNativeCore(job.ctx, commandRunner)
-	if err != nil {
-		fail(err)
-		return
-	}
-	reviewEnv, err := s.nativeReviewEnvironment(home, privateEnv, selected)
-	if err != nil {
-		fail(err)
-		return
-	}
 	var linkMu sync.Mutex
 	guard := func(ctx context.Context) error {
 		linkMu.Lock()
@@ -208,6 +197,29 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 		result.Effect = domain.ExecutionStarted
 		job.signal(result, nil)
 		return nil
+	}
+	if handled, state, runErr := s.runNativeWindowsExecution(job, req, receipt, resume, selected, skills, privateEnv, &runActive, guard); handled {
+		if runErr == nil {
+			runErr = guard(job.ctx)
+		}
+		if runErr != nil {
+			fail(runErr)
+		}
+		if _, err := s.Store.AppendEvent("execution.finished", map[string]any{"mission_id": job.mission, "workspace_id": receipt.Identity.Binding.WorkspaceID, "approval_id": receipt.ID, "delivery": job.delivery, "state": state, "failed": runErr != nil}); err != nil {
+			s.recordNativeCleanup(err)
+		}
+		return
+	}
+	commandRunner := session.NativeRunner{Manager: s.Session, Environment: privateEnv}
+	core, err := s.qualifiedNativeCore(job.ctx, commandRunner)
+	if err != nil {
+		fail(err)
+		return
+	}
+	reviewEnv, err := s.nativeReviewEnvironment(home, privateEnv, selected)
+	if err != nil {
+		fail(err)
+		return
 	}
 	transport := &executor.TransportBackend{Mode: "cli"}
 	accountRunner := nativeAccountRunner{accounts: selected, other: commandRunner}

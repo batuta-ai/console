@@ -23,6 +23,13 @@ import (
 )
 
 func main() {
+	if handled, err := nativeCoreMode(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if handled, err := nativeExecutorMode(os.Args[1:]); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
