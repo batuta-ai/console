@@ -119,22 +119,7 @@ func authorizeNativePreview(runner *loop.Runner, selected nativeAccounts) error 
 func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionRequest, receipt domain.PlanApproval, resume string) {
 	defer s.native.finish(job)
 	result := executionFailure(req, nil)
-	var runActive atomic.Bool
-	fail := func(err error) {
-		b := receipt.Identity.Binding
-		b.DeliveryID = job.delivery
-		if digest, readErr := batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt); readErr == nil {
-			result.Delivery = job.delivery
-			result.OpenedDigest = digest
-			err = errors.Join(domain.ErrExecutionUncertain, err)
-			result.Effect = domain.ExecutionUncertain
-		} else if exists, existenceErr := batuta.DeliveryEvidenceExists(b.CanonicalRoot, job.delivery); exists || existenceErr != nil || runActive.Load() {
-			result.Delivery = job.delivery
-			result.Effect = domain.ExecutionUncertain
-			err = errors.Join(domain.ErrExecutionUncertain, err, existenceErr)
-		}
-		job.signal(result, err)
-	}
+	fail := func(err error) { s.signalNativeExecutionFailure(job, receipt, result, false, err) }
 	mission, err := s.Store.GetMission(job.mission)
 	if err != nil {
 		fail(err)
@@ -145,6 +130,60 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 		fail(err)
 		return
 	}
+	s.runPreparedNativeExecution(job, req, receipt, resume, selected, skills)
+}
+
+func (s *Service) signalNativeExecutionFailure(job *nativeExecution, receipt domain.PlanApproval, result domain.ExecutionResult, active bool, err error) {
+	b := receipt.Identity.Binding
+	b.DeliveryID = job.delivery
+	if digest, readErr := batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt); readErr == nil {
+		result.Delivery = job.delivery
+		result.OpenedDigest = digest
+		err = errors.Join(domain.ErrExecutionUncertain, err)
+		result.Effect = domain.ExecutionUncertain
+	} else if exists, existenceErr := batuta.DeliveryEvidenceExists(b.CanonicalRoot, job.delivery); exists || existenceErr != nil || active {
+		result.Delivery = job.delivery
+		result.Effect = domain.ExecutionUncertain
+		err = errors.Join(domain.ErrExecutionUncertain, err, existenceErr)
+	}
+	job.signal(result, err)
+}
+
+func (s *Service) linkNativeExecution(ctx context.Context, job *nativeExecution, receipt domain.PlanApproval, result *domain.ExecutionResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	base, err := s.planBinding(ctx, job.mission, receipt.Identity.Binding.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	canonical, err := batuta.CanonicalWorkspace(base.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	if canonical != receipt.Identity.Binding.CanonicalRoot {
+		return domain.ErrBindingConflict
+	}
+	b := receipt.Identity.Binding
+	b.DeliveryID = job.delivery
+	b.OpenedDigest, err = batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.AttachApprovedExecution(ctx, receipt.ID, receipt.Identity, b); err != nil {
+		return err
+	}
+	result.Delivery = job.delivery
+	result.OpenedDigest = b.OpenedDigest
+	result.Effect = domain.ExecutionStarted
+	job.signal(result, nil)
+	return nil
+}
+
+func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.ExecutionRequest, receipt domain.PlanApproval, resume string, selected nativeAccounts, skills string) {
+	result := executionFailure(req, nil)
+	var runActive atomic.Bool
+	fail := func(err error) { s.signalNativeExecutionFailure(job, receipt, result, runActive.Load(), err) }
 	capacities := map[string]int{}
 	for _, account := range selected.byCLI {
 		capacities[account.account.ID] = account.account.SessionCap
@@ -169,34 +208,7 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 	guard := func(ctx context.Context) error {
 		linkMu.Lock()
 		defer linkMu.Unlock()
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		base, err := s.planBinding(ctx, job.mission, receipt.Identity.Binding.WorkspaceID)
-		if err != nil {
-			return err
-		}
-		canonical, err := batuta.CanonicalWorkspace(base.WorkspaceRoot)
-		if err != nil {
-			return err
-		}
-		if canonical != receipt.Identity.Binding.CanonicalRoot {
-			return domain.ErrBindingConflict
-		}
-		b := receipt.Identity.Binding
-		b.DeliveryID = job.delivery
-		b.OpenedDigest, err = batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt)
-		if err != nil {
-			return err
-		}
-		if err := s.Store.AttachApprovedExecution(ctx, receipt.ID, receipt.Identity, b); err != nil {
-			return err
-		}
-		result.Delivery = job.delivery
-		result.OpenedDigest = b.OpenedDigest
-		result.Effect = domain.ExecutionStarted
-		job.signal(result, nil)
-		return nil
+		return s.linkNativeExecution(ctx, job, receipt, &result)
 	}
 	if handled, state, runErr := s.runNativeWindowsExecution(job, req, receipt, resume, selected, skills, privateEnv, &runActive, guard); handled {
 		if runErr == nil {
