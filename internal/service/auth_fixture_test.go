@@ -21,6 +21,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // The fixture uses a native TLS provider response and protected synthetic files.
@@ -52,6 +53,9 @@ func authenticateFixtureAccountWithStatus(t *testing.T, svc *Service, account do
 		config, name = ".claude", ".credentials.json"
 	}
 	data, _ := json.Marshal(payload)
+	if err := testfixture.PreparePrivateFile(filepath.Join(ad.IsolateDir(svc.Home, account.ID), config, name)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(ad.IsolateDir(svc.Home, account.ID), config, name), data, 0600); err != nil {
 		t.Fatal(err)
 	}

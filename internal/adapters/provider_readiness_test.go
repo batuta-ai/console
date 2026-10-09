@@ -23,6 +23,7 @@ import (
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func providerTLSClient(t *testing.T, handler http.Handler) *http.Client {
@@ -89,6 +90,9 @@ func authFixture(t *testing.T, id string, client *http.Client) (*adapters.Readin
 		payload = map[string]any{"claudeAiOauth": map[string]any{"accessToken": token, "refreshToken": "synthetic-refresh-never-real", "expiresAt": time.Now().Add(time.Hour).UnixMilli(), "scopes": []string{"user:inference", "user:profile"}}}
 	}
 	data, _ := json.Marshal(payload)
+	if err := testfixture.PreparePrivateFile(filepath.Join(ad.IsolateDir(home, account.ID), config, name)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(ad.IsolateDir(home, account.ID), config, name), data, 0600); err != nil {
 		t.Fatal(err)
 	}
