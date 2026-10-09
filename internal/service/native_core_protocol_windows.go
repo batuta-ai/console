@@ -14,6 +14,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/core/publication"
 )
 
 const nativeCoreFrameLimit = 4 << 20
@@ -46,12 +47,15 @@ type nativeCoreGuard struct {
 }
 
 type nativeCoreError struct {
-	Message   string   `json:"message"`
-	Canceled  bool     `json:"canceled,omitempty"`
-	Deadline  bool     `json:"deadline,omitempty"`
-	Cleanup   bool     `json:"cleanup,omitempty"`
-	Uncertain bool     `json:"uncertain,omitempty"`
-	Kernel    []uint32 `json:"kernel,omitempty"`
+	Message       string   `json:"message"`
+	Canceled      bool     `json:"canceled,omitempty"`
+	Deadline      bool     `json:"deadline,omitempty"`
+	Cleanup       bool     `json:"cleanup,omitempty"`
+	Uncertain     bool     `json:"uncertain,omitempty"`
+	Invalid       bool     `json:"invalid,omitempty"`
+	Binding       bool     `json:"binding,omitempty"`
+	ReviewCleanup bool     `json:"review_cleanup,omitempty"`
+	Kernel        []uint32 `json:"kernel,omitempty"`
 }
 
 func nativeCoreEncodeError(err error) *nativeCoreError {
@@ -59,6 +63,9 @@ func nativeCoreEncodeError(err error) *nativeCoreError {
 		return nil
 	}
 	out := &nativeCoreError{Message: err.Error(), Canceled: errors.Is(err, context.Canceled), Deadline: errors.Is(err, context.DeadlineExceeded), Cleanup: errors.Is(err, session.ErrNativeCleanupUnresolved), Uncertain: errors.Is(err, domain.ErrExecutionUncertain)}
+	out.Invalid = errors.Is(err, domain.ErrInvalidReference)
+	out.Binding = errors.Is(err, domain.ErrBindingConflict)
+	out.ReviewCleanup = errors.Is(err, publication.ErrReviewCleanupUnresolved)
 	var visit func(error)
 	visit = func(cause error) {
 		if code, ok := cause.(syscall.Errno); ok {
@@ -98,6 +105,15 @@ func (e *nativeCoreError) cause() error {
 	}
 	if e.Uncertain {
 		causes = append(causes, domain.ErrExecutionUncertain)
+	}
+	if e.Invalid {
+		causes = append(causes, domain.ErrInvalidReference)
+	}
+	if e.Binding {
+		causes = append(causes, domain.ErrBindingConflict)
+	}
+	if e.ReviewCleanup {
+		causes = append(causes, publication.ErrReviewCleanupUnresolved)
 	}
 	for _, code := range e.Kernel {
 		causes = append(causes, syscall.Errno(code))
