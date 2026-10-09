@@ -17,6 +17,7 @@ import (
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/accounts"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/core/executor"
 	"github.com/batuta-ai/core/loop"
 	"github.com/batuta-ai/core/review"
 	"golang.org/x/sys/windows"
@@ -494,5 +495,102 @@ func task43CoreCancelStage(t *testing.T, stage string) {
 		if err == nil && gate.Cleared {
 			t.Fatal("canceled review cleared acceptance gate", gate)
 		}
+	}
+}
+
+func task43CoreEffortPE() (bool, int) {
+	mode, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "native-fixture-mode"))
+	if err != nil || string(mode) != "effort" || len(os.Args) < 10 || os.Args[3] != "task43-core-provider" {
+		return false, 0
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return true, 90
+	}
+	if os.Args[5] != "--model" || os.Args[6] != "qa-native" || os.Args[7] != "--effort" || os.Args[len(os.Args)-1] == "" {
+		return true, 94
+	}
+	switch os.Args[4] {
+	case "run":
+		if len(os.Args) != 10 || os.Args[8] != "low" {
+			return true, 95
+		}
+	case "review":
+		if len(os.Args) != 11 || os.Args[8] != "high" || os.Args[9] != "--readonly" {
+			return true, 96
+		}
+	default:
+		return false, 0
+	}
+	f, err := os.OpenFile(filepath.Join(os.Getenv("HOME"), "native-effort-argv"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return true, 91
+	}
+	err = json.NewEncoder(f).Encode(os.Args[4 : len(os.Args)-1])
+	if err := errors.Join(err, f.Close()); err != nil {
+		return true, 92
+	}
+	if os.Args[4] == "run" {
+		if err := os.WriteFile("out.txt", []byte("approved output\n"), 0600); err != nil {
+			return true, 93
+		}
+		fmt.Println("completed")
+	} else {
+		fmt.Println("<<<FINDINGS\nFINDINGS>>>\nTASK 1: DONE")
+	}
+	return true, 0
+}
+
+func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
+	svc, a, skills, env, values := task43CoreApprovedFixture(t)
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	path := filepath.Join(skills, "adapters", "codex.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ReplaceAll(string(data), "--model {model}", "--model {model} --effort {effort}")
+	body = strings.Replace(body, "review --model {model} --effort {effort}", "review --model {model} --effort {effort} --readonly", 1)
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	authorized := values["codex"]
+	authorized.Adapter, err = executor.LoadAdapter(skills, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorized.Members[0].Effort = "low"
+	authorized.Members = append(authorized.Members, domain.Member{ID: "reviewer", CLI: "codex", Model: "qa-native", Effort: "high", AccountID: "selected"})
+	values["codex"] = authorized
+	home := accounts.ExplicitHome(authorized.Environment)
+	task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), "effort")
+	state, err, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
+	if err != nil || !active || state != loop.StateDone {
+		t.Fatal("actual bound effort and readonly Core run", state, active, err)
+	}
+	data, err = os.ReadFile(filepath.Join(home, "native-effort-argv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, reviews := 0, 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var argv []string
+		if err := json.Unmarshal([]byte(line), &argv); err != nil {
+			t.Fatal(err)
+		}
+		switch strings.Join(argv, " ") {
+		case "run --model qa-native --effort low":
+			runs++
+		case "review --model qa-native --effort high --readonly":
+			reviews++
+		default:
+			t.Fatal("selected PE saw unbound model/effort/readonly argv", argv)
+		}
+	}
+	if runs != 1 || reviews == 0 {
+		t.Fatal("missing actual selected run/readonly effort records", runs, reviews)
+	}
+	gate, err := loop.CheckSupervisionGate(context.Background(), loop.SupervisionOptions{Workspace: a.Identity.Binding.CanonicalRoot, Delivery: batuta.ExecutionDelivery(a)})
+	if err != nil || !gate.Cleared {
+		t.Fatal("actual effort-bound review did not clear gate", gate, err)
 	}
 }
