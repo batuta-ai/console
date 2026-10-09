@@ -18,6 +18,7 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/i18n"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestCapabilitiesObservedHTTP(t *testing.T) { testCapabilitiesObserved(t, true) }
@@ -25,15 +26,13 @@ func TestCapabilitiesObservedHTTP(t *testing.T) { testCapabilitiesObserved(t, tr
 func TestCapabilitiesObservedHandler(t *testing.T) { testCapabilitiesObserved(t, false) }
 
 func testCapabilitiesObserved(t *testing.T, network bool) {
-	dir := t.TempDir()
+	dir := testfixture.PrivateHome(t)
 	marker := filepath.Join(dir, "executed")
 	for _, id := range adapters.IDs() {
 		if id == "claude" {
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(dir, id), []byte("#!/bin/sh\n: > '"+marker+"'\nexit 91\n"), 0700); err != nil {
-			t.Fatal(err)
-		}
+		testfixture.WriteScript(t, filepath.Join(dir, testfixture.ExecutableName(id)), "#!/bin/sh\n: > '"+marker+"'\nexit 91\n")
 	}
 	t.Setenv("PATH", dir)
 	h, svc := testServer(t)
@@ -127,7 +126,7 @@ func testCapabilitiesObserved(t *testing.T, network bool) {
 		Platforms, Providers []string
 		Qualification        struct{ Status, Code string }
 	}
-	if err := json.Unmarshal(got["matrix"], &matrix); err != nil || !reflect.DeepEqual(matrix.Platforms, []string{"darwin", "linux"}) || !reflect.DeepEqual(matrix.Providers, []string{"codex", "claude"}) || matrix.Qualification.Status != "pending" {
+	if err := json.Unmarshal(got["matrix"], &matrix); err != nil || !reflect.DeepEqual(matrix.Platforms, []string{"darwin", "linux", "windows"}) || !reflect.DeepEqual(matrix.Providers, []string{"codex", "claude"}) || matrix.Qualification.Status != "pending" {
 		t.Fatalf("matrix %s", got["matrix"])
 	}
 	if host.OS != runtime.GOOS || host.Arch != runtime.GOARCH || host.GoVersion != runtime.Version() || !host.Selected {
