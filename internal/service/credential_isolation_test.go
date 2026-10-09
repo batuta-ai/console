@@ -14,7 +14,6 @@ import (
 
 	"errors"
 	"github.com/batuta-ai/console/internal/domain"
-	consolert "github.com/batuta-ai/console/internal/runtime"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/testfixture"
 )
@@ -151,7 +150,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		t.Fatal(err)
 	}
 	cli := filepath.Join(root, "bin")
-	if err := consolert.EnsurePrivateDirectory(cli); err != nil {
+	if err := testfixture.MakePrivateDirectory(cli, 0700); err != nil {
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
