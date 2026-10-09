@@ -176,7 +176,7 @@ func (s *Service) linkNativeExecution(ctx context.Context, job *nativeExecution,
 	result.Delivery = job.delivery
 	result.OpenedDigest = b.OpenedDigest
 	result.Effect = domain.ExecutionStarted
-	job.signal(result, nil)
+	job.signal(*result, nil)
 	return nil
 }
 
