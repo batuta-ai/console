@@ -383,3 +383,65 @@ func TestTask43WindowsNativeCoreRejectsBeforePreparation(t *testing.T) {
 		}
 	}
 }
+
+func TestTask43WindowsNativeCoreRejectsOutOfOrderResponse(t *testing.T) {
+	image := task43CoreImage(t)
+	for _, reply := range []map[string]any{{"type": "response", "id": 2}, {"type": "ack"}} {
+		svc, a, skills, env, selected := task43CoreApprovedFixture(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		var witness windows.Handle
+		result, err := (session.NativeRunner{Manager: svc.Session, Environment: env}).Exchange(ctx, publication.Command{Executable: image, Args: []string{"--native-core"}, Directory: a.Identity.Binding.CanonicalRoot}, func(_ context.Context, r io.Reader, w io.WriteCloser) error {
+			var err error
+			witness, err = task43CoreHello(r)
+			if err != nil {
+				return err
+			}
+			if err := task43CoreSend(w, map[string]any{"type": "start", "start": map[string]any{"receipt": a, "delivery": batuta.ExecutionDelivery(a), "skills": skills, "environment": env, "accounts": selected}}); err != nil {
+				return err
+			}
+			frame, err := task43CoreReceive(r)
+			if err != nil {
+				return err
+			}
+			if string(frame["type"]) != `"ready"` {
+				return fmt.Errorf("actual Core readiness missing: %s", frame["type"])
+			}
+			if err := task43CoreSend(w, reply); err != nil {
+				return err
+			}
+			frame, err = task43CoreReceive(r)
+			if err != nil {
+				return err
+			}
+			if string(frame["type"]) != `"done"` || !bytes.Contains(frame["done"], []byte(domain.ErrInvalidReference.Error())) {
+				return fmt.Errorf("out-of-order response was not refused: %v", frame)
+			}
+			if err := task43CoreSend(w, map[string]any{"type": "ack"}); err != nil {
+				return err
+			}
+			tail, err := io.ReadAll(r)
+			if len(tail) != 0 {
+				return errors.New("unframed output after refused response")
+			}
+			return err
+		})
+		cancel()
+		if witness != 0 {
+			wait, err := windows.WaitForSingleObject(witness, 0)
+			windows.CloseHandle(witness)
+			if err != nil || wait != windows.WAIT_OBJECT_0 {
+				t.Fatal("refused original helper stayed alive", wait, err)
+			}
+		}
+		if err != nil || result.ExitCode != 0 {
+			t.Fatalf("actual out-of-order result=%+v err=%v", result, err)
+		}
+		if _, err := os.Stat(filepath.Join(accounts.ExplicitHome(selected["codex"].Environment), "native-launches")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("out-of-order response started selected task", err)
+		}
+		b, err := svc.planBinding(context.Background(), "m", "w")
+		if err != nil || b.DeliveryID != "" || b.OpenedDigest != "" {
+			t.Fatal("out-of-order response attached parent delivery", b, err)
+		}
+	}
+}
