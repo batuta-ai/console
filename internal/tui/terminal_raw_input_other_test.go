@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func terminalRawInputFixture(t *testing.T) (map[string][]string, func(context.Context, *session.TerminalSubscription, int) []byte) {
+func terminalRawInputFixture(t *testing.T) (map[string][]string, func(context.Context, *session.TerminalSubscription, *termLink, int) []byte) {
 	t.Helper()
-	return nil, func(ctx context.Context, sub *session.TerminalSubscription, count int) []byte {
+	return nil, func(ctx context.Context, sub *session.TerminalSubscription, _ *termLink, count int) []byte {
 		var got []byte
 		for len(got) < count {
 			e, err := sub.Next(ctx)

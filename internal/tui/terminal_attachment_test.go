@@ -314,7 +314,7 @@ func TestTerminalActualUpdateRawControlBytes(t *testing.T) {
 		m = next.(model)
 	}
 	want = []byte{'q', 27, 3, 26, 28, 4}
-	got := observe(ctx, sub, len(want))
+	got := observe(ctx, sub, m.link, len(want))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("child bytes=%x want=%x", got, want)
 	}

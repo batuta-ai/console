@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-func terminalRawInputFixture(t *testing.T) (map[string][]string, func(context.Context, *session.TerminalSubscription, int) []byte) {
+func terminalRawInputFixture(t *testing.T) (map[string][]string, func(context.Context, *session.TerminalSubscription, *termLink, int) []byte) {
 	t.Helper()
 	record := filepath.Join(testfixture.PrivateHome(t), "actual-terminal-input.bin")
 	quoted := "'" + strings.ReplaceAll(record, "'", "'\\''") + "'"
 	script := "stty raw -echo; printf READY; head -c 6 > " + quoted + "; printf RAW-INPUT-CAPTURED; exec /bin/cat"
 	commands := map[string][]string{"z-selected": testfixture.Argv(t, []string{"/bin/sh", "-c", script})}
 	// ConPTY output is a terminal presentation; observe raw input at the child.
-	return commands, func(ctx context.Context, sub *session.TerminalSubscription, _ int) []byte {
+	return commands, func(ctx context.Context, sub *session.TerminalSubscription, link *termLink, _ int) []byte {
 		var output strings.Builder
 		for !strings.Contains(output.String(), "RAW-INPUT-CAPTURED") {
 			event, err := sub.Next(ctx)
@@ -64,7 +64,7 @@ func TestTerminalNativeRawObservationPreservesExtraByte(t *testing.T) {
 		m = next.(model)
 	}
 	want := []byte{'q', 27, 3, 26, 28, 4, 'X'}
-	got := observe(ctx, sub, len(want))
+	got := observe(ctx, sub, m.link, len(want))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("actual terminal input=%x want=%x; recorder must not truncate extra bytes", got, want)
 	}
