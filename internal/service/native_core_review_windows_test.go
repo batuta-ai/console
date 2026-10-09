@@ -1,14 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -593,4 +596,58 @@ func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
 	if err != nil || !gate.Cleared {
 		t.Fatal("actual effort-bound review did not clear gate", gate, err)
 	}
+}
+
+func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
+	_, home := task43CoreHome(t)
+	image := filepath.Join(home, "published-core49.exe")
+	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-mod=readonly", "-o", image, "github.com/batuta-ai/core/cmd/batuta")
+	build.Dir = filepath.Join("..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("actual pinned public Core CLI build: %v %s", err, out)
+	}
+	command := exec.Command(image, "review", "-h")
+	command.Dir = home
+	var publishedOut, publishedHelp bytes.Buffer
+	command.Stdout, command.Stderr = &publishedOut, &publishedHelp
+	var exit *exec.ExitError
+	if err := command.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 || publishedOut.Len() != 0 {
+		t.Fatal("actual public review help exit contract", err, publishedOut.String())
+	}
+	var helperOut, helperHelp bytes.Buffer
+	if err := (nativeCoreReviewRunner{}).run(context.Background(), home, []string{"-h"}, &helperOut, &helperHelp); !errors.Is(err, flag.ErrHelp) || helperOut.Len() != 0 {
+		t.Fatal("actual helper flag-parser help contract", err, helperOut.String())
+	}
+	publicFlags := strings.TrimSuffix(publishedHelp.String(), "flag: help requested\n")
+	if publicFlags != helperHelp.String() {
+		t.Fatalf("actual public/helper flags/default descriptions differ\npublic:\n%s\nhelper:\n%s", publicFlags, helperHelp.String())
+	}
+	for _, expected := range []string{"-base string", "-cohort-files int", "(default 8)", "-full", "-out string", "-parallel int", "(default 1)", "-reviewer string", "-spec string", "-worktree"} {
+		if !strings.Contains(helperHelp.String(), expected) {
+			t.Fatal("required public review flag/default missing", expected)
+		}
+	}
+	capabilities := exec.Command(image, "capabilities")
+	capabilities.Dir = home
+	data, err := capabilities.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public struct {
+		Version  string   `json:"version"`
+		Commands []string `json:"commands"`
+	}
+	if err := json.Unmarshal(data, &public); err != nil || strings.TrimPrefix(public.Version, "v") != "1.1.0-beta.49" {
+		t.Fatal("actual public Core capability version", public, err)
+	}
+	found := false
+	for _, command := range public.Commands {
+		if command == "review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("public Core does not advertise review", public)
+	}
+	t.Logf("Actual public Core49 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
 }
