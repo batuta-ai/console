@@ -20,6 +20,9 @@ import (
 // A copied test PE is the local selected CLI fixture. Core's public inventory
 // adapter invokes its native diagnostic argv before any test flags exist.
 func TestMain(m *testing.M) {
+	if handled, code := task43CoreLifetimePE(); handled {
+		os.Exit(code)
+	}
 	if strings.EqualFold(filepath.Base(os.Args[0]), "codex.exe") && len(os.Args) > 1 {
 		if handled, code := task43CoreReviewPE(); handled {
 			os.Exit(code)

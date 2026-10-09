@@ -4,17 +4,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/accounts"
+	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/core/loop"
 	"github.com/batuta-ai/core/review"
+	"golang.org/x/sys/windows"
 )
 
 func task43CoreReviewPE() (bool, int) {
@@ -43,6 +48,9 @@ func task43CoreReviewPE() (bool, int) {
 	case "run":
 		if !log("native-launches") {
 			return true, 91
+		}
+		if string(mode) == "hold" {
+			return true, task43CoreWorkerHold()
 		}
 		if err := os.WriteFile("out.txt", []byte("approved output\n"), 0600); err != nil {
 			return true, 92
@@ -167,4 +175,180 @@ func TestTask43WindowsNativeCoreReviewDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("Actual report before owned fixture cleanup:\n%s", data)
+}
+
+func task43CoreLifetimePE() (bool, int) {
+	if len(os.Args) != 2 || os.Args[1] != "--task43-core-hold" {
+		return false, 0
+	}
+	return true, task43CoreHoldEvent()
+}
+
+func task43CoreHoldEvent() int {
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return 95
+	}
+	defer windows.CloseHandle(event)
+	status, err := windows.WaitForSingleObject(event, windows.INFINITE)
+	if err != nil || status != windows.WAIT_OBJECT_0 {
+		return 96
+	}
+	return 0
+}
+
+type task43CoreBirth struct {
+	PID     uint32
+	Created uint64
+}
+type task43CoreTreeBirth struct{ Root, Child task43CoreBirth }
+
+func task43CoreBirthOf(handle windows.Handle, pid uint32) (task43CoreBirth, error) {
+	var created, exited, kernel, user windows.Filetime
+	err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user)
+	return task43CoreBirth{PID: pid, Created: uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime)}, err
+}
+
+func task43CoreWorkerHold() int {
+	child := exec.Command(os.Args[0], "--task43-core-hold")
+	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		return 95
+	}
+	root, err := task43CoreBirthOf(windows.CurrentProcess(), uint32(os.Getpid()))
+	if err != nil {
+		return 95
+	}
+	var born task43CoreBirth
+	var observed error
+	if err := child.Process.WithHandle(func(h uintptr) { born, observed = task43CoreBirthOf(windows.Handle(h), uint32(child.Process.Pid)) }); err != nil || observed != nil {
+		return 95
+	}
+	data, err := json.Marshal(task43CoreTreeBirth{Root: root, Child: born})
+	if err != nil {
+		return 95
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "native-tree-birth.json"), data, 0600); err != nil {
+		return 95
+	}
+	return task43CoreHoldEvent()
+}
+
+func task43CoreWitness(birth task43CoreBirth) (windows.Handle, error) {
+	h, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, birth.PID)
+	if err != nil {
+		return 0, err
+	}
+	actual, err := task43CoreBirthOf(h, birth.PID)
+	if err != nil || actual.Created != birth.Created {
+		windows.CloseHandle(h)
+		return 0, errors.Join(errors.New("original Core fixture process birth mismatch"), err)
+	}
+	return h, nil
+}
+
+func TestTask43WindowsNativeCoreCancelJoinsNestedWorker(t *testing.T) {
+	svc, a, skills, env, values := task43CoreApprovedFixture(t)
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	home := accounts.ExplicitHome(values["codex"].Environment)
+	task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), "hold")
+	image, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := exec.Command(image, "--task43-core-hold")
+	foreign.Env, _ = task43CoreHome(t)
+	foreign.Env = accounts.RuntimeEnvironment(os.Environ(), foreign.Env)
+	if err := foreign.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = foreign.Process.Kill(); _ = foreign.Wait() })
+	var siblingBirth task43CoreBirth
+	var siblingErr error
+	if err := foreign.Process.WithHandle(func(h uintptr) {
+		siblingBirth, siblingErr = task43CoreBirthOf(windows.Handle(h), uint32(foreign.Process.Pid))
+	}); err != nil || siblingErr != nil {
+		t.Fatal(err, siblingErr)
+	}
+	sibling, err := task43CoreWitness(siblingBirth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(sibling)
+	job, err := svc.native.admit("m", a.Identity.Binding.CanonicalRoot, batuta.ExecutionDelivery(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.native.finish(job)
+	ctx, cancel := context.WithTimeout(job.ctx, 35*time.Second)
+	defer cancel()
+	job.ctx = ctx
+	release, err := svc.Session.ReserveNative(map[string]int{"selected": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var active atomic.Bool
+	type result struct {
+		state string
+		err   error
+	}
+	finished := make(chan result, 1)
+	go func() {
+		_, state, err := svc.runNativeWindowsExecution(job, domain.ExecutionRequest{Target: a.Identity, ApprovalID: a.ID}, a, "", task43CoreSelected(svc, values), skills, env, &active, task43CoreCatalogGuard(svc, a, job.delivery))
+		finished <- result{state, err}
+	}()
+	var tree task43CoreTreeBirth
+	for {
+		data, readErr := os.ReadFile(filepath.Join(home, "native-tree-birth.json"))
+		if readErr == nil {
+			if err := json.Unmarshal(data, &tree); err == nil {
+				break
+			}
+		}
+		select {
+		case result := <-finished:
+			t.Fatal("actual worker never produced original birth", result)
+		case <-ctx.Done():
+			t.Fatal("actual worker birth missing", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	root, err := task43CoreWitness(tree.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(root)
+	child, err := task43CoreWitness(tree.Child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(child)
+	for _, h := range []windows.Handle{root, child, sibling} {
+		if wait, err := windows.WaitForSingleObject(h, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+			t.Fatal("original live objects missing before cancel", wait, err)
+		}
+	}
+	cancel()
+	var stopped result
+	select {
+	case stopped = <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("owned helper/nested worker did not drain")
+	}
+	if !errors.Is(stopped.err, context.Canceled) || stopped.state == loop.StateDone {
+		t.Fatal("cancel produced false completion or lost actual cause", stopped)
+	}
+	for _, h := range []windows.Handle{root, child} {
+		if wait, err := windows.WaitForSingleObject(h, 0); err != nil || wait != windows.WAIT_OBJECT_0 {
+			t.Fatal("original nested worker still alive at service return", wait, err)
+		}
+	}
+	if wait, err := windows.WaitForSingleObject(sibling, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+		t.Fatal("whole-Core cancellation touched foreign sibling", wait, err)
+	}
+	b, err := svc.planBinding(context.Background(), "m", "w")
+	if err != nil || b.DeliveryID != job.delivery || b.OpenedDigest == "" {
+		t.Fatal("cancellation lost original parent attachment", b, err)
+	}
 }
