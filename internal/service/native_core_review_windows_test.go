@@ -74,7 +74,7 @@ func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
 		mode, outcome, state string
 		code                 int
 		cleared              bool
-	}{{"valid", "SHIP", loop.StateDone, 0, true}, {"fix", "FIX_BEFORE_SHIP", loop.StateReviewBlocked, 2, false}, {"invalid", "REWORK", loop.StateReviewBlocked, 3, false}} {
+	}{{"valid", "SHIP", loop.StateDone, 0, true}, {"fix", "FIX_BEFORE_SHIP", loop.StateReviewBlocked, 2, false}, {"invalid", "incomplete_coverage", loop.StateReviewBlocked, 3, false}} {
 		t.Run(test.mode, func(t *testing.T) {
 			svc, a, skills, env, values := task43CoreApprovedFixture(t)
 			svc.NativeExecutorExecutable = image
@@ -103,6 +103,12 @@ func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
 				data, err := os.ReadFile(filepath.Join(job.Artifacts, name))
 				if err != nil || len(data) == 0 || fmt.Sprintf("%x", sha256.Sum256(data)) != job.ArtifactDigests[name] {
 					t.Fatal("actual review artifact digest", name, err)
+				}
+				if name == "review.md" {
+					verdict := map[int]string{0: "SHIP", 2: "FIX_BEFORE_SHIP", 3: "REWORK"}[test.code]
+					if !strings.HasSuffix(string(data), "Verdict: "+verdict+"\n") {
+						t.Fatal("actual report verdict differs from exit", string(data))
+					}
 				}
 			}
 			data, err := os.ReadFile(filepath.Join(job.Artifacts, "state.json"))
