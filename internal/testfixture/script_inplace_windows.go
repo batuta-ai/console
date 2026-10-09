@@ -209,7 +209,7 @@ func openInplaceScript(parent *os.File, path string) (*os.File, error) {
 	var handle windows.Handle
 	var status windows.IO_STATUS_BLOCK
 	options := uint32(windows.FILE_NON_DIRECTORY_FILE | windows.FILE_OPEN_REPARSE_POINT | windows.FILE_SYNCHRONOUS_IO_NONALERT)
-	err = windows.NtCreateFile(&handle, windows.FILE_WRITE_DATA|windows.READ_CONTROL|windows.SYNCHRONIZE, &attributes, &status, nil, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN, options, 0, 0)
+	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_WRITE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE, &attributes, &status, nil, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN, options, 0, 0)
 	if err != nil {
 		var native windows.NTStatus
 		if errors.As(err, &native) {
