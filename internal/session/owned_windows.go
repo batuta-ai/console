@@ -135,6 +135,10 @@ type ownedProcess struct {
 	forced   bool
 	cancel   context.CancelFunc
 	err      error
+
+	terminationObserved bool
+	terminationTotal    uint32
+	terminationWaiters  []windows.Handle
 }
 
 func newOwnedProcess(*exec.Cmd) *ownedProcess {
@@ -288,8 +292,12 @@ func (p *ownedProcess) signalLocked() error {
 	if p.retired || p.signaled {
 		return p.err
 	}
+	if !p.terminationObserved {
+		p.terminationObserved = true
+		p.err = errors.Join(p.err, p.observeTermination())
+	}
 	if err := windows.TerminateJobObject(p.job, 1); err != nil {
-		p.err = fmt.Errorf("terminate owned Windows job: %w", err)
+		p.err = errors.Join(p.err, fmt.Errorf("terminate owned Windows job: %w", err))
 		return p.err
 	}
 	p.signaled = true
@@ -324,7 +332,7 @@ func (p *ownedProcess) drainJob() error {
 			return err
 		}
 		if accounting.ActiveProcesses == 0 {
-			return nil
+			return p.waitTermination(accounting.TotalProcesses, deadline)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("owned Windows job still contains %d processes: %w", accounting.ActiveProcesses, context.DeadlineExceeded)
@@ -342,6 +350,10 @@ func (p *ownedProcess) drainJob() error {
 
 func (p *ownedProcess) closeHandles() error {
 	var err error
+	for _, handle := range p.terminationWaiters {
+		err = errors.Join(err, windows.CloseHandle(handle))
+	}
+	p.terminationWaiters = nil
 	for _, handle := range []*windows.Handle{&p.root, &p.anchor.Thread, &p.anchor.Process, &p.port, &p.job} {
 		if *handle != 0 {
 			err = errors.Join(err, windows.CloseHandle(*handle))
