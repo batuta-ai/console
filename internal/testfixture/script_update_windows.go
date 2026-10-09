@@ -97,7 +97,11 @@ func RemoveScript(t testing.TB, path string) (err error) {
 		return err
 	}
 	want := nativeScriptDescriptor{Executable: path, ImageSHA: fixtureDigest(image), Shell: shell, ShellSHA: fixtureDigest(shellBytes), Script: paths[1], ScriptSHA: fixtureDigest(contents[1])}
-	if descriptor != want || !bytes.Equal(contents[0], image) {
+	canonical, err := json.Marshal(want)
+	if err != nil {
+		return err
+	}
+	if descriptor != want || !bytes.Equal(contents[0], image) || !bytes.Equal(contents[2], canonical) {
 		return os.ErrPermission
 	}
 	if err := closeFiles(); err != nil {
