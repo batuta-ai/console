@@ -164,7 +164,7 @@ func TestTask43WindowsNativeCoreProviderFixture(t *testing.T) {
 
 func task43CoreApprovedFixture(t *testing.T) (*Service, domain.PlanApproval, string, []string, map[string]nativeBridgeAccount) {
 	t.Helper()
-	env, root := task43CoreHome(t)
+	_, root := task43CoreHome(t)
 	_, tools := task43CoreHome(t)
 	image, err := os.Executable()
 	if err != nil {
@@ -236,6 +236,7 @@ func task43CoreApprovedFixture(t *testing.T) (*Service, domain.PlanApproval, str
 	if err != nil {
 		t.Fatal(err)
 	}
+	env, _ := task43CoreHome(t)
 	accountEnv, _ := task43CoreHome(t)
 	adapter, err := executor.LoadAdapter(skills, "codex")
 	if err != nil {
