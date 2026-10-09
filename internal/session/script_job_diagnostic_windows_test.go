@@ -94,6 +94,41 @@ func TestTask43WindowsScriptJobDrainObservation(t *testing.T) {
 				return data
 			}
 			t.Logf("before cancellation: childJobMember=%d accounting=%+v", membership(), accounting())
+			var members struct {
+				Assigned uint32
+				Count    uint32
+				IDs      [64]uintptr
+			}
+			if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&members)), uint32(unsafe.Sizeof(members)), nil); err != nil || members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
+				t.Fatal("actual job member enumeration", members, err)
+			}
+			var processes []windows.Handle
+			var images []string
+			for _, id := range members.IDs[:members.Count] {
+				handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(id))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer windows.CloseHandle(handle)
+				var member int32
+				ok, _, callErr := windowsProcessInJob.Call(uintptr(handle), uintptr(job), uintptr(unsafe.Pointer(&member)))
+				if ok == 0 || member != 1 {
+					t.Fatal("observed process not a member of original private job", id, member, callErr)
+				}
+				var created, exited, kernel, user windows.Filetime
+				if err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user); err != nil {
+					t.Fatal(err)
+				}
+				name := make([]uint16, 4096)
+				size := uint32(len(name))
+				if err := windows.QueryFullProcessImageName(handle, 0, &name[0], &size); err != nil {
+					t.Fatal(err)
+				}
+				image := windows.UTF16ToString(name[:size])
+				t.Logf("actual member id=%d birth=%d image=%s", id, uint64(created.HighDateTime)<<32|uint64(created.LowDateTime), image)
+				processes = append(processes, handle)
+				images = append(images, image)
+			}
 			cancel()
 			select {
 			case err := <-done:
@@ -106,11 +141,28 @@ func TestTask43WindowsScriptJobDrainObservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("at Run completion: childJobMember=%d accounting=%+v childWait=%d", membership(), accounting(), immediate)
+			statuses := make([]uint32, len(processes))
+			for i, handle := range processes {
+				status, err := windows.WaitForSingleObject(handle, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				statuses[i] = status
+				t.Logf("at Run completion: actual member image=%s wait=%d", images[i], status)
+			}
 			started := time.Now()
 			eventual, err := windows.WaitForSingleObject(child, 2000)
 			t.Logf("bounded later observation: childWait=%d err=%v seconds=%f", eventual, err, time.Since(started).Seconds())
 			if immediate != windows.WAIT_OBJECT_0 {
 				t.Fatal("actual original held descendant not signaled at Run completion", immediate)
+			}
+			for i, handle := range processes {
+				started := time.Now()
+				eventual, err := windows.WaitForSingleObject(handle, 2000)
+				t.Logf("bounded member observation: image=%s wait=%d err=%v seconds=%f", images[i], eventual, err, time.Since(started).Seconds())
+				if statuses[i] != windows.WAIT_OBJECT_0 {
+					t.Error("original Job member not signaled at Run completion", images[i], statuses[i])
+				}
 			}
 		})
 	}
