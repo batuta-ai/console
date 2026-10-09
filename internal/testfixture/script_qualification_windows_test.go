@@ -179,7 +179,7 @@ func TestNativeScriptRefusesForeignParent(t *testing.T) {
 	if err != nil || owner == nil || owner.String() != "S-1-5-32-544" {
 		t.Fatal("foreign-owner fixture was not created", err)
 	}
-	if err := testfixture.WriteScript(t, filepath.Join(root, "refused.exe"), []byte("#!/bin/sh\nexit 99\n"), 0700); !errors.Is(err, os.ErrPermission) {
+	if err := testfixture.WriteScript(t, filepath.Join(root, "refused.exe"), []byte("#!/bin/sh\nexit 99\n"), 0700); err == nil || err.Error() != "private object must belong to the current Windows user" {
 		t.Fatal("native fixture accepted foreign parent", err)
 	}
 	after, err := windows.GetNamedSecurityInfo(root, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
