@@ -32,7 +32,9 @@ func testCapabilitiesObserved(t *testing.T, network bool) {
 		if id == "claude" {
 			continue
 		}
-		testfixture.WriteScript(t, filepath.Join(dir, testfixture.ExecutableName(id)), "#!/bin/sh\n: > '"+marker+"'\nexit 91\n")
+		if err := testfixture.WriteScript(t, filepath.Join(dir, testfixture.ExecutableName(id)), []byte("#!/bin/sh\n: > '"+marker+"'\nexit 91\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", dir)
 	h, svc := testServer(t)
