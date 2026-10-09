@@ -529,3 +529,54 @@ func TestTask43WindowsNativeCoreRejectsMalformedFrame(t *testing.T) {
 		})
 	}
 }
+
+func TestTask43WindowsNativeCoreErrorCauses(t *testing.T) {
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(event)
+	var restricted windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), event, windows.CurrentProcess(), &restricted, windows.EVENT_MODIFY_STATE, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(restricted)
+	_, kernel := windows.WaitForSingleObject(restricted, 0)
+	if !errors.Is(kernel, windows.ERROR_ACCESS_DENIED) {
+		t.Fatal("actual restricted event did not produce access error", kernel)
+	}
+	for _, test := range []struct {
+		name   string
+		cause  error
+		wanted []error
+	}{
+		{"invalid", errors.Join(domain.ErrInvalidReference, kernel), []error{domain.ErrInvalidReference, kernel}},
+		{"binding", fmt.Errorf("child binding: %w", errors.Join(domain.ErrBindingConflict, kernel)), []error{domain.ErrBindingConflict, kernel}},
+		{"review_cleanup", errors.Join(publication.ErrReviewCleanupUnresolved, session.ErrNativeCleanupUnresolved, kernel), []error{publication.ErrReviewCleanupUnresolved, session.ErrNativeCleanupUnresolved, kernel}},
+		{"uncertain_cancel", errors.Join(domain.ErrExecutionUncertain, context.Canceled, context.DeadlineExceeded, kernel), []error{domain.ErrExecutionUncertain, context.Canceled, context.DeadlineExceeded, kernel}},
+		{"deduplicated_kernel", errors.Join(kernel, fmt.Errorf("second cause: %w", kernel)), []error{kernel}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var wire bytes.Buffer
+			stream := &nativeCoreStream{reader: &wire, writer: &wire}
+			done := &nativeCoreDone{State: loop.StateReviewBlocked, Error: nativeCoreEncodeError(test.cause), Cleanup: nativeCoreEncodeError(test.cause)}
+			if err := stream.send(nativeCoreFrame{Type: "done", Done: done}); err != nil {
+				t.Fatal(err)
+			}
+			frame, err := stream.receive()
+			if err != nil || frame.Type != "done" || frame.Done == nil || frame.Done.Cleanup == nil {
+				t.Fatal("real DONE cleanup codec", frame, err)
+			}
+			for _, encoded := range []*nativeCoreError{frame.Done.Error, frame.Done.Cleanup} {
+				if encoded.Message != test.cause.Error() || len(encoded.Kernel) != 1 || encoded.Kernel[0] != uint32(windows.ERROR_ACCESS_DENIED) {
+					t.Fatal("lost message or duplicate actual kernel cause", encoded)
+				}
+				for _, wanted := range test.wanted {
+					if !errors.Is(encoded.cause(), wanted) {
+						t.Fatalf("DONE Error/Cleanup lost actual cause %v: %v", wanted, encoded.cause())
+					}
+				}
+			}
+		})
+	}
+}
