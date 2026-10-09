@@ -16,6 +16,7 @@ func (p *ownedProcess) observeTermination() error {
 		return err
 	}
 	p.terminationTotal = before.TotalProcesses
+	p.terminationTotalObserved = true
 	var members struct {
 		Assigned uint32
 		Count    uint32
@@ -69,7 +70,7 @@ func (p *ownedProcess) observeTermination() error {
 
 func (p *ownedProcess) waitTermination(total uint32, deadline time.Time) error {
 	var waitErr error
-	if total != p.terminationTotal {
+	if p.terminationTotalObserved && total != p.terminationTotal {
 		waitErr = fmt.Errorf("owned Windows job gained unobserved processes before termination: %d -> %d", p.terminationTotal, total)
 	}
 	for _, handle := range p.terminationWaiters {

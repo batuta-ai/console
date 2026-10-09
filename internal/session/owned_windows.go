@@ -136,9 +136,10 @@ type ownedProcess struct {
 	cancel   context.CancelFunc
 	err      error
 
-	terminationObserved bool
-	terminationTotal    uint32
-	terminationWaiters  []windows.Handle
+	terminationObserved      bool
+	terminationTotalObserved bool
+	terminationTotal         uint32
+	terminationWaiters       []windows.Handle
 }
 
 func newOwnedProcess(*exec.Cmd) *ownedProcess {
