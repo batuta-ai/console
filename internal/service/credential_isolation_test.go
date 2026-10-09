@@ -14,7 +14,9 @@ import (
 
 	"errors"
 	"github.com/batuta-ai/console/internal/domain"
+	consolert "github.com/batuta-ai/console/internal/runtime"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 var credentialSentinels = []string{
@@ -133,7 +135,7 @@ func TestCredentialRecordChild(t *testing.T) {
 
 func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace, domain.Mission, domain.Account, string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := testfixture.PrivateHome(t)
 	svc := testSvc(t)
 	svc.Home = filepath.Join(root, "console")
 	t.Cleanup(func() {
@@ -149,7 +151,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		t.Fatal(err)
 	}
 	cli := filepath.Join(root, "bin")
-	if err := os.Mkdir(cli, 0700); err != nil {
+	if err := consolert.EnsurePrivateDirectory(cli); err != nil {
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
@@ -158,7 +160,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		banner = "2.1.289 (Claude Code)"
 	}
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\nexec " + quote(executable) + " -test.run '^TestCredentialRecordChild$' -- console-credential-fixture " + quote(out) + " " + quote(root) + " " + quote(adapter) + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(cli, adapter), []byte(script), 0700); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName(adapter)), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for key, value := range fixtureRuntime(root, cli) {
@@ -346,7 +348,7 @@ func TestAccountIsolationRejectsBeforeSpawn(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}})
+			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}})
 			if err == nil {
 				readyProcess(t, svc, sess)
 				t.Error("invalid isolation allowed a child process")
@@ -540,7 +542,7 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 	svc, ws, _, _, out, _ := isolationFixture(t, "codex")
 	previous := ""
 	for i := 0; i < 2; i++ {
-		sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+		sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -585,7 +587,7 @@ func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", blocked)
-	sess := domain.Session{ID: domain.NewID("s_"), AccountID: account.ID, Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}
+	sess := domain.Session{ID: domain.NewID("s_"), AccountID: account.ID, Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}
 	p, err := svc.Session.StartPending(sess, nil, ws.Root, 1)
 	if err == nil {
 		readyProcess(t, svc, p.Snapshot())
@@ -646,7 +648,7 @@ func TestPrivateHomeNaturalExitAndShutdown(t *testing.T) {
 			observed := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); observed <- s }
-			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -712,7 +714,7 @@ func TestPrivateHomeCleanupFailureRemainsObservable(t *testing.T) {
 	_, ws, _, _, out, _ := isolationFixture(t, "codex")
 	m := session.New(t.TempDir())
 	svc := &Service{Session: m}
-	sess, err := m.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+	sess, err := m.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 	if err != nil {
 		t.Fatal(err)
 	}

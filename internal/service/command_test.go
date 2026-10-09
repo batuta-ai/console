@@ -15,6 +15,7 @@ import (
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func commandFixture(t *testing.T, adapter string) (admissionFixture, string, string) {
@@ -28,10 +29,10 @@ func commandFixture(t *testing.T, adapter string) (admissionFixture, string, str
 		}
 	})
 	cliDir := filepath.Dir(f.launches)
-	if err := os.Remove(filepath.Join(cliDir, "codex")); err != nil {
+	if err := testfixture.RemoveScript(t, filepath.Join(cliDir, testfixture.ExecutableName("codex"))); err != nil {
 		t.Fatal(err)
 	}
-	cli := filepath.Join(cliDir, adapter)
+	cli := filepath.Join(cliDir, testfixture.ExecutableName(adapter))
 	out := filepath.Join(cliDir, "argv")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	banner := "codex-cli 0.160.0"
@@ -39,7 +40,7 @@ func commandFixture(t *testing.T, adapter string) (admissionFixture, string, str
 		banner = "2.1.289 (Claude Code)"
 	}
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\n[ -t 0 ] && [ -t 1 ] || exit 91\nprintf '%s\\0' \"$0\" \"$@\" > " + quote(out) + "\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
+	if err := testfixture.WriteScript(t, cli, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	f.account.Adapter = adapter
