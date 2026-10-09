@@ -687,25 +687,17 @@ func TestTask43WindowsNativeCoreReviewTreeAndProofGuards(t *testing.T) {
 	image := task43CoreImage(t)
 	for _, mode := range []string{"review_tree", "review_index", "proof_tree"} {
 		t.Run(mode, func(t *testing.T) {
-			svc, a, skills, env, values := task43CoreApprovedFixture(t)
+			proof := "git diff --check"
+			if mode == "proof_tree" {
+				proof = "printf proof-mutation >> out.txt"
+			}
+			svc, a, skills, env, values := task43CoreApprovedFixtureWithProof(t, proof)
 			home := accounts.ExplicitHome(values["codex"].Environment)
 			fixtureMode := mode
 			expected := "source tree changed during review"
 			if mode == "proof_tree" {
 				fixtureMode = "valid"
 				expected = "proof of 1 changed the source tree"
-				plan := strings.Replace(string(a.Content), "git diff --check", "printf proof-mutation >> out.txt", 1)
-				if err := os.WriteFile(filepath.Join(a.Identity.Binding.CanonicalRoot, a.Identity.Binding.PlanPath), []byte(plan), 0600); err != nil {
-					t.Fatal(err)
-				}
-				detail, err := svc.PlanDetail(context.Background(), "m", "w")
-				if err != nil {
-					t.Fatal(err)
-				}
-				a, err = svc.ApprovePlan(context.Background(), detail.Identity)
-				if err != nil {
-					t.Fatal(err)
-				}
 			}
 			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), fixtureMode)
 			svc.NativeExecutorExecutable = image

@@ -185,6 +185,11 @@ func TestTask43WindowsNativeCoreProviderFixture(t *testing.T) {
 
 func task43CoreApprovedFixture(t *testing.T) (*Service, domain.PlanApproval, string, []string, map[string]nativeBridgeAccount) {
 	t.Helper()
+	return task43CoreApprovedFixtureWithProof(t, "git diff --check")
+}
+
+func task43CoreApprovedFixtureWithProof(t *testing.T, proof string) (*Service, domain.PlanApproval, string, []string, map[string]nativeBridgeAccount) {
+	t.Helper()
 	_, root := task43CoreHome(t)
 	_, tools := task43CoreHome(t)
 	image, err := os.Executable()
@@ -218,7 +223,7 @@ func task43CoreApprovedFixture(t *testing.T) (*Service, domain.PlanApproval, str
 	task43CoreWriteFile(t, filepath.Join(skills, "templates", "generic.md"), "# Generic\n## Conventions for briefs\n- Preserve approved scope.\nNever:\n- Edit beyond scope.\n")
 	task43CoreWriteFile(t, filepath.Join(root, ".batuta", "profile.md"), "# Profile\nTemplate: templates/generic.md\nStack: text\nMethodology: tests first\nTest: git diff --check\nExecution: sequential\nWorktree: always\n")
 	task43CoreWriteFile(t, filepath.Join(root, ".batuta", "routing.md"), "# Routing\n| Lane | Domain | Executor | Model |\n|---|---|---|---|\n| low | * | codex | qa-native |\n| medium | * | codex | qa-native |\n| high | * | codex | qa-native |\n| critical | * | self | session |\n\n| Role | Executor | Model |\n|---|---|---|\n| review | codex | qa-native |\n")
-	task43CoreWriteFile(t, filepath.Join(root, ".batuta", "plans", "alpha.md"), "# Plan — Alpha\n**Goal:** Use approved bytes\n**Status:** proposed\n\n## Tasks\n- [ ] 1. Create output — backend/low\n  Scope: out.txt\n  Accept: valid diff → git diff --check\n")
+	task43CoreWriteFile(t, filepath.Join(root, ".batuta", "plans", "alpha.md"), "# Plan — Alpha\n**Goal:** Use approved bytes\n**Status:** proposed\n\n## Tasks\n- [ ] 1. Create output — backend/low\n  Scope: out.txt\n  Accept: valid diff → "+proof+"\n")
 	task43CoreWriteFile(t, filepath.Join(root, ".gitignore"), ".batuta/journal/\n.batuta/runs/\n.batuta/worktrees/\n")
 	git, err := exec.LookPath("git")
 	if err != nil {
