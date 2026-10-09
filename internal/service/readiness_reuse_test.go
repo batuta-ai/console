@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestReadinessIsRecheckedBeforeReuse(t *testing.T) {
@@ -38,7 +39,7 @@ func TestReadinessIsRecheckedBeforeReuse(t *testing.T) {
 			want := "credential_missing"
 			if mode == "login" {
 				want = "cli_incompatible"
-				if err := os.WriteFile(filepath.Join(filepath.Dir(f.launches), "codex"), []byte("#!/bin/sh\necho 'codex-cli 99.0.0'\n"), 0700); err != nil {
+				if err := testfixture.UpdateScriptInPlace(t, filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex")), []byte("#!/bin/sh\necho 'codex-cli 99.0.0'\n"), 0700); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := os.Remove(filepath.Join(f.svc.Home, "accounts", f.account.ID, ".codex", "auth.json")); err != nil {
@@ -79,7 +80,7 @@ func TestSlowReadinessDoesNotBlockUnrelatedCanceledRequest(t *testing.T) {
 			dir := filepath.Dir(f.launches)
 			marker, release := filepath.Join(dir, "checking"), filepath.Join(dir, "release")
 			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf started > '" + marker + "'; while [ ! -e '" + release + "' ]; do /bin/sleep 0.01; done; echo 'codex-cli 0.160.0'; exit 0; fi\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-			if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0700); err != nil {
+			if err := testfixture.RewriteScript(t, filepath.Join(dir, testfixture.ExecutableName("codex")), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			type result struct {
