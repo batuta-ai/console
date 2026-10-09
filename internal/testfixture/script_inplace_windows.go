@@ -145,8 +145,8 @@ func UpdateScriptInPlace(t testing.TB, path string, body []byte, _ os.FileMode) 
 			return checkErr
 		}
 		expectedObject := objects[i]
-		actual.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
-		expectedObject.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
+		actual.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE | windows.FILE_ATTRIBUTE_NORMAL
+		expectedObject.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE | windows.FILE_ATTRIBUTE_NORMAL
 		if actual != expectedObject {
 			return fmt.Errorf("in-place post-write attributes %#x -> %#x: %w", expectedObject.attributes, actual.attributes, os.ErrPermission)
 		}
