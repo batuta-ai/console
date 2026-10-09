@@ -21,6 +21,9 @@ import (
 // adapter invokes its native diagnostic argv before any test flags exist.
 func TestMain(m *testing.M) {
 	if strings.EqualFold(filepath.Base(os.Args[0]), "codex.exe") && len(os.Args) > 1 {
+		if handled, code := task43CoreReviewPE(); handled {
+			os.Exit(code)
+		}
 		var output string
 		switch strings.Join(os.Args[1:], " ") {
 		case "--version":
