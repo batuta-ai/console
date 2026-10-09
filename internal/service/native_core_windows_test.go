@@ -416,9 +416,6 @@ func TestTask43WindowsNativeCoreRejectsOutOfOrderResponse(t *testing.T) {
 			if string(frame["type"]) != `"done"` || !bytes.Contains(frame["done"], []byte(domain.ErrInvalidReference.Error())) {
 				return fmt.Errorf("out-of-order response was not refused: %v", frame)
 			}
-			if err := task43CoreSend(w, map[string]any{"type": "ack"}); err != nil {
-				return err
-			}
 			tail, err := io.ReadAll(r)
 			if len(tail) != 0 {
 				return errors.New("unframed output after refused response")
@@ -433,7 +430,7 @@ func TestTask43WindowsNativeCoreRejectsOutOfOrderResponse(t *testing.T) {
 				t.Fatal("refused original helper stayed alive", wait, err)
 			}
 		}
-		if err != nil || result.ExitCode != 0 {
+		if err != nil || result.ExitCode != 1 || !bytes.Contains(result.Stderr, []byte(domain.ErrInvalidReference.Error())) {
 			t.Fatalf("actual out-of-order result=%+v err=%v", result, err)
 		}
 		if _, err := os.Stat(filepath.Join(accounts.ExplicitHome(selected["codex"].Environment), "native-launches")); !errors.Is(err, os.ErrNotExist) {
