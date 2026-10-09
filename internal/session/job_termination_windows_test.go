@@ -51,6 +51,12 @@ func TestTask43WindowsTerminationNewBirthIsUnresolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if !retired {
+			if err := owned.retire(nil); err != nil {
+				t.Error(err)
+			}
+			retired = true
+		}
 		var failure *exec.ExitError
 		if err := later.Wait(); err != nil && !errors.As(err, &failure) {
 			t.Error(err)
