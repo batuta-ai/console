@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -12,6 +13,7 @@ import (
 func TestTask43WindowsNativeExchangeParentPipesNotInheritable(t *testing.T) {
 	runner := task43WindowsNativeRunner(t)
 	var flags [2]uint32
+	getHandleInformation := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetHandleInformation")
 	result, err := runner.Exchange(context.Background(), task43ExchangeCommand(t, "cooperative", "private-endpoints"), func(_ context.Context, output io.Reader, input io.WriteCloser) error {
 		if _, err := task43ExchangeReceiveBirth(output); err != nil {
 			return err
@@ -21,7 +23,7 @@ func TestTask43WindowsNativeExchangeParentPipesNotInheritable(t *testing.T) {
 			if !ok {
 				return errors.New("parent pipe has no original handle")
 			}
-			if err := windows.GetHandleInformation(windows.Handle(file.Fd()), &flags[i]); err != nil {
+			if ok, _, err := getHandleInformation.Call(file.Fd(), uintptr(unsafe.Pointer(&flags[i]))); ok == 0 {
 				return err
 			}
 		}
