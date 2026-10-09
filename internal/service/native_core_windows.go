@@ -320,6 +320,9 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 					request := frame.Guard
+					if request.Cleanup && job.ctx.Err() == nil {
+						return domain.ErrInvalidReference
+					}
 					checkCtx := job.ctx
 					if request.Cleanup {
 						checkCtx = context.WithoutCancel(job.ctx)
@@ -347,6 +350,13 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 			case "done":
 				if !ready && frame.Done.Error == nil {
 					return domain.ErrInvalidReference
+				}
+				if frame.Done.Error == nil {
+					switch frame.Done.State {
+					case loop.StateDone, loop.StateBlocked, loop.StateWaitingInput, loop.StateWaitingPlan, loop.StateCanceled, loop.StateAbandoned, loop.StateReviewBlocked:
+					default:
+						return domain.ErrInvalidReference
+					}
 				}
 				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
