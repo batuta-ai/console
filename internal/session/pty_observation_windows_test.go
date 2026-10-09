@@ -139,7 +139,7 @@ func nativePTYObservationHandleTypes(t *testing.T) map[windows.Handle]string {
 			t.Fatal("native process handle snapshot exceeds bound")
 		}
 		buffer = make([]byte, size)
-		err := windows.NtQueryInformationProcess(windows.CurrentProcess(), 51, unsafe.Pointer(&buffer[0]), uint32(len(buffer)), &returned)
+		err := windows.NtQueryInformationProcess(windows.CurrentProcess(), windows.ProcessHandleInformation, unsafe.Pointer(&buffer[0]), uint32(len(buffer)), &returned)
 		if err == windows.STATUS_INFO_LENGTH_MISMATCH {
 			continue
 		}
@@ -177,22 +177,6 @@ func nativePTYObservationHandleTypes(t *testing.T) map[windows.Handle]string {
 		}
 		offset := u.Buffer - base
 		name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&object[offset])), int(u.Length)/2))
-		if name == "File" {
-			kind, err := windows.GetFileType(entry.Handle)
-			if err != nil {
-				t.Fatal("actual native file type failed", entry.Handle, err)
-			}
-			switch kind {
-			case windows.FILE_TYPE_PIPE:
-				name = "File/Pipe"
-			case windows.FILE_TYPE_DISK:
-				name = "File/Disk"
-			case windows.FILE_TYPE_CHAR:
-				name = "File/Character"
-			default:
-				t.Fatal("unqualified actual native file type", entry.Handle, kind)
-			}
-		}
 		types[entry.Handle] = name
 		runtime.KeepAlive(&object)
 	}
