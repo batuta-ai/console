@@ -70,7 +70,7 @@ func TestTask43WindowsNativeExchangeStderrFailureJoins(t *testing.T) {
 	root := task43ObserveLifetimeChild(t, birth.Root)
 	close(sink.release)
 	ended := <-completed
-	if ended.result.ExitCode != -1 || !errors.Is(ended.err, windows.ERROR_BROKEN_PIPE) || errors.Is(ended.err, context.DeadlineExceeded) {
+	if ended.result.ExitCode != -1 || !errors.Is(ended.err, windows.ERROR_NO_DATA) || errors.Is(ended.err, context.DeadlineExceeded) {
 		t.Fatal("stderr kernel failure waited for deadline or lost its actual cause", ended)
 	}
 	select {
