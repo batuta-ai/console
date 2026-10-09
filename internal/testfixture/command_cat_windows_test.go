@@ -70,7 +70,7 @@ func TestNativeCatFixtureActualTerminalAndOwnedStop(t *testing.T) {
 	if pending.Snapshot().Process != "running" || pending.Snapshot().EndedAt != nil {
 		t.Fatal("actual native cat is not live", pending.Snapshot())
 	}
-	if err := runner.Manager.Stop("actual-native-cat"); err != nil {
+	if _, err := runner.Manager.Stop("actual-native-cat"); err != nil {
 		t.Fatal(err)
 	}
 	for {
