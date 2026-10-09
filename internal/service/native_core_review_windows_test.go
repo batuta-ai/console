@@ -145,3 +145,20 @@ func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
 		})
 	}
 }
+
+func TestTask43WindowsNativeCoreReviewDiagnostic(t *testing.T) {
+	svc, a, skills, env, values := task43CoreApprovedFixture(t)
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	task43CoreWriteFile(t, filepath.Join(accounts.ExplicitHome(values["codex"].Environment), "native-fixture-mode"), "valid")
+	state, err, _ := task43CoreParentRun(t, svc, a, skills, env, values, "")
+	t.Logf("Diagnostic only: actual state=%s error=%v", state, err)
+	observation, err := loop.ObserveSupervision(loop.SupervisionOptions{Workspace: a.Identity.Binding.CanonicalRoot, Delivery: batuta.ExecutionDelivery(a)})
+	if err != nil || observation.Review == nil {
+		t.Fatal("diagnostic actual job absent", err)
+	}
+	data, err := os.ReadFile(filepath.Join(observation.Review.Artifacts, "review.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Actual report before owned fixture cleanup:\n%s", data)
+}
