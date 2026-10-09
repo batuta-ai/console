@@ -20,8 +20,10 @@ import (
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/accounts"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/core/executor"
 	"github.com/batuta-ai/core/loop"
+	"github.com/batuta-ai/core/publication"
 	"github.com/batuta-ai/core/review"
 	"golang.org/x/sys/windows"
 )
@@ -732,5 +734,257 @@ func TestTask43WindowsNativeCoreReviewTreeAndProofGuards(t *testing.T) {
 				t.Fatal("actual mutated review gate cleared", gate, err)
 			}
 		})
+	}
+}
+
+type task43CoreReviewEngineInput struct {
+	Args        []string `json:"args"`
+	Publication bool     `json:"publication"`
+}
+
+type task43CoreReviewEngineResult struct {
+	ExitCode                int    `json:"exit_code"`
+	Error                   string `json:"error"`
+	AuthorizedArtifactClean bool   `json:"authorized_artifact_clean"`
+}
+
+// This owned test PE invokes the real production review composition, not Core
+// Run. The unchanged consoled tests separately qualify the full loop lifecycle.
+func task43CoreReviewEnginePE() (bool, error) {
+	if !strings.EqualFold(filepath.Base(os.Args[0]), "review-engine.exe") || len(os.Args) != 2 || os.Args[1] != "--native-core" {
+		return false, nil
+	}
+	err := func() error {
+		stream := &nativeCoreStream{reader: os.Stdin, writer: os.Stdout}
+		hello, err := actualNativeCoreHello()
+		if err != nil {
+			return err
+		}
+		if err := stream.send(nativeCoreFrame{Type: "hello", Hello: &hello}); err != nil {
+			return err
+		}
+		frame, err := stream.receive()
+		if err != nil || frame.Type != "start" || frame.Start.validate() != nil {
+			return errors.Join(domain.ErrInvalidReference, err)
+		}
+		start := *frame.Start
+		shell, err := nativeCoreShellPath()
+		if err != nil {
+			return err
+		}
+		path := filepath.Dir(shell) + string(os.PathListSeparator) + os.Getenv("PATH")
+		for key, value := range map[string]string{"PATH": path, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths", "GIT_CONFIG_VALUE_0": "true"} {
+			if err := os.Setenv(key, value); err != nil {
+				return err
+			}
+		}
+		start.Environment = append(start.Environment, "PATH="+path)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		rpc := newNativeCoreRPC(ctx, cancel, stream)
+		manager := session.New(accounts.ExplicitHome(start.Environment))
+		selected := nativeAccounts{manager: manager, byCLI: map[string]nativeAccount{}}
+		var selectedHome string
+		for cli, a := range start.Accounts {
+			a.Environment = append(a.Environment, "PATH="+path)
+			selected.byCLI[cli] = nativeAccount{executable: a.Executable, env: a.Environment, adapter: a.Adapter, members: a.Members}
+			selectedHome = accounts.ExplicitHome(a.Environment)
+		}
+		var input task43CoreReviewEngineInput
+		data, err := os.ReadFile(filepath.Join(selectedHome, "native-review-engine-input.json"))
+		if err != nil || json.Unmarshal(data, &input) != nil {
+			return errors.Join(domain.ErrInvalidReference, err)
+		}
+		var active atomic.Bool
+		commands := nativeCoreCommands{selected: selected, other: session.NativeRunner{Manager: manager, Environment: start.Environment}, rpc: rpc, active: &active}
+		if err := rpc.call(ctx, "ready", nil); err != nil {
+			return err
+		}
+		active.Store(true)
+		root := start.Receipt.Identity.Binding.CanonicalRoot
+		var record task43CoreReviewEngineResult
+		var runErr error
+		if input.Publication {
+			artifact := filepath.Join(root, ".batuta", "reviews", "owned-publication", "review.md")
+			git := publication.GitClient{Executable: "git", Runner: nativeCoreReviewPublicationRunner{paths: []string{artifact}, runner: commands}}
+			baseline, err := git.WorktreeState(ctx, root)
+			if err != nil {
+				return err
+			}
+			tracked, err := nativeCoreTrackedChangeSignatures(root, baseline.HeadSHA)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(artifact), 0700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(artifact, []byte("owned artifact\n"), 0600); err != nil {
+				return err
+			}
+			runErr = nativeCoreReviewSessionError(ctx, git, root, baseline, tracked, nil)
+			record.AuthorizedArtifactClean = runErr == nil
+			if runErr == nil {
+				filename := filepath.Join(root, ".gitignore")
+				data, err := os.ReadFile(filename)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(filename, append(data, []byte("publication-source-mutation\n")...), 0600); err != nil {
+					return err
+				}
+				runErr = nativeCoreReviewSessionError(ctx, git, root, baseline, tracked, nil)
+			}
+		} else {
+			result, err := (nativeCoreReviewRunner{commands: commands, skills: start.Skills}).Run(ctx, publication.Command{Executable: "console-native-core-review", Directory: root, Args: append([]string{"review"}, input.Args...)})
+			record.ExitCode, runErr = result.ExitCode, err
+		}
+		if runErr != nil {
+			record.Error = runErr.Error()
+		}
+		data, err = json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(selectedHome, "native-review-engine-result.json"), data, 0600); err != nil {
+			return err
+		}
+		cleanup := manager.Shutdown(context.WithoutCancel(ctx))
+		rpc.final.Store(true)
+		if err := stream.send(nativeCoreFrame{Type: "done", Done: &nativeCoreDone{State: loop.StateWaitingInput, Error: nativeCoreEncodeError(runErr), Cleanup: nativeCoreEncodeError(cleanup)}}); err != nil {
+			return err
+		}
+		<-rpc.finished
+		select {
+		case <-rpc.ack:
+			return nil
+		default:
+			return rpc.err
+		}
+	}()
+	return true, err
+}
+
+func task43CoreRunReviewEngine(t *testing.T, svc *Service, a domain.PlanApproval, skills string, env []string, values map[string]nativeBridgeAccount, input task43CoreReviewEngineInput) task43CoreReviewEngineResult {
+	t.Helper()
+	home := accounts.ExplicitHome(values["codex"].Environment)
+	image, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(home, "review-engine.exe")
+	if err := os.WriteFile(helper, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task43CoreWriteFile(t, filepath.Join(home, "native-review-engine-input.json"), string(data))
+	svc.NativeExecutorExecutable = helper
+	job, err := svc.native.admit("m", a.Identity.Binding.CanonicalRoot, batuta.ExecutionDelivery(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.native.finish(job)
+	ctx, cancel := context.WithTimeout(job.ctx, 45*time.Second)
+	defer cancel()
+	job.ctx = ctx
+	svc.runPreparedNativeExecution(job, domain.ExecutionRequest{Target: a.Identity, ApprovalID: a.ID}, a, job.delivery, task43CoreSelected(svc, values), skills)
+	data, err = os.ReadFile(filepath.Join(home, "native-review-engine-result.json"))
+	if err != nil {
+		t.Fatal("actual contained review composition result missing", err)
+	}
+	var result task43CoreReviewEngineResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestTask43WindowsNativeCoreReviewFlagsAndSpecEdges(t *testing.T) {
+	for _, name := range []string{"tracked_only", "worktree_override", "missing_spec_slug", "unavailable_spec_path"} {
+		t.Run(name, func(t *testing.T) {
+			svc, a, skills, env, values := task43CoreApprovedFixture(t)
+			svc.NativeExecutorExecutable = task43CoreImage(t)
+			state, err, _ := task43CoreParentRun(t, svc, a, skills, env, values, "")
+			if err != nil || state != loop.StateWaitingInput {
+				t.Fatal("actual Core opening prerequisite", state, err)
+			}
+			home := accounts.ExplicitHome(values["codex"].Environment)
+			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), "valid")
+			root := a.Identity.Binding.CanonicalRoot
+			out := filepath.Join(root, ".batuta", "reviews", "flag-qualification")
+			args := []string{"--base", "HEAD", "--full", "--out", out}
+			if strings.Contains(name, "spec") {
+				spec := "missing-plan"
+				if name == "unavailable_spec_path" {
+					spec = filepath.Join(root, "unavailable-plan.md")
+				}
+				args = append(args, "--spec", spec)
+			} else {
+				path := filepath.Join(root, ".batuta", "routing.md")
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				task43CoreWriteFile(t, path, strings.Replace(string(data), "| review | codex | qa-native |", "| review | claude | unbound-native |", 1))
+				task43CoreWriteFile(t, filepath.Join(root, "untracked-native.txt"), "actual untracked coverage\n")
+				args = append(args, "--reviewer", "codex/qa-native")
+				if name == "worktree_override" {
+					args = append(args, "--worktree")
+				}
+			}
+			result := task43CoreRunReviewEngine(t, svc, a, skills, env, values, task43CoreReviewEngineInput{Args: args})
+			if strings.Contains(name, "spec") {
+				if result.ExitCode != -1 || !strings.Contains(result.Error, "load spec") {
+					t.Fatal("actual unavailable spec accepted", name, result)
+				}
+				if _, err := os.Stat(filepath.Join(out, "review.md")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("unavailable spec published review", err)
+				}
+				return
+			}
+			if result.ExitCode != 0 || result.Error != "" {
+				t.Fatal("actual explicit bound reviewer/flags failed", name, result)
+			}
+			data, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest review.Manifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, file := range manifest.Files {
+				if file.Path == "untracked-native.txt" {
+					found = file.Untracked && file.Selected
+				}
+			}
+			if found != (name == "worktree_override") {
+				t.Fatal("actual worktree flag did not control untracked manifest coverage", name, manifest)
+			}
+			reviews, err := os.ReadFile(filepath.Join(home, "native-reviews"))
+			if err != nil || !strings.Contains(string(reviews), "review\n") {
+				t.Fatal("explicit override did not use actual bound readonly PE", err)
+			}
+		})
+	}
+}
+
+func TestTask43WindowsNativeCoreReviewPublicationGuard(t *testing.T) {
+	svc, a, skills, env, values := task43CoreApprovedFixture(t)
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	state, err, _ := task43CoreParentRun(t, svc, a, skills, env, values, "")
+	if err != nil || state != loop.StateWaitingInput {
+		t.Fatal("actual Core opening prerequisite", state, err)
+	}
+	result := task43CoreRunReviewEngine(t, svc, a, skills, env, values, task43CoreReviewEngineInput{Publication: true})
+	if !result.AuthorizedArtifactClean || !strings.Contains(result.Error, "source tree changed during review") || !strings.Contains(result.Error, ".gitignore") {
+		t.Fatal("actual publication guard did not exclude only allowed artifact", result)
 	}
 }
