@@ -13,11 +13,12 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestCatalogOnlyStopCannotInventExit(t *testing.T) {
 	svc, _ := persistenceSvc(t)
-	cmd := exec.Command("/bin/cat")
+	cmd := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +32,7 @@ func TestCatalogOnlyStopCannotInventExit(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	original := domain.Session{ID: "former", Process: "unknown", RecoveryReason: "identity_unverified", Owner: "none", PID: cmd.Process.Pid, Argv: []string{"/bin/cat"}, CreatedAt: domain.Now()}
+	original := domain.Session{ID: "former", Process: "unknown", RecoveryReason: "identity_unverified", Owner: "none", PID: cmd.Process.Pid, Argv: testfixture.Argv(t, []string{"/bin/cat"}), CreatedAt: domain.Now()}
 	if err := svc.Store.PutSession(original); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestCatalogOnlyStopCannotInventExit(t *testing.T) {
 
 func TestRecoveryObservedIncarnationAndHistory(t *testing.T) {
 	svc, db := persistenceSvc(t)
-	cmd := exec.Command("/bin/cat")
+	cmd := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +73,7 @@ func TestRecoveryObservedIncarnationAndHistory(t *testing.T) {
 	if err != nil || observed.Identity == "" || observed.Missing {
 		t.Fatalf("native inspection: %+v %v", observed, err)
 	}
-	gone := exec.Command("/bin/cat")
+	gone := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 	endInput, err := gone.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -258,7 +259,7 @@ func TestRecoveryReadFailurePropagates(t *testing.T) {
 func TestStopTerminalIsIdempotent(t *testing.T) {
 	t.Run("owned first stop then repeat", func(t *testing.T) {
 		svc, _ := persistenceSvc(t)
-		owned, err := svc.Session.Start(domain.Session{ID: "owned", Argv: []string{"/bin/cat"}, Owner: "web", OwnerClient: "client", CreatedAt: domain.Now()}, nil, "")
+		owned, err := svc.Session.Start(domain.Session{ID: "owned", Argv: testfixture.Argv(t, []string{"/bin/cat"}), Owner: "web", OwnerClient: "client", CreatedAt: domain.Now()}, nil, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,7 +297,7 @@ func TestStopTerminalIsIdempotent(t *testing.T) {
 	})
 	t.Run("catalog terminal with unrelated live PID", func(t *testing.T) {
 		svc, db := persistenceSvc(t)
-		cmd := exec.Command("/bin/cat")
+		cmd := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 		input, err := cmd.StdinPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -346,7 +347,7 @@ func TestStopTerminalIsIdempotent(t *testing.T) {
 
 func TestRecoveryClassifiesLegacyUnknownOnce(t *testing.T) {
 	svc, db := persistenceSvc(t)
-	cmd := exec.Command("/bin/cat")
+	cmd := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

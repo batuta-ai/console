@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestSetupConcurrentOwnedExitNeverInterrupted(t *testing.T) {
@@ -32,7 +33,7 @@ func TestSetupConcurrentOwnedExitNeverInterrupted(t *testing.T) {
 	for n := range attempts {
 		row, err := svc.Session.Start(domain.Session{
 			ID: fmt.Sprintf("setup-exit-%03d", n), WorkspaceID: w.ID,
-			AccountID: "selected", Work: "init", Argv: []string{"/bin/cat"}, CreatedAt: domain.Now(),
+			AccountID: "selected", Work: "init", Argv: testfixture.Argv(t, []string{"/bin/cat"}), CreatedAt: domain.Now(),
 		}, nil, w.Root)
 		if err != nil {
 			t.Fatal(err)

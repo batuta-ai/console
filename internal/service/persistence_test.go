@@ -119,7 +119,7 @@ func TestCatalogEventFailureRollsBack(t *testing.T) {
 				table = "sessions"
 				// Exercise a genuinely owned stop; catalog-only stops cannot claim exit.
 				svc.Session.OnExit = nil
-				owned, err := svc.Session.Start(domain.Session{ID: "old", Argv: []string{"/bin/cat"}}, nil, "")
+				owned, err := svc.Session.Start(domain.Session{ID: "old", Argv: testfixture.Argv(t, []string{"/bin/cat"})}, nil, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -240,7 +240,7 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			switch mode {
 			case "session":
 				off := false
-				live, err = svc.StartSession(StartSessionIn{MissionID: m.ID, Argv: []string{"/bin/cat"}, Inject: &off})
+				live, err = svc.StartSession(StartSessionIn{MissionID: m.ID, Argv: testfixture.Argv(t, []string{"/bin/cat"}), Inject: &off})
 			case "login":
 				live, err = svc.StartLogin(a.ID, "web", "c")
 			case "init":
@@ -272,7 +272,7 @@ func TestReusePersistenceFailureReturned(t *testing.T) {
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
-			argv := []string{"/bin/cat"}
+			argv := testfixture.Argv(t, []string{"/bin/cat"})
 			if mode == "init" {
 				answers, err := confirmedInitAnswers(confirmedFixtureInput(a.ID).Config, "brief")
 				if err != nil {
@@ -385,7 +385,7 @@ func TestCatalogEventContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect("account.connected", map[string]any{"id": a.ID, "adapter": a.Adapter, "isolate": a.VaultRef})
-	owned, err := svc.Session.Start(domain.Session{ID: "s", Argv: []string{"/bin/cat"}}, nil, "")
+	owned, err := svc.Session.Start(domain.Session{ID: "s", Argv: testfixture.Argv(t, []string{"/bin/cat"})}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
