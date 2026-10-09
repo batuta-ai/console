@@ -340,8 +340,8 @@ func (p *ownedProcess) drainJob() error {
 		var message uint32
 		var key uintptr
 		var overlapped *windows.Overlapped
-		// Notifications wake the waiter; only the kernel's active count proves
-		// drain, since completion notifications are not guaranteed for every exit.
+		// Notifications only wake the waiter. Drain also waits for the observed
+		// process objects, since notifications are not guaranteed for every exit.
 		if err := windows.GetQueuedCompletionStatus(p.port, &message, &key, &overlapped, 100); err != nil && !errors.Is(err, windows.WAIT_TIMEOUT) {
 			return err
 		}
