@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -175,14 +176,14 @@ func inspectInplaceScript(file *os.File) (inplaceScriptObject, error) {
 	handle := windows.Handle(file.Fd())
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
-		return inplaceScriptObject{}, err
+		return inplaceScriptObject{}, fmt.Errorf("in-place file identity: %w", err)
 	}
 	if info.NumberOfLinks != 1 || info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
 		return inplaceScriptObject{}, os.ErrInvalid
 	}
 	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return inplaceScriptObject{}, err
+		return inplaceScriptObject{}, fmt.Errorf("in-place owner/DACL: %w", err)
 	}
 	control, _, err := sd.Control()
 	if err != nil {
