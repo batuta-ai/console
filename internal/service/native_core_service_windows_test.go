@@ -286,9 +286,11 @@ func task43CorePreparedRun(t *testing.T, svc *Service, a domain.PlanApproval, va
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(job.ctx, 45*time.Second)
-	t.Cleanup(cancel)
-	job.ctx = ctx
+	runCtx, cancelRun := context.WithTimeout(job.ctx, 45*time.Second)
+	t.Cleanup(cancelRun)
+	job.ctx = runCtx
+	ctx, cancelWait := context.WithTimeout(context.Background(), 45*time.Second)
+	t.Cleanup(cancelWait)
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
