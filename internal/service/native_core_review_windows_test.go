@@ -808,7 +808,11 @@ func task43CoreReviewEnginePE() (bool, error) {
 		var runErr error
 		if input.Publication {
 			artifact := filepath.Join(root, ".batuta", "reviews", "owned-publication", "review.md")
-			git := publication.GitClient{Executable: "git", Runner: nativeCoreReviewPublicationRunner{paths: []string{artifact}, runner: commands}}
+			gitPath, err := exec.LookPath("git")
+			if err != nil {
+				return err
+			}
+			git := publication.GitClient{Executable: gitPath, Runner: nativeCoreReviewPublicationRunner{paths: []string{artifact}, runner: commands}}
 			baseline, err := git.WorktreeState(ctx, root)
 			if err != nil {
 				return err
