@@ -54,5 +54,5 @@ func TestNativeCredentialObservationDiagnostic(t *testing.T) {
 	mu.Lock()
 	captured := append([]byte(nil), output...)
 	mu.Unlock()
-	t.Logf("DIAGNOSTIC actualLF ACK=%v processExists=%v status=%s recordExists=%v recordBytes=%d readErr=%v output=%q", ack, exists, snapshot.Status, readErr == nil, len(data), readErr, captured)
+	t.Logf("DIAGNOSTIC actualLF ACK=%v processExists=%v process=%s recordExists=%v recordBytes=%d readErr=%v output=%q", ack, exists, snapshot.Process, readErr == nil, len(data), readErr, captured)
 }
