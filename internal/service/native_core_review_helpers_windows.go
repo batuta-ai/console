@@ -94,7 +94,7 @@ func nativeCoreReviewSlug(root, spec string) (string, error) {
 		name = strings.TrimPrefix(name, "plan-")
 		return name, nil
 	}
-	output, err := exec.Command("git", "-C", root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	output, err := nativeCoreReviewGitCommand(root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
 	if err != nil {
 		return "detached-head", nil
 	}
@@ -117,11 +117,11 @@ func nativeCoreReviewSlug(root, spec string) (string, error) {
 }
 
 func nativeCoreReviewBranchIdentity(root string) (string, error) {
-	output, err := exec.Command("git", "-C", root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	output, err := nativeCoreReviewGitCommand(root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
 	if err == nil {
 		return strings.TrimSpace(string(output)), nil
 	}
-	output, err = exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD").Output()
+	output, err = nativeCoreReviewGitCommand(root, "rev-parse", "--verify", "HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("review: determine branch identity: %w", err)
 	}
@@ -162,7 +162,7 @@ func nativeCoreReviewStateKey(branchSlug, branchIdentity, specSlug, resolvedSpec
 
 func nativeCoreDefaultReviewBase(root string) (string, error) {
 	for _, candidate := range []string{"main", "origin/main", "master", "origin/master", "@{upstream}", "HEAD^", "HEAD"} {
-		cmd := exec.Command("git", "-C", root, "merge-base", "HEAD", candidate)
+		cmd := nativeCoreReviewGitCommand(root, "merge-base", "HEAD", candidate)
 		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
 			return strings.TrimSpace(string(output)), nil
 		}
@@ -171,7 +171,7 @@ func nativeCoreDefaultReviewBase(root string) (string, error) {
 }
 
 func nativeCoreTrackedChangeSignatures(root, beforeHead string) (map[string]string, error) {
-	output, err := exec.Command("git", "-C", root, "diff", "--name-only", "-z", beforeHead, "--").Output()
+	output, err := nativeCoreReviewGitCommand(root, "diff", "--name-only", "-z", beforeHead, "--").Output()
 	if err != nil {
 		return nil, fmt.Errorf("review: list tracked changes: %w", err)
 	}
@@ -180,7 +180,7 @@ func nativeCoreTrackedChangeSignatures(root, beforeHead string) (map[string]stri
 		if len(name) == 0 {
 			continue
 		}
-		diff, err := exec.Command("git", "-C", root, "diff", "--binary", "--no-ext-diff", beforeHead, "--", string(name)).Output()
+		diff, err := nativeCoreReviewGitCommand(root, "diff", "--binary", "--no-ext-diff", beforeHead, "--", string(name)).Output()
 		if err != nil {
 			return nil, fmt.Errorf("review: inspect tracked change %q: %w", name, err)
 		}
@@ -207,4 +207,19 @@ func nativeCoreChangedTrackedPaths(root, beforeHead string, baseline map[string]
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func nativeCoreReviewGitCommand(root string, args ...string) *nativeCoreGitOutput {
+	return &nativeCoreGitOutput{command: exec.Command("git", append([]string{"-C", root}, args...)...)}
+}
+
+type nativeCoreGitOutput struct{ command *exec.Cmd }
+
+func (c *nativeCoreGitOutput) Output() ([]byte, error) {
+	output, err := c.command.Output()
+	var failure *exec.ExitError
+	if errors.As(err, &failure) {
+		err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(failure.Stderr)))
+	}
+	return output, err
 }
