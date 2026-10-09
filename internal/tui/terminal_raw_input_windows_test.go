@@ -13,8 +13,11 @@ import (
 func terminalRawInputFixture(t *testing.T) (map[string][]string, func(context.Context, *session.TerminalSubscription, int) []byte) {
 	t.Helper()
 	record := filepath.Join(testfixture.PrivateHome(t), "actual-terminal-input.bin")
+	quoted := "'" + strings.ReplaceAll(record, "'", "'\\''") + "'"
+	script := "stty raw -echo; printf READY; head -c 6 > " + quoted + "; printf RAW-INPUT-CAPTURED; exec /bin/cat"
+	commands := map[string][]string{"z-selected": testfixture.Argv(t, []string{"/bin/sh", "-c", script})}
 	// ConPTY output is a terminal presentation; observe raw input at the child.
-	return nil, func(ctx context.Context, sub *session.TerminalSubscription, _ int) []byte {
+	return commands, func(ctx context.Context, sub *session.TerminalSubscription, _ int) []byte {
 		var output strings.Builder
 		for !strings.Contains(output.String(), "RAW-INPUT-CAPTURED") {
 			event, err := sub.Next(ctx)
