@@ -101,7 +101,7 @@ func (r nativeCoreReviewRunner) Run(ctx context.Context, command publication.Com
 func (r nativeCoreReviewRunner) options(root string, parallel int) review.SessionOptions {
 	readonly := r.commands
 	readonly.readonly = true
-	return review.SessionOptions{Root: root, Skills: r.skills, Parallel: parallel, Subprocess: &executor.Subprocess{Runner: readonly, Lookup: func(cli string) (string, error) {
+	return review.SessionOptions{Root: root, Skills: r.skills, Parallel: parallel, Subprocess: &executor.Subprocess{Runner: readonly, Environment: []string{"GIT_CONFIG_COUNT=0"}, Lookup: func(cli string) (string, error) {
 		a, ok := readonly.selected.byCLI[cli]
 		if !ok {
 			return "", domain.ErrInvalidReference
