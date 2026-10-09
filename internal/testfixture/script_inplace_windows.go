@@ -119,7 +119,7 @@ func UpdateScriptInPlace(t testing.TB, path string, body []byte, _ os.FileMode) 
 			return checkErr
 		}
 		if actual != objects[i] {
-			return os.ErrPermission
+			return fmt.Errorf("in-place pre-write attributes %#x -> %#x: %w", objects[i].attributes, actual.attributes, os.ErrPermission)
 		}
 	}
 	// Both existing writable objects are acquired and checked before either changes.
@@ -148,7 +148,7 @@ func UpdateScriptInPlace(t testing.TB, path string, body []byte, _ os.FileMode) 
 		actual.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
 		expectedObject.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
 		if actual != expectedObject {
-			return os.ErrPermission
+			return fmt.Errorf("in-place post-write attributes %#x -> %#x: %w", expectedObject.attributes, actual.attributes, os.ErrPermission)
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
