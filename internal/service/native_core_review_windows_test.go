@@ -697,7 +697,7 @@ func TestTask43WindowsNativeCoreReviewTreeAndProofGuards(t *testing.T) {
 			expected := "source tree changed during review"
 			if mode == "proof_tree" {
 				fixtureMode = "valid"
-				expected = "proof of 1 changed the source tree"
+				expected = "proof of task-1.1 changed the source tree: out.txt"
 			}
 			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), fixtureMode)
 			svc.NativeExecutorExecutable = image
