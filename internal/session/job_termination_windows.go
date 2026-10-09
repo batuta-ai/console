@@ -25,7 +25,7 @@ func (p *ownedProcess) observeTermination() error {
 		return fmt.Errorf("observe owned Windows job members: %w", err)
 	}
 	if members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
-		return errors.New("owned Windows job member observation exceeds its bound")
+		return fmt.Errorf("owned Windows job member observation incomplete: assigned=%d count=%d bound=%d", members.Assigned, members.Count, len(members.IDs))
 	}
 	for _, id := range members.IDs[:members.Count] {
 		// These handles can only observe termination. The original private Job
