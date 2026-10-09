@@ -21,11 +21,20 @@ func (p *ownedProcess) observeTermination() error {
 		Count    uint32
 		IDs      [1024]uintptr
 	}
-	if err := queryWindowsJob(p.job, windows.JobObjectBasicProcessIdList, unsafe.Pointer(&members), uint32(unsafe.Sizeof(members))); err != nil {
-		return fmt.Errorf("observe owned Windows job members: %w", err)
-	}
-	if members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
-		return fmt.Errorf("owned Windows job member observation incomplete: assigned=%d count=%d bound=%d", members.Assigned, members.Count, len(members.IDs))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := queryWindowsJob(p.job, windows.JobObjectBasicProcessIdList, unsafe.Pointer(&members), uint32(unsafe.Sizeof(members))); err != nil {
+			return fmt.Errorf("observe owned Windows job members: %w", err)
+		}
+		if members.Assigned > uint32(len(members.IDs)) || members.Count > uint32(len(members.IDs)) {
+			return fmt.Errorf("owned Windows job member observation exceeds its bound: assigned=%d count=%d bound=%d", members.Assigned, members.Count, len(members.IDs))
+		}
+		if members.Count == members.Assigned {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("owned Windows job member observation incomplete: assigned=%d count=%d: %w", members.Assigned, members.Count, context.DeadlineExceeded)
+		}
 	}
 	for _, id := range members.IDs[:members.Count] {
 		// These handles can only observe termination. The original private Job
