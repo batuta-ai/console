@@ -265,6 +265,9 @@ func main() {
   }
   receive()
   if os.WriteFile(filepath.Join(filepath.Dir(record),"native-accepted-frame"),[]byte(mode),0600)!=nil {os.Exit(85)}
+  if mode=="early_cleanup" {
+   send(map[string]any{"type":"done","done":map[string]any{"state":"","error":map[string]any{"message":"owned fixture observed premature cleanup response","invalid":true}}});receive()
+  }
  case "cleanup":
   e,err:=windows.CreateEvent(nil,1,0,nil);if err!=nil {os.Exit(81)};defer windows.CloseHandle(e)
   var limited windows.Handle
