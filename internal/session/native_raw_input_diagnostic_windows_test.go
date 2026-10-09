@@ -166,3 +166,70 @@ func TestNativeRawShellInputDiagnostic(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRawCatOutputDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	record := filepath.Join(root, "actual-cat-input.bin")
+	quoted := "'" + strings.ReplaceAll(record, "'", "'\\''") + "'"
+	script := "stty raw -echo; printf RAW-CAT-READY; /bin/cat | tee " + quoted
+	manager := New(root)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	pending, err := manager.StartPending(domain.Session{ID: "raw-cat", Owner: "tui", OwnerClient: "raw-cat-client", Argv: testfixture.Argv(t, []string{"/bin/sh", "-c", script})}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pending.Persist(func(domain.Session) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := manager.SubscribeTerminal("raw-cat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var output strings.Builder
+	task43ConsoleReadUntil(t, ctx, sub, &output, "RAW-CAT-READY")
+	want := []byte{'q', 27, 3, 26, 28, 4}
+	for _, b := range want {
+		if err := manager.Input("raw-cat", "raw-cat-client", []byte{b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		got, readErr := os.ReadFile(record)
+		if readErr == nil && len(got) >= len(want) {
+			if !bytes.Equal(got, want) {
+				t.Fatalf("actual cat/tee input=%x want=%x", got, want)
+			}
+			state, ok := manager.Snapshot("raw-cat")
+			if !ok || state.Process != "running" {
+				t.Fatalf("actual cat exited after raw controls: %+v", state)
+			}
+			t.Logf("actual cat/tee independent file=%x; pre-input console trace=%q", got, output.String())
+			observationCtx, observationCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer observationCancel()
+			for {
+				event, err := sub.Next(observationCtx)
+				if err != nil {
+					t.Logf("post-input terminal presentation=%x; observation end=%v", []byte(output.String()), err)
+					return
+				}
+				output.Write(event.Data)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("actual cat bytes=%x err=%v", got, readErr)
+		case <-ticker.C:
+		}
+	}
+}
