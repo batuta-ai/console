@@ -11,9 +11,48 @@ import (
 )
 
 // ProcessHandleInformation's layout is qualified on the native Windows host.
-// Test-only observation never closes or duplicates the borrowed process handles.
-func nativePTYObservationHandleTypes(t *testing.T) map[windows.Handle]string {
+// An owned, held NUL file identifies File's kernel type index without querying
+// borrowed handles that the runtime may close after the atomic snapshot.
+func nativePTYObservationFiles(t *testing.T) map[windows.Handle]bool {
 	t.Helper()
+	name, err := windows.UTF16PtrFromString(`\\.\NUL`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal("actual native type marker failed", err)
+	}
+	defer func() {
+		if err := windows.CloseHandle(marker); err != nil {
+			t.Error("actual native type marker close failed", err)
+		}
+	}()
+	query := windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryObject")
+	if err := query.Find(); err != nil {
+		t.Fatal(err)
+	}
+	var object [4096]byte
+	var length uint32
+	status, _, _ := query.Call(uintptr(marker), 2, uintptr(unsafe.Pointer(&object[0])), uintptr(len(object)), uintptr(unsafe.Pointer(&length)))
+	if uint32(status) != 0 {
+		t.Fatal("actual owned native object type query failed", windows.NTStatus(status))
+	}
+	type unicodeHeader struct {
+		Length, MaximumLength uint16
+		Padding               uint32
+		Buffer                uintptr
+	}
+	u := (*unicodeHeader)(unsafe.Pointer(&object[0]))
+	base := uintptr(unsafe.Pointer(&object[0]))
+	if length < 16 || length > uint32(len(object)) || u.Length == 0 || u.Length%2 != 0 || u.Length > u.MaximumLength || u.Buffer < base || u.Buffer-base > uintptr(length) || uintptr(u.Length) > uintptr(length)-(u.Buffer-base) {
+		t.Fatal("actual owned native object type malformed")
+	}
+	offset := u.Buffer - base
+	if got := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&object[offset])), int(u.Length)/2)); got != "File" {
+		t.Fatal("actual native marker is not a File", got)
+	}
+	runtime.KeepAlive(&object)
 	type handleEntry struct {
 		Handle                                               windows.Handle
 		HandleCount, PointerCount                            uintptr
@@ -44,45 +83,22 @@ func nativePTYObservationHandleTypes(t *testing.T) map[windows.Handle]string {
 		t.Fatal("actual native handle snapshot malformed", returned, count)
 	}
 	entries := unsafe.Slice((*handleEntry)(unsafe.Pointer(&buffer[16])), int(count))
-	query := windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryObject")
-	if err := query.Find(); err != nil {
-		t.Fatal(err)
-	}
-	type unicodeHeader struct {
-		Length, MaximumLength uint16
-		Padding               uint32
-		Buffer                uintptr
-	}
-	types := make(map[windows.Handle]string, len(entries))
+	var fileType uint32
 	for _, entry := range entries {
-		var object [4096]byte
-		var length uint32
-		status, _, _ := query.Call(uintptr(entry.Handle), 2, uintptr(unsafe.Pointer(&object[0])), uintptr(len(object)), uintptr(unsafe.Pointer(&length)))
-		if uint32(status) != 0 {
-			t.Fatal("actual native object type query failed", entry.Handle, windows.NTStatus(status))
+		if entry.Handle == marker {
+			fileType = entry.ObjectTypeIndex
 		}
-		u := (*unicodeHeader)(unsafe.Pointer(&object[0]))
-		base := uintptr(unsafe.Pointer(&object[0]))
-		if length < 16 || length > uint32(len(object)) || u.Length == 0 || u.Length%2 != 0 || u.Length > u.MaximumLength || u.Buffer < base || u.Buffer-base > uintptr(length) || uintptr(u.Length) > uintptr(length)-(u.Buffer-base) {
-			t.Fatal("actual native object type malformed", entry.Handle)
+	}
+	if fileType == 0 {
+		t.Fatal("held native File marker absent from actual snapshot")
+	}
+	files := make(map[windows.Handle]bool)
+	for _, entry := range entries {
+		if entry.ObjectTypeIndex == fileType && entry.Handle != marker {
+			files[entry.Handle] = true
 		}
-		offset := u.Buffer - base
-		name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&object[offset])), int(u.Length)/2))
-		types[entry.Handle] = name
-		runtime.KeepAlive(&object)
 	}
 	runtime.KeepAlive(buffer)
-	return types
-}
-
-func nativePTYObservationFiles(t *testing.T) map[windows.Handle]bool {
-	t.Helper()
-	files := make(map[windows.Handle]bool)
-	for handle, name := range nativePTYObservationHandleTypes(t) {
-		if name == "File" {
-			files[handle] = true
-		}
-	}
 	return files
 }
 

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func TestWindowsPTYObservationKeepsLegacyStartBlocked(t *testing.T) {
+func TestWindowsPTYUnsupported(t *testing.T) {
 	got := ObservePTY(context.Background())
-	if !got.Supported || !got.Available || got.Code != "pty_available" || got.Qualification.Status != "pending" || got.Qualification.Code != "native_operation_qualification_pending" {
+	if got.Supported || got.Available || got.Code != "platform_unsupported" || got.Qualification.Status != "unsupported" {
 		t.Fatalf("%+v", got)
 	}
 	if f, err := startPTY(exec.Command("cmd"), 80, 24); err == nil || f != nil {
