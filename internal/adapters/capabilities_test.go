@@ -6,15 +6,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestCapabilityInstallationIsNotReadiness(t *testing.T) {
-	dir := t.TempDir()
+	dir := testfixture.PrivateHome(t)
 	for _, fixture := range []struct {
 		name string
 		mode os.FileMode
 	}{{"codex", 0700}, {"claude", 0600}, {"opencode", 0700}} {
-		if err := os.WriteFile(filepath.Join(dir, fixture.name), []byte("#!/bin/sh\nexit 99\n"), fixture.mode); err != nil {
+		body := []byte("#!/bin/sh\nexit 99\n")
+		var err error
+		if fixture.mode&0111 == 0 {
+			err = os.WriteFile(filepath.Join(dir, fixture.name), body, fixture.mode)
+		} else {
+			err = testfixture.WriteScript(t, filepath.Join(dir, testfixture.ExecutableName(fixture.name)), body, fixture.mode)
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
