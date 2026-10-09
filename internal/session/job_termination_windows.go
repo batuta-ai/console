@@ -53,7 +53,7 @@ func (p *ownedProcess) observeTermination() error {
 		return err
 	}
 	if after.TotalProcesses != p.terminationTotal {
-		return errors.New("owned Windows job gained processes during termination observation")
+		return fmt.Errorf("owned Windows job process accounting changed during termination observation: %d -> %d", p.terminationTotal, after.TotalProcesses)
 	}
 	return nil
 }
@@ -61,7 +61,7 @@ func (p *ownedProcess) observeTermination() error {
 func (p *ownedProcess) waitTermination(total uint32, deadline time.Time) error {
 	var waitErr error
 	if total != p.terminationTotal {
-		waitErr = errors.New("owned Windows job gained unobserved processes before termination")
+		waitErr = fmt.Errorf("owned Windows job gained unobserved processes before termination: %d -> %d", p.terminationTotal, total)
 	}
 	for _, handle := range p.terminationWaiters {
 		remaining := time.Until(deadline)
