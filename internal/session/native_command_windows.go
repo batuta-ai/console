@@ -124,6 +124,10 @@ func (m *Manager) runNativeCommand(ctx context.Context, command publication.Comm
 	}()
 	stop := func() error {
 		err := owned.stop()
+		if err != nil {
+			err = errors.Join(ErrNativeCleanupUnresolved, err)
+			m.CloseAdmission()
+		}
 		m.recordCleanup(err, err)
 		return err
 	}
