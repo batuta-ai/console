@@ -418,3 +418,54 @@ func TestNativeScriptInPlacePreservesEveryUnsafeObject(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeScriptInPlaceAllowsArchiveChangeFromWrite(t *testing.T) {
+	for _, suffix := range []string{"", ".shell-script", ".shell-config.json"} {
+		t.Run("target"+suffix, func(t *testing.T) {
+			root := testfixture.PrivateHome(t)
+			path := filepath.Join(root, "archive.exe")
+			if err := testfixture.WriteScript(t, path, []byte("#!/bin/sh\nprintf 'original'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			name, err := windows.UTF16PtrFromString(path + suffix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attributes, err := windows.GetFileAttributes(name)
+			if err != nil || attributes&windows.FILE_ATTRIBUTE_ARCHIVE == 0 {
+				t.Fatal("actual generated file Archive prerequisite", attributes, err)
+			}
+			if err := windows.SetFileAttributes(name, attributes&^windows.FILE_ATTRIBUTE_ARCHIVE); err != nil {
+				t.Fatal(err)
+			}
+			attributes, err = windows.GetFileAttributes(name)
+			if err != nil || attributes&windows.FILE_ATTRIBUTE_ARCHIVE != 0 {
+				t.Fatal("Archive not physically cleared", attributes, err)
+			}
+			paths := []string{root, path, path + ".shell-script", path + ".shell-config.json"}
+			before := scriptUpdateInspect(t, paths)
+			body := []byte("#!/bin/sh\nprintf 'updated'\n")
+			if err := testfixture.UpdateScriptInPlace(t, path, body, 0700); err != nil {
+				t.Fatal("successful write may legitimately set Archive", err)
+			}
+			after := scriptUpdateInspect(t, paths)
+			for _, target := range paths {
+				a, b := before[target], after[target]
+				if target == path && a.Data != b.Data {
+					t.Fatal("immutable PE changed")
+				}
+				a.Data, b.Data = "", ""
+				if a != b {
+					t.Fatal("Archive handling changed identity/type/owner/DACL", target)
+				}
+			}
+			runner, _ := scriptNativeRunner(t, root)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			result, err := runner.Run(ctx, publication.Command{Executable: path, Directory: root})
+			if err != nil || result.ExitCode != 0 || string(result.Stdout) != "updated" || len(result.Stderr) != 0 || result.StdoutTruncated || result.StderrTruncated {
+				t.Fatal("updated Archive-cleared triple actual execution", result, err)
+			}
+		})
+	}
+}
