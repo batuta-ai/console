@@ -65,6 +65,27 @@ func task43CoreImage(t *testing.T) string {
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("actual consoled build: %v %s", err, out)
 	}
+	for _, flag := range strings.Fields(os.Getenv("GOFLAGS")) {
+		if flag != "-race" {
+			continue
+		}
+		metadata := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "version", "-m", image)
+		out, err := metadata.CombinedOutput()
+		if err != nil {
+			t.Fatalf("actual consoled build metadata: %v %s", err, out)
+		}
+		instrumented := false
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "build" && fields[1] == "-race=true" {
+				instrumented = true
+			}
+		}
+		if !instrumented {
+			t.Fatal("contained consoled image lacks requested race instrumentation", string(out))
+		}
+		t.Log("Actual contained consoled image build metadata: -race=true")
+	}
 	return image
 }
 
