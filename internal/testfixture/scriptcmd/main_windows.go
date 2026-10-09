@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 type descriptor struct {
@@ -64,12 +65,40 @@ func run() error {
 			return err
 		}
 	}
-	bootstrap := `fixture_script=$1; shift; . "$fixture_script"`
-	args := append([]string{"--noprofile", "--norc", "-p", "-c", bootstrap, metadata.Executable, metadata.Script}, os.Args[1:]...)
+	bootstrap := `fixture_script=$1; fixture_home=$2; shift 2; HOME=$fixture_home; export HOME; . "$fixture_script"`
+	args := append([]string{"--noprofile", "--norc", "-p", "-c", bootstrap, metadata.Executable, metadata.Script, os.Getenv("HOME")}, os.Args[1:]...)
 	command := exec.Command(metadata.Shell, args...)
-	command.Env = os.Environ()
+	// MSYS recognizes apostrophe quoting in its initial command line as well.
+	quoted := make([]string, 0, len(args)+1)
+	for _, arg := range append([]string{metadata.Shell}, args...) {
+		quoted = append(quoted, quoteMSYSArgument(arg))
+	}
+	command.SysProcAttr = &syscall.SysProcAttr{CmdLine: strings.Join(quoted, " ")}
+	command.Env = append(os.Environ(), "MSYS2_ARG_CONV_EXCL=*")
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return command.Run()
+}
+
+func quoteMSYSArgument(arg string) string {
+	var quoted strings.Builder
+	quoted.WriteByte('"')
+	slashes := 0
+	for _, character := range arg {
+		if character == '\\' {
+			slashes++
+			continue
+		}
+		if character == '"' {
+			quoted.WriteString(strings.Repeat("\\", 2*slashes+1))
+		} else {
+			quoted.WriteString(strings.Repeat("\\", slashes))
+		}
+		quoted.WriteRune(character)
+		slashes = 0
+	}
+	quoted.WriteString(strings.Repeat("\\", 2*slashes))
+	quoted.WriteByte('"')
+	return quoted.String()
 }
 
 func main() {
