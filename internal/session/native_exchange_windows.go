@@ -12,6 +12,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/accounts"
 	"github.com/batuta-ai/core/publication"
+	"golang.org/x/sys/windows"
 )
 
 type nativeExchangeFile struct {
@@ -29,12 +30,22 @@ type nativeExchangePipes struct {
 	inputRead, inputWrite, outputRead, outputWrite *nativeExchangeFile
 }
 
+func newNativeExchangePipe() (*os.File, *os.File, error) {
+	var read, write windows.Handle
+	// nil security attributes prevent inheritance at creation; os.Pipe marks
+	// both handles inheritable before Go's restricted child duplication.
+	if err := windows.CreatePipe(&read, &write, nil, 0); err != nil {
+		return nil, nil, err
+	}
+	return os.NewFile(uintptr(read), "|0"), os.NewFile(uintptr(write), "|1"), nil
+}
+
 func newNativeExchangePipes() (nativeExchangePipes, error) {
-	inputRead, inputWrite, err := os.Pipe()
+	inputRead, inputWrite, err := newNativeExchangePipe()
 	if err != nil {
 		return nativeExchangePipes{}, err
 	}
-	outputRead, outputWrite, err := os.Pipe()
+	outputRead, outputWrite, err := newNativeExchangePipe()
 	if err != nil {
 		return nativeExchangePipes{}, errors.Join(err, inputRead.Close(), inputWrite.Close())
 	}
