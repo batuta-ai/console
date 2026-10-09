@@ -122,6 +122,9 @@ func (r nativeCoreCommands) Run(ctx context.Context, command publication.Command
 		if base == "codex" || base == "codex.exe" || base == "codex.cmd" || base == "claude" || base == "claude.exe" || base == "claude.cmd" {
 			return failed, domain.ErrInvalidReference
 		}
+		if base == "git" || base == "git.exe" {
+			command.Args = append([]string{"-c", "core.longpaths=true"}, command.Args...)
+		}
 	}
 	if r.active.Load() {
 		request := &nativeCoreGuard{Cleanup: r.rpc.master.Err() != nil && ctx.Err() == nil, Executable: command.Executable, Directory: command.Directory, Args: command.Args, Readonly: r.readonly}
@@ -161,6 +164,14 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 	path := filepath.Dir(shell) + string(os.PathListSeparator) + os.Getenv("PATH")
 	if err := os.Setenv("PATH", path); err != nil {
 		return err
+	}
+	// Public Core review also invokes Git directly. Scope long-path support to
+	// this contained image; injected commands still close inherited Git config
+	// and receive the same setting as an explicit native Git argument.
+	for key, value := range map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths", "GIT_CONFIG_VALUE_0": "true"} {
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
 	}
 	start.Environment = append(start.Environment, "PATH="+path)
 	for cli, a := range start.Accounts {
