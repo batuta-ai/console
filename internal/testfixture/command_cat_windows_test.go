@@ -9,12 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/terminalengine"
 	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/core/publication"
 )
@@ -59,10 +59,20 @@ func TestNativeCatFixtureActualTerminalAndOwnedStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output strings.Builder
-	ack := regexp.MustCompile(`1[ \t]+CAT-ACTUAL-PROGRAM-OUTPUT`)
-	for !ack.MatchString(output.String()) {
+	screen := terminalengine.NewScreen(24, 80)
+	parser := terminalengine.NewParser(screen)
+	acknowledged := func() bool {
+		for row := range screen.Rows() {
+			if strings.TrimSpace(screen.LineText(row)) == "1  CAT-ACTUAL-PROGRAM-OUTPUT" {
+				return true
+			}
+		}
+		return false
+	}
+	for !acknowledged() {
 		event, err := sub.Next(ctx)
 		output.Write(event.Data)
+		parser.Feed(event.Data)
 		if err != nil {
 			t.Fatal("actual cat numbered output missing", output.String(), err)
 		}
