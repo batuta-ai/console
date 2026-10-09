@@ -209,3 +209,30 @@ func TestNativePTYObservationDiagnosticObjectTypesWithoutConsole(t *testing.T) {
 	t.Logf("CONTROL noConPTY actual object types before=%d after=%d added=%v removed=%v", len(before), len(after), added, removed)
 	runtime.KeepAlive(allocations)
 }
+
+func TestNativePTYObservationDiagnosticObjectTypesWithConsole(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if got := ObservePTY(ctx); !got.Available {
+		t.Fatal(got)
+	}
+	before := nativePTYObservationHandleTypes(t)
+	for range 620 {
+		if got := ObservePTY(ctx); !got.Available {
+			t.Fatal(got)
+		}
+	}
+	after := nativePTYObservationHandleTypes(t)
+	added, removed := make(map[string]int), make(map[string]int)
+	for handle, name := range after {
+		if before[handle] != name {
+			added[name]++
+		}
+	}
+	for handle, name := range before {
+		if after[handle] != name {
+			removed[name]++
+		}
+	}
+	t.Logf("DIAGNOSTIC ConPTY 620 actual object types before=%d after=%d added=%v removed=%v", len(before), len(after), added, removed)
+}
