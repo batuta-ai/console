@@ -144,3 +144,88 @@ func TestNativeCredentialPreparationRefusesMissingParent(t *testing.T) {
 		t.Fatal("refused credential target was created", err)
 	}
 }
+
+func TestNativeCredentialPreparationPreservesRefusedOwnerAndLinks(t *testing.T) {
+	for _, kind := range []string{"default-owner", "symlink", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			home := testfixture.PrivateHome(t)
+			target := filepath.Join(home, "synthetic-target")
+			if kind == "default-owner" {
+				if err := os.WriteFile(target, []byte("synthetic-only-unchanged"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				f, err := consolert.CreatePrivateFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, writeErr := f.Write([]byte("synthetic-only-unchanged"))
+				if err := errors.Join(writeErr, f.Close()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := target
+			if kind != "default-owner" {
+				path = filepath.Join(home, "alias")
+				var err error
+				if kind == "symlink" {
+					err = os.Symlink(target, path)
+				} else {
+					err = os.Link(target, path)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := windows.GetNamedSecurityInfo(target, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "default-owner" {
+				owner, _, err := before.Owner()
+				if err != nil || owner == nil || owner.String() != "S-1-5-32-544" {
+					t.Fatal("native QA default-owner fixture is not actual BA-owned", err)
+				}
+			}
+			inspect := func() windows.ByHandleFileInformation {
+				f, err := os.Open(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var info windows.ByHandleFileInformation
+				infoErr := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info)
+				if err := errors.Join(infoErr, f.Close()); err != nil {
+					t.Fatal(err)
+				}
+				return info
+			}
+			original := inspect()
+			wantLinks := uint32(1)
+			if kind == "hardlink" {
+				wantLinks = 2
+			}
+			if original.NumberOfLinks != wantLinks {
+				t.Fatal("actual native refusal fixture link count differs", original)
+			}
+			if err := testfixture.PreparePrivateFile(path); err == nil {
+				t.Fatal("unsafe existing owner/alias accepted", kind)
+			}
+			after := inspect()
+			if after.NumberOfLinks != original.NumberOfLinks || after.VolumeSerialNumber != original.VolumeSerialNumber || after.FileIndexHigh != original.FileIndexHigh || after.FileIndexLow != original.FileIndexLow {
+				t.Fatal("refusal changed original native object/link count", original, after)
+			}
+			alias, err := os.Lstat(path)
+			if err != nil || (alias.Mode()&os.ModeSymlink != 0) != (kind == "symlink") {
+				t.Fatal("refusal removed or changed original alias type", err)
+			}
+			data, err := os.ReadFile(target)
+			if err != nil || string(data) != "synthetic-only-unchanged" {
+				t.Fatal("refusal changed original target bytes", err)
+			}
+			security, err := windows.GetNamedSecurityInfo(target, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+			if err != nil || security.String() != before.String() {
+				t.Fatal("refusal repaired original target descriptor", err)
+			}
+		})
+	}
+}
