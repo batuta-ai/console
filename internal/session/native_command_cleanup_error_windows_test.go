@@ -91,7 +91,8 @@ func TestTask43WindowsNativeCommandObserverFailureKeepsCleanupCause(t *testing.T
 	owned.mu.Lock()
 	original := owned.job
 	var restricted windows.Handle
-	err = windows.DuplicateHandle(windows.CurrentProcess(), original, windows.CurrentProcess(), &restricted, windows.JOB_OBJECT_TERMINATE, false, 0)
+	const jobTerminateOnly = 0x0008
+	err = windows.DuplicateHandle(windows.CurrentProcess(), original, windows.CurrentProcess(), &restricted, jobTerminateOnly, false, 0)
 	if err == nil {
 		owned.job = restricted
 	}
