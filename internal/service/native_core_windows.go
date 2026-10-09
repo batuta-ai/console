@@ -50,7 +50,7 @@ func (h nativeCoreHello) qualified() bool {
 }
 
 func (s nativeCoreStart) validate() error {
-	if s.Receipt.ID == "" || s.Receipt.Identity.Validate() != nil || len(s.Receipt.Content) == 0 || len(s.Receipt.Content) > domain.MaxPlanBytes || domain.PlanVersion(s.Receipt.Content) != s.Receipt.Identity.Version || !filepath.IsAbs(s.Skills) || !filepath.IsAbs(accounts.ExplicitHome(s.Environment)) || s.Delivery == "" || s.Resume != "" && s.Resume != s.Delivery || len(s.Accounts) == 0 || len(s.Accounts) > 2 {
+	if s.Receipt.ID == "" || s.Receipt.Identity.Validate() != nil || !filepath.IsAbs(s.Receipt.Identity.Binding.CanonicalRoot) || !filepath.IsAbs(s.Receipt.Identity.Binding.WorkspaceRoot) || len(s.Receipt.Content) == 0 || len(s.Receipt.Content) > domain.MaxPlanBytes || domain.PlanVersion(s.Receipt.Content) != s.Receipt.Identity.Version || !filepath.IsAbs(s.Skills) || !filepath.IsAbs(accounts.ExplicitHome(s.Environment)) || s.Delivery == "" || s.Resume != "" && s.Resume != s.Delivery || len(s.Accounts) == 0 || len(s.Accounts) > 2 {
 		return domain.ErrInvalidReference
 	}
 	if s.Delivery != domain.ExecutionDelivery(s.Receipt.ID, s.Receipt.Identity) {
@@ -67,6 +67,24 @@ func (s nativeCoreStart) validate() error {
 		}
 	}
 	return nil
+}
+
+func nativeCoreShellPath() (string, error) {
+	if shell, err := exec.LookPath("sh"); err == nil && filepath.IsAbs(shell) {
+		return shell, nil
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return "", err
+	}
+	// Git for Windows installs the actual MSYS shell beside its native cmd
+	// directory. Resolve that executable; neither cmd.exe nor a script is a
+	// substitute for the Core profile's POSIX gate language.
+	shell, err := exec.LookPath(filepath.Join(filepath.Dir(filepath.Dir(git)), "usr", "bin", "sh.exe"))
+	if err != nil {
+		return "", errors.Join(domain.ErrExecutionUnavailable, err)
+	}
+	return shell, nil
 }
 
 type nativeCoreCommands struct {
@@ -136,6 +154,19 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 		return domain.ErrInvalidReference
 	}
 	start := *frame.Start
+	shell, err := nativeCoreShellPath()
+	if err != nil {
+		return err
+	}
+	path := filepath.Dir(shell) + string(os.PathListSeparator) + os.Getenv("PATH")
+	if err := os.Setenv("PATH", path); err != nil {
+		return err
+	}
+	start.Environment = append(start.Environment, "PATH="+path)
+	for cli, a := range start.Accounts {
+		a.Environment = append(a.Environment, "PATH="+path)
+		start.Accounts[cli] = a
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	rpc := newNativeCoreRPC(ctx, cancel, stream)
