@@ -286,3 +286,154 @@ func TestNativeOwnedScriptUpdateRefusesUnsafeTriples(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeOwnedScriptUpdateRefusesNoncanonicalDescriptor(t *testing.T) {
+	for _, operation := range []string{"rewrite", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			for _, kind := range []string{"case-key", "duplicate-key", "whitespace"} {
+				t.Run(kind, func(t *testing.T) {
+					root := testfixture.PrivateHome(t)
+					path := filepath.Join(root, "noncanonical.exe")
+					if err := testfixture.WriteScript(t, path, []byte("#!/bin/sh\nprintf 'original'\n"), 0700); err != nil {
+						t.Fatal(err)
+					}
+					config := path + ".shell-config.json"
+					data, err := os.ReadFile(config)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch kind {
+					case "case-key":
+						data = bytes.Replace(data, []byte(`"executable":`), []byte(`"Executable":`), 1)
+					case "duplicate-key":
+						data = append([]byte(`{"executable":"different-earlier-value",`), data[1:]...)
+					default:
+						data = append([]byte(" \n"), data...)
+					}
+					if err := os.WriteFile(config, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					paths := []string{root, path, path + ".shell-script", config}
+					before := scriptUpdateInspect(t, paths)
+					if operation == "rewrite" {
+						err = testfixture.RewriteScript(t, path, []byte("#!/bin/sh\nprintf 'changed'\n"), 0700)
+					} else {
+						err = testfixture.RemoveScript(t, path)
+					}
+					if err == nil {
+						t.Fatal("noncanonical generated descriptor accepted", kind)
+					}
+					if after := scriptUpdateInspect(t, paths); !reflect.DeepEqual(before, after) {
+						t.Fatal("noncanonical refusal changed original objects", kind)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestNativeOwnedScriptUpdatePreservesEveryUnsafeObject(t *testing.T) {
+	for _, operation := range []string{"rewrite", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			for _, suffix := range []string{"", ".shell-script", ".shell-config.json"} {
+				t.Run("target"+suffix, func(t *testing.T) {
+					for _, kind := range []string{"default-owner", "broad-dacl", "symlink", "hardlink", "directory"} {
+						t.Run(kind, func(t *testing.T) {
+							root := testfixture.PrivateHome(t)
+							path := filepath.Join(root, "actual-unsafe.exe")
+							if err := testfixture.WriteScript(t, path, []byte("#!/bin/sh\nprintf 'original'\n"), 0700); err != nil {
+								t.Fatal(err)
+							}
+							target := path + suffix
+							paths := []string{root, path, path + ".shell-script", path + ".shell-config.json"}
+							if kind == "broad-dacl" {
+								user, err := windows.GetCurrentProcessToken().GetTokenUser()
+								if err != nil {
+									t.Fatal(err)
+								}
+								sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + user.User.Sid.String() + ")(A;;FA;;;WD)")
+								if err != nil {
+									t.Fatal(err)
+								}
+								acl, _, err := sd.DACL()
+								if err != nil {
+									t.Fatal(err)
+								}
+								if err := windows.SetNamedSecurityInfo(target, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
+									t.Fatal(err)
+								}
+								actual, err := windows.GetNamedSecurityInfo(target, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+								if err != nil {
+									t.Fatal(err)
+								}
+								actualACL, _, err := actual.DACL()
+								if err != nil || actualACL == nil || actualACL.AceCount != 2 {
+									t.Fatal("actual native broad-DACL constructor invalid", err)
+								}
+							} else {
+								data, err := os.ReadFile(target)
+								if err != nil {
+									t.Fatal(err)
+								}
+								if err := os.Remove(target); err != nil {
+									t.Fatal(err)
+								}
+								switch kind {
+								case "default-owner":
+									err = os.WriteFile(target, data, 0600)
+								case "directory":
+									err = os.Mkdir(target, 0700)
+								default:
+									original := filepath.Join(testfixture.PrivateHome(t), "original-object")
+									file, err := consolert.CreatePrivateFile(original)
+									if err != nil {
+										t.Fatal(err)
+									}
+									_, writeErr := file.Write(data)
+									if err := errors.Join(writeErr, file.Close()); err != nil {
+										t.Fatal(err)
+									}
+									paths = append(paths, original)
+									if kind == "symlink" {
+										err = os.Symlink(original, target)
+									} else {
+										err = os.Link(original, target)
+									}
+								}
+								if err != nil {
+									t.Fatal(err)
+								}
+							}
+							before := scriptUpdateInspect(t, paths)
+							if kind == "default-owner" {
+								sd, err := windows.GetNamedSecurityInfo(target, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+								if err != nil {
+									t.Fatal(err)
+								}
+								owner, _, err := sd.Owner()
+								if err != nil || owner == nil || owner.String() != "S-1-5-32-544" {
+									t.Fatal("actual BA owner prerequisite not met", err)
+								}
+							}
+							if kind == "hardlink" && before[target].Links != 2 || kind == "symlink" && before[target].Mode&os.ModeSymlink == 0 {
+								t.Fatal("actual alias/link prerequisite not met", kind)
+							}
+							var err error
+							if operation == "rewrite" {
+								err = testfixture.RewriteScript(t, path, []byte("#!/bin/sh\nprintf 'changed'\n"), 0700)
+							} else {
+								err = testfixture.RemoveScript(t, path)
+							}
+							if err == nil {
+								t.Fatal("unsafe triple member accepted", suffix, kind)
+							}
+							if after := scriptUpdateInspect(t, paths); !reflect.DeepEqual(before, after) {
+								t.Fatal("refusal changed original member/target identity links bytes security", suffix, kind)
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
