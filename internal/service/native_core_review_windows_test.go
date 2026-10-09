@@ -655,3 +655,82 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	}
 	t.Logf("Actual public Core49 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
 }
+
+func task43CoreReviewGuardPE() (bool, int) {
+	if len(os.Args) < 8 || os.Args[2] != "--" || os.Args[3] != "task43-core-provider" || os.Args[4] != "review" {
+		return false, 0
+	}
+	mode, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "native-fixture-mode"))
+	if err != nil || string(mode) != "review_tree" && string(mode) != "review_index" {
+		return false, 0
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" || os.Args[5] != "--model" || os.Args[6] != "qa-native" {
+		return true, 90
+	}
+	if err := os.WriteFile("out.txt", []byte("readonly fixture mutated tracked source\n"), 0600); err != nil {
+		return true, 91
+	}
+	if string(mode) == "review_index" {
+		command := exec.Command("git", "-c", "core.longpaths=true", "add", "--", "out.txt")
+		if out, err := command.CombinedOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, "actual owned index mutation", err, string(out))
+			return true, 92
+		}
+	}
+	fmt.Println("<<<FINDINGS\nFINDINGS>>>\nTASK 1: DONE")
+	return true, 0
+}
+
+func TestTask43WindowsNativeCoreReviewTreeAndProofGuards(t *testing.T) {
+	image := task43CoreImage(t)
+	for _, mode := range []string{"review_tree", "review_index", "proof_tree"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, a, skills, env, values := task43CoreApprovedFixture(t)
+			home := accounts.ExplicitHome(values["codex"].Environment)
+			fixtureMode := mode
+			expected := "source tree changed during review"
+			if mode == "proof_tree" {
+				fixtureMode = "valid"
+				expected = "proof of 1 changed the source tree"
+				plan := strings.Replace(string(a.Content), "git diff --check", "printf proof-mutation >> out.txt", 1)
+				task43CoreWriteFile(t, filepath.Join(a.Identity.Binding.CanonicalRoot, a.Identity.Binding.PlanPath), plan)
+				detail, err := svc.PlanDetail(context.Background(), "m", "w")
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, err = svc.ApprovePlan(context.Background(), detail.Identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), fixtureMode)
+			svc.NativeExecutorExecutable = image
+			state, runErr, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
+			if runErr != nil || !active || state != loop.StateReviewBlocked {
+				t.Fatal("actual mutation review did not leave blocked Core state", mode, state, active, runErr)
+			}
+			opts := loop.SupervisionOptions{Workspace: a.Identity.Binding.CanonicalRoot, Delivery: batuta.ExecutionDelivery(a)}
+			observation, err := loop.ObserveSupervision(opts)
+			if err != nil || observation.Review == nil || observation.Review.State != "failed" || !strings.Contains(observation.Review.Reason, expected) {
+				t.Fatal("actual source/proof guard failure not recorded", mode, observation.Review, err)
+			}
+			job := observation.Review
+			if job.Attempts != 1 || len(job.ArtifactDigests) != 0 {
+				t.Fatal("source mutation produced accepted artifact receipt", job)
+			}
+			for _, name := range []string{"review.md", "state.json"} {
+				if _, err := os.Stat(filepath.Join(job.Artifacts, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("source mutation published report/checkpoint", name, err)
+				}
+			}
+			checkpoints, err := filepath.Glob(filepath.Join(job.Snapshot, ".batuta", "reviews", "state", "*.json"))
+			if err != nil || len(checkpoints) != 0 {
+				t.Fatal("source mutation advanced incremental state", checkpoints, err)
+			}
+			gate, err := loop.CheckSupervisionGate(context.Background(), opts)
+			if err != nil || !gate.Required || gate.Cleared {
+				t.Fatal("actual mutated review gate cleared", gate, err)
+			}
+		})
+	}
+}

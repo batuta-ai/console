@@ -35,6 +35,9 @@ func TestMain(m *testing.M) {
 		if handled, code := task43CoreEffortPE(); handled {
 			os.Exit(code)
 		}
+		if handled, code := task43CoreReviewGuardPE(); handled {
+			os.Exit(code)
+		}
 		if handled, code := task43CoreReviewPE(); handled {
 			os.Exit(code)
 		}
