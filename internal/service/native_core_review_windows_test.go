@@ -60,6 +60,9 @@ func task43CoreReviewPE() (bool, int) {
 		if !log("native-reviews") {
 			return true, 91
 		}
+		if string(mode) == "review-hold" {
+			return true, task43CoreWorkerHold()
+		}
 		if string(mode) == "invalid" {
 			fmt.Println("TASK 1: DONE")
 			return true, 0
@@ -74,6 +77,20 @@ func task43CoreReviewPE() (bool, int) {
 		return true, 93
 	}
 	return true, 0
+}
+
+func task43CorePreparationPE() (bool, int) {
+	if len(os.Args) != 2 || os.Args[1] != "--version" {
+		return false, 0
+	}
+	mode, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "native-fixture-mode"))
+	if err != nil || string(mode) != "preparation" {
+		return false, 0
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return true, 90
+	}
+	return true, task43CoreWorkerHold()
 }
 
 func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
@@ -350,5 +367,132 @@ func TestTask43WindowsNativeCoreCancelJoinsNestedWorker(t *testing.T) {
 	b, err := svc.planBinding(context.Background(), "m", "w")
 	if err != nil || b.DeliveryID != job.delivery || b.OpenedDigest == "" {
 		t.Fatal("cancellation lost original parent attachment", b, err)
+	}
+}
+
+func TestTask43WindowsNativeCoreCancelPreparationAndReview(t *testing.T) {
+	for _, stage := range []string{"preparation", "review-hold"} {
+		t.Run(stage, func(t *testing.T) { task43CoreCancelStage(t, stage) })
+	}
+}
+
+func task43CoreCancelStage(t *testing.T, stage string) {
+	svc, a, skills, env, values := task43CoreApprovedFixture(t)
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	home := accounts.ExplicitHome(values["codex"].Environment)
+	task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), stage)
+	image, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := exec.Command(image, "--task43-core-hold")
+	foreign.Env, _ = task43CoreHome(t)
+	foreign.Env = accounts.RuntimeEnvironment(os.Environ(), foreign.Env)
+	if err := foreign.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = foreign.Process.Kill(); _ = foreign.Wait() })
+	var siblingBirth task43CoreBirth
+	var siblingErr error
+	if err := foreign.Process.WithHandle(func(h uintptr) {
+		siblingBirth, siblingErr = task43CoreBirthOf(windows.Handle(h), uint32(foreign.Process.Pid))
+	}); err != nil || siblingErr != nil {
+		t.Fatal(err, siblingErr)
+	}
+	sibling, err := task43CoreWitness(siblingBirth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(sibling)
+	job, err := svc.native.admit("m", a.Identity.Binding.CanonicalRoot, batuta.ExecutionDelivery(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.native.finish(job)
+	ctx, cancel := context.WithTimeout(job.ctx, 35*time.Second)
+	defer cancel()
+	job.ctx = ctx
+	release, err := svc.Session.ReserveNative(map[string]int{"selected": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var active atomic.Bool
+	type result struct {
+		state string
+		err   error
+	}
+	finished := make(chan result, 1)
+	go func() {
+		_, state, err := svc.runNativeWindowsExecution(job, domain.ExecutionRequest{Target: a.Identity, ApprovalID: a.ID}, a, "", task43CoreSelected(svc, values), skills, env, &active, task43CoreCatalogGuard(svc, a, job.delivery))
+		finished <- result{state, err}
+	}()
+	var tree task43CoreTreeBirth
+	for {
+		data, readErr := os.ReadFile(filepath.Join(home, "native-tree-birth.json"))
+		if readErr == nil {
+			if err := json.Unmarshal(data, &tree); err == nil {
+				break
+			}
+		}
+		select {
+		case result := <-finished:
+			t.Fatal("actual worker never produced original birth", result)
+		case <-ctx.Done():
+			t.Fatal("actual worker birth missing", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	root, err := task43CoreWitness(tree.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(root)
+	child, err := task43CoreWitness(tree.Child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(child)
+	for _, h := range []windows.Handle{root, child, sibling} {
+		if wait, err := windows.WaitForSingleObject(h, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+			t.Fatal("original live objects missing before cancel", wait, err)
+		}
+	}
+	cancel()
+	var stopped result
+	select {
+	case stopped = <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("owned helper/nested worker did not drain")
+	}
+	if !errors.Is(stopped.err, context.Canceled) {
+		t.Fatal("cancel produced false completion or lost actual cause", stopped)
+	}
+	for _, h := range []windows.Handle{root, child} {
+		if wait, err := windows.WaitForSingleObject(h, 0); err != nil || wait != windows.WAIT_OBJECT_0 {
+			t.Fatal("original nested worker still alive at service return", wait, err)
+		}
+	}
+	if wait, err := windows.WaitForSingleObject(sibling, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+		t.Fatal("whole-Core cancellation touched foreign sibling", wait, err)
+	}
+	b, err := svc.planBinding(context.Background(), "m", "w")
+	if stage == "preparation" {
+		if err != nil || b.DeliveryID != "" || b.OpenedDigest != "" || active.Load() {
+			t.Fatal("canceled preparation invented parent attachment", b, active.Load(), err)
+		}
+	} else {
+		if err != nil || b.DeliveryID != job.delivery || b.OpenedDigest == "" {
+			t.Fatal("review cancellation lost original parent attachment", b, err)
+		}
+		options := loop.SupervisionOptions{Workspace: b.CanonicalRoot, Delivery: job.delivery}
+		observation, err := loop.ObserveSupervision(options)
+		if err != nil || observation.Review == nil || observation.Review.Attempts != 1 || (observation.Review.State != "uncertain" && observation.Review.State != "launching") {
+			t.Fatal("review cancellation lost durable uncertain attempt", observation, err)
+		}
+		gate, err := loop.CheckSupervisionGate(context.Background(), options)
+		if err == nil && gate.Cleared {
+			t.Fatal("canceled review cleared acceptance gate", gate)
+		}
 	}
 }

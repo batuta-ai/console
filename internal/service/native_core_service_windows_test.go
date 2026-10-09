@@ -24,6 +24,9 @@ func TestMain(m *testing.M) {
 		os.Exit(code)
 	}
 	if strings.EqualFold(filepath.Base(os.Args[0]), "codex.exe") && len(os.Args) > 1 {
+		if handled, code := task43CorePreparationPE(); handled {
+			os.Exit(code)
+		}
 		if handled, code := task43CoreReviewPE(); handled {
 			os.Exit(code)
 		}
