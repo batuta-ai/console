@@ -22,7 +22,6 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	consolert "github.com/batuta-ai/console/internal/runtime"
-	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/core/publication"
 	"golang.org/x/sys/windows"
