@@ -28,6 +28,7 @@ func (f *nativeExchangeFile) Close() error {
 
 type nativeExchangePipes struct {
 	inputRead, inputWrite, outputRead, outputWrite *nativeExchangeFile
+	stderrRead, stderrWrite                        *nativeExchangeFile
 }
 
 func newNativeExchangePipe() (*os.File, *os.File, error) {
@@ -49,14 +50,19 @@ func newNativeExchangePipes() (nativeExchangePipes, error) {
 	if err != nil {
 		return nativeExchangePipes{}, errors.Join(err, inputRead.Close(), inputWrite.Close())
 	}
+	stderrRead, stderrWrite, err := newNativeExchangePipe()
+	if err != nil {
+		return nativeExchangePipes{}, errors.Join(err, inputRead.Close(), inputWrite.Close(), outputRead.Close(), outputWrite.Close())
+	}
 	return nativeExchangePipes{
 		inputRead: &nativeExchangeFile{File: inputRead}, inputWrite: &nativeExchangeFile{File: inputWrite},
 		outputRead: &nativeExchangeFile{File: outputRead}, outputWrite: &nativeExchangeFile{File: outputWrite},
+		stderrRead: &nativeExchangeFile{File: stderrRead}, stderrWrite: &nativeExchangeFile{File: stderrWrite},
 	}, nil
 }
 
 func (p nativeExchangePipes) Close() error {
-	return errors.Join(p.inputRead.Close(), p.inputWrite.Close(), p.outputRead.Close(), p.outputWrite.Close())
+	return errors.Join(p.inputRead.Close(), p.inputWrite.Close(), p.outputRead.Close(), p.outputWrite.Close(), p.stderrRead.Close(), p.stderrWrite.Close())
 }
 
 func (r NativeRunner) runNativeExchange(ctx context.Context, command publication.Command, handler func(context.Context, io.Reader, io.WriteCloser) error) (result publication.CommandResult, runErr error) {
@@ -121,18 +127,18 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	cmd := exec.Command(command.Executable, command.Args...)
 	cmd.Env, cmd.Dir = env, command.Directory
 	// Original standard handles are duplicated into the suspended Job anchor.
-	// Keeping the parent endpoints out of Cmd's I/O list permits protocol drain
-	// to finish independently of Cmd.Wait closing its own copy goroutines.
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = pipes.inputRead.File, pipes.outputWrite.File, stderr
-	cmd.WaitDelay = 250 * time.Millisecond
+	// The parent owns all three drains independently of Cmd.Wait, which can
+	// hide copying errors when the child also exits unsuccessfully.
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = pipes.inputRead.File, pipes.outputWrite.File, pipes.stderrWrite.File
+	var stderrWriter io.Writer = stderr
 	if command.StderrObserver != nil {
-		cmd.Stderr = io.MultiWriter(stderr, command.StderrObserver)
+		stderrWriter = io.MultiWriter(stderr, command.StderrObserver)
 	}
 	owned, err := startOwnedCommand(cmd)
 	if err != nil {
 		return result, err
 	}
-	if err := errors.Join(pipes.inputRead.Close(), pipes.outputWrite.Close()); err != nil {
+	if err := errors.Join(pipes.inputRead.Close(), pipes.outputWrite.Close(), pipes.stderrWrite.Close()); err != nil {
 		cleanup := errors.Join(owned.stop(), waitOwned(cmd, owned))
 		m.CloseAdmission()
 		m.recordCleanup(errors.Join(err, cleanup), cleanup)
@@ -159,6 +165,11 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	}
 	callbackDone := make(chan error, 1)
 	go func() { callbackDone <- handler(callbackContext, pipes.outputRead, pipes.inputWrite) }()
+	stderrDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(stderrWriter, pipes.stderrRead)
+		stderrDone <- errors.Join(err, pipes.stderrRead.Close())
+	}()
 	processDone := make(chan error, 1)
 	go func() {
 		ownership, wait := waitOwnedOutcome(cmd, owned)
@@ -169,7 +180,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		}
 		processDone <- cleanup
 	}()
-	var callbackErr, processErr, stopErr error
+	var callbackErr, processErr, stderrErr, stopErr error
 	stopRequested := stopContext.Done()
 	var grace *time.Timer
 	var expired <-chan time.Time
@@ -184,7 +195,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 			grace.Stop()
 		}
 	}()
-	for callbackDone != nil || processDone != nil {
+	for callbackDone != nil || processDone != nil || stderrDone != nil {
 		select {
 		case callbackErr = <-callbackDone:
 			callbackDone = nil
@@ -197,6 +208,12 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		case processErr = <-processDone:
 			processDone = nil
 			cancelCallback()
+		case stderrErr = <-stderrDone:
+			stderrDone = nil
+			if stderrErr != nil {
+				cancelCallback()
+				stopErr = errors.Join(stopErr, owned.stop())
+			}
 		case <-stopRequested:
 			stopRequested = nil
 			startGrace()
@@ -210,7 +227,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	}
 	m.recordCleanup(stopErr, stopErr)
 	result.Stderr, result.StderrTruncated = append([]byte(nil), stderr.data...), stderr.truncated
-	runErr = errors.Join(callbackErr, processErr, stopErr, stopContext.Err())
+	runErr = errors.Join(callbackErr, processErr, stderrErr, stopErr, stopContext.Err())
 	if runErr == nil && cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()
 	}
