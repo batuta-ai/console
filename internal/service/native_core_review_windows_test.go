@@ -618,7 +618,11 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	if err := (nativeCoreReviewRunner{}).run(context.Background(), home, []string{"-h"}, &helperOut, &helperHelp); !errors.Is(err, flag.ErrHelp) || helperOut.Len() != 0 {
 		t.Fatal("actual helper flag-parser help contract", err, helperOut.String())
 	}
-	publicFlags := strings.TrimSuffix(publishedHelp.String(), "flag: help requested\n")
+	const publicMainFooter = "batuta: flag: help requested\n"
+	if !strings.HasSuffix(publishedHelp.String(), publicMainFooter) {
+		t.Fatal("actual public main help-error footer", publishedHelp.String())
+	}
+	publicFlags := strings.TrimSuffix(publishedHelp.String(), publicMainFooter)
 	if publicFlags != helperHelp.String() {
 		t.Fatalf("actual public/helper flags/default descriptions differ\npublic:\n%s\nhelper:\n%s", publicFlags, helperHelp.String())
 	}
