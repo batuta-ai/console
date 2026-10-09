@@ -695,7 +695,9 @@ func TestTask43WindowsNativeCoreReviewTreeAndProofGuards(t *testing.T) {
 				fixtureMode = "valid"
 				expected = "proof of 1 changed the source tree"
 				plan := strings.Replace(string(a.Content), "git diff --check", "printf proof-mutation >> out.txt", 1)
-				task43CoreWriteFile(t, filepath.Join(a.Identity.Binding.CanonicalRoot, a.Identity.Binding.PlanPath), plan)
+				if err := os.WriteFile(filepath.Join(a.Identity.Binding.CanonicalRoot, a.Identity.Binding.PlanPath), []byte(plan), 0600); err != nil {
+					t.Fatal(err)
+				}
 				detail, err := svc.PlanDetail(context.Background(), "m", "w")
 				if err != nil {
 					t.Fatal(err)
@@ -931,7 +933,9 @@ func TestTask43WindowsNativeCoreReviewFlagsAndSpecEdges(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				task43CoreWriteFile(t, path, strings.Replace(string(data), "| review | codex | qa-native |", "| review | claude | unbound-native |", 1))
+				if err := os.WriteFile(path, []byte(strings.Replace(string(data), "| review | codex | qa-native |", "| review | claude | unbound-native |", 1)), 0600); err != nil {
+					t.Fatal(err)
+				}
 				task43CoreWriteFile(t, filepath.Join(root, "untracked-native.txt"), "actual untracked coverage\n")
 				args = append(args, "--reviewer", "codex/qa-native")
 				if name == "worktree_override" {
