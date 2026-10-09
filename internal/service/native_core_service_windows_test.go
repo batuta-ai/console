@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 		os.Exit(code)
 	}
 	if strings.EqualFold(filepath.Base(os.Args[0]), "codex.exe") && len(os.Args) > 1 {
+		if handled, code := task43CoreSuccessCapacityPE(); handled {
+			os.Exit(code)
+		}
 		if handled, code := task43CorePreparationPE(); handled {
 			os.Exit(code)
 		}
@@ -592,5 +595,103 @@ func TestTask43WindowsNativeCorePreparedSuccess(t *testing.T) {
 	binding, err := svc.planBinding(context.Background(), "m", "w")
 	if err != nil || binding.DeliveryID != job.delivery || binding.OpenedDigest == "" {
 		t.Fatal("actual prepared success lost parent binding", binding, err)
+	}
+}
+
+func task43CoreSuccessCapacityPE() (bool, int) {
+	if len(os.Args) < 8 || os.Args[2] != "--" || os.Args[3] != "task43-core-provider" || os.Args[4] != "run" {
+		return false, 0
+	}
+	home := os.Getenv("HOME")
+	gate := filepath.Join(home, "native-success-gate")
+	mode, err := os.ReadFile(gate)
+	if err != nil || string(mode) != "hold" {
+		return false, 0
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" || os.Args[5] != "--model" || os.Args[6] != "qa-native" {
+		return true, 90
+	}
+	if err := os.WriteFile(filepath.Join(home, "native-success-entered"), []byte("held selected worker"), 0600); err != nil {
+		return true, 91
+	}
+	for {
+		mode, err := os.ReadFile(gate)
+		if err != nil {
+			return true, 92
+		}
+		if string(mode) == "continue" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(home, "native-launches"), []byte("submission\n"), 0600); err != nil {
+		return true, 93
+	}
+	fmt.Println("BATUTA-QUESTION: which approved output?")
+	return true, 0
+}
+
+func TestTask43WindowsNativeCorePreparedSuccessHoldsCapacity(t *testing.T) {
+	svc, a, skills, _, values := task43CoreApprovedFixture(t)
+	home := accounts.ExplicitHome(values["codex"].Environment)
+	gate := filepath.Join(home, "native-success-gate")
+	task43CoreWriteFile(t, gate, "hold")
+	svc.NativeExecutorExecutable = task43CoreImage(t)
+	job, finished, ctx := task43CorePreparedRun(t, svc, a, values, skills)
+	select {
+	case outcome := <-job.ready:
+		if outcome.err != nil || outcome.result.Effect != domain.ExecutionStarted || outcome.result.Delivery != job.delivery || outcome.result.OpenedDigest == "" {
+			t.Fatal("actual direct consoled did not attach/signal original receipt", outcome)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	for {
+		data, err := os.ReadFile(filepath.Join(home, "native-success-entered"))
+		if err == nil && string(data) == "held selected worker" {
+			break
+		}
+		select {
+		case <-finished:
+			t.Fatal("direct consoled returned before selected handshake")
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	select {
+	case <-finished:
+		t.Fatal("production continuation returned while selected worker held")
+	default:
+	}
+	lease, err := svc.Session.ReserveNative(map[string]int{"selected": 1})
+	if err == nil {
+		lease()
+		t.Fatal("production reservation released before actual successful work completed")
+	}
+	if err.Error() != "account selected at session capacity 1" {
+		t.Fatal("capacity check refused for a different reason", err)
+	}
+	if err := os.WriteFile(gate, []byte("continue"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal("actual direct successful continuation did not finalize", ctx.Err())
+	}
+	task43CoreFinishedEvent(t, svc, job.delivery, false)
+	lease, err = svc.Session.ReserveNative(map[string]int{"selected": 1})
+	if err != nil {
+		t.Fatal("direct successful production reservation retained", err)
+	}
+	lease()
+	view, err := svc.ExecutionState(ctx, "m", "w", a.ID)
+	if err != nil || !view.Bound || view.Delivery != job.delivery || view.OpenedDigest == "" || view.Watch == nil || view.Watch.PendingQuestion == nil || view.Watch.Header["state"] != loop.StateWaitingInput {
+		t.Fatal("actual direct successful Core lost receipt/question/waiting_input", view, err)
+	}
+	launches, err := os.ReadFile(filepath.Join(home, "native-launches"))
+	if err != nil || string(launches) != "submission\n" {
+		t.Fatal("direct successful Core duplicated or escaped selected submission", string(launches), err)
 	}
 }
