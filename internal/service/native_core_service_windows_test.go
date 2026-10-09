@@ -257,6 +257,14 @@ func main() {
  case "done_before_ready":send(map[string]any{"type":"done","done":map[string]any{"state":"done"}})
  case "unknown":send(map[string]any{"type":"unknown"})
  case "extra":send(map[string]any{"type":"ready","id":1,"extra":true})
+ case "empty_state", "unknown_state", "early_cleanup":
+  send(map[string]any{"type":"ready","id":1});receive()
+  if mode=="early_cleanup" {send(map[string]any{"type":"guard","id":2,"guard":map[string]any{"cleanup":true}})} else {
+   state:="";if mode=="unknown_state" {state="unrecognized-state"}
+   send(map[string]any{"type":"done","done":map[string]any{"state":state}})
+  }
+  receive()
+  if os.WriteFile(filepath.Join(filepath.Dir(record),"native-accepted-frame"),[]byte(mode),0600)!=nil {os.Exit(85)}
  case "cleanup":
   e,err:=windows.CreateEvent(nil,1,0,nil);if err!=nil {os.Exit(81)};defer windows.CloseHandle(e)
   var limited windows.Handle
@@ -488,5 +496,88 @@ func TestTask43WindowsNativeCoreParentRejectsChildFrames(t *testing.T) {
 			}
 			task43CoreFinishedEvent(t, svc, job.delivery, true)
 		})
+	}
+}
+
+func TestTask43WindowsNativeCoreRejectsFinalStateAndCleanupClaim(t *testing.T) {
+	for _, mode := range []string{"empty_state", "unknown_state", "early_cleanup"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, a, skills, _, values := task43CoreApprovedFixture(t)
+			home := accounts.ExplicitHome(values["codex"].Environment)
+			svc.NativeExecutorExecutable = task43CoreParentImage(t, "", home, mode)
+			job, finished, ctx := task43CorePreparedRun(t, svc, a, values, skills)
+			select {
+			case outcome := <-job.ready:
+				if !errors.Is(outcome.err, domain.ErrInvalidReference) || outcome.result.Effect == domain.ExecutionStarted {
+					t.Fatal("actual parent did not refuse invalid final state/cleanup authority", mode, outcome)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			select {
+			case <-finished:
+			case <-ctx.Done():
+				t.Fatal("invalid final frame did not finalize", ctx.Err())
+			}
+			if _, err := os.Stat(filepath.Join(home, "native-accepted-frame")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("parent acknowledged invalid DONE or answered premature cleanup claim", mode, err)
+			}
+			if _, err := os.Stat(filepath.Join(home, "native-launches")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("invalid final frame submitted selected worker", err)
+			}
+			task43CoreFinishedEvent(t, svc, job.delivery, true)
+		})
+	}
+}
+
+func TestTask43WindowsNativeCorePreparedSuccess(t *testing.T) {
+	svc, a, skills, _, values := task43CoreApprovedFixture(t)
+	home := accounts.ExplicitHome(values["codex"].Environment)
+	svc.NativeExecutorExecutable = task43CoreParentImage(t, task43CoreImage(t), home, "relay")
+	job, finished, ctx := task43CorePreparedRun(t, svc, a, values, skills)
+	select {
+	case outcome := <-job.ready:
+		if outcome.err != nil || outcome.result.Effect != domain.ExecutionStarted || outcome.result.Delivery != job.delivery || outcome.result.OpenedDigest == "" {
+			t.Fatal("actual prepared success did not attach/signal original receipt", outcome)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal("actual successful prepared continuation did not finalize", ctx.Err())
+	}
+	events, err := svc.Store.EventsSince(0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.Kind == "execution.finished" && event.Payload["delivery"] == job.delivery {
+			count++
+			if event.Payload["failed"] != false || event.Payload["state"] != loop.StateWaitingInput {
+				t.Fatal("actual prepared success event differs from real Core waiting input", event)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatal("actual prepared success missing/duplicate final event", count)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "native-parent-home"))
+	if err != nil || !filepath.IsAbs(string(data)) || string(data) == home {
+		t.Fatal("actual distinct helper HOME not observed", string(data), err)
+	}
+	if _, err := os.Stat(string(data)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("successful prepared helper HOME retained", err)
+	}
+	lease, err := svc.Session.ReserveNative(map[string]int{"selected": 1})
+	if err != nil {
+		t.Fatal("successful production reservation retained", err)
+	}
+	lease()
+	binding, err := svc.planBinding(context.Background(), "m", "w")
+	if err != nil || binding.DeliveryID != job.delivery || binding.OpenedDigest == "" {
+		t.Fatal("actual prepared success lost parent binding", binding, err)
 	}
 }
