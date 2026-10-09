@@ -144,7 +144,10 @@ func UpdateScriptInPlace(t testing.TB, path string, body []byte, _ os.FileMode) 
 		if checkErr != nil {
 			return checkErr
 		}
-		if actual != objects[i] {
+		expectedObject := objects[i]
+		actual.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
+		expectedObject.attributes &^= windows.FILE_ATTRIBUTE_ARCHIVE
+		if actual != expectedObject {
 			return os.ErrPermission
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
