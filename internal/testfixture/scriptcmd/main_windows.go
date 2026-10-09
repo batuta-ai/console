@@ -82,21 +82,12 @@ func run() error {
 func quoteMSYSArgument(arg string) string {
 	var quoted strings.Builder
 	quoted.WriteByte('"')
-	slashes := 0
 	for _, character := range arg {
-		if character == '\\' {
-			slashes++
-			continue
-		}
-		if character == '"' {
-			quoted.WriteString(strings.Repeat("\\", 2*slashes+1))
-		} else {
-			quoted.WriteString(strings.Repeat("\\", slashes))
+		if character == '\\' || character == '"' {
+			quoted.WriteByte('\\')
 		}
 		quoted.WriteRune(character)
-		slashes = 0
 	}
-	quoted.WriteString(strings.Repeat("\\", 2*slashes))
 	quoted.WriteByte('"')
 	return quoted.String()
 }
