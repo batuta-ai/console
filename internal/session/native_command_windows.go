@@ -13,6 +13,26 @@ import (
 	"github.com/batuta-ai/core/publication"
 )
 
+type nativeCommandObserverError struct{ cause error }
+
+func (e *nativeCommandObserverError) Error() string { return e.cause.Error() }
+func (e *nativeCommandObserverError) Unwrap() error { return e.cause }
+
+type nativeCommandObservedWriter struct {
+	writer   io.Writer
+	failures chan<- error
+}
+
+func (w nativeCommandObservedWriter) Write(data []byte) (int, error) {
+	n, err := w.writer.Write(data)
+	if err != nil {
+		failure := &nativeCommandObserverError{cause: err}
+		w.failures <- failure
+		return n, failure
+	}
+	return n, nil
+}
+
 func (m *Manager) runNativeCommand(ctx context.Context, command publication.Command, explicit []string, graceful bool) (result publication.CommandResult, runErr error) {
 	result.ExitCode = -1
 	m.mu.Lock()
@@ -76,6 +96,9 @@ func (m *Manager) runNativeCommand(ctx context.Context, command publication.Comm
 		}
 		return result, errors.Join(err, ctx.Err())
 	}
+	streamFailures := make(chan error, 2)
+	cmd.Stdout = nativeCommandObservedWriter{writer: cmd.Stdout, failures: streamFailures}
+	cmd.Stderr = nativeCommandObservedWriter{writer: cmd.Stderr, failures: streamFailures}
 	owned, err := startOwnedCommand(cmd)
 	if err != nil {
 		return result, err
@@ -87,13 +110,17 @@ func (m *Manager) runNativeCommand(ctx context.Context, command publication.Comm
 	done := make(chan error, 1)
 	go func() {
 		ownership, wait := waitOwnedOutcome(cmd, owned)
-		cleanup := errors.Join(ownership, wait)
+		cleanup := ownership
+		var observerError *nativeCommandObserverError
+		if wait != nil && !errors.As(wait, &observerError) {
+			cleanup = errors.Join(cleanup, wait)
+		}
 		if cleanup != nil {
 			cleanup = errors.Join(ErrNativeCleanupUnresolved, cleanup)
 			m.CloseAdmission()
 			m.recordCleanup(cleanup, cleanup)
 		}
-		done <- cleanup
+		done <- errors.Join(cleanup, wait)
 	}()
 	stop := func() error {
 		err := owned.stop()
@@ -105,8 +132,17 @@ func (m *Manager) runNativeCommand(ctx context.Context, command publication.Comm
 	}
 	select {
 	case err = <-done:
+	case failure := <-streamFailures:
+		err = errors.Join(failure, stop(), <-done)
 	case <-ctx.Done():
 		err = errors.Join(stop(), <-done)
+	}
+	// Cmd.Wait joins copying, but prioritizes a nonzero exit over copying errors.
+	for len(streamFailures) != 0 {
+		failure := <-streamFailures
+		if !errors.Is(err, failure) {
+			err = errors.Join(err, failure)
+		}
 	}
 	m.mu.Lock()
 	delete(m.probes, owned)
