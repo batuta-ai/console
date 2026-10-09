@@ -43,7 +43,7 @@ func task43CoreHome(t *testing.T) ([]string, string) {
 
 func task43CoreWriteFile(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := secure.EnsurePrivateDirectory(filepath.Dir(path)); err != nil {
 		t.Fatal(err)
 	}
 	f, err := secure.CreatePrivateFile(path)
@@ -187,6 +187,11 @@ func task43CoreApprovedFixture(t *testing.T) (*Service, domain.PlanApproval, str
 	t.Setenv("OPENAI_API_KEY", "ambient-must-not-cross-core")
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-must-not-cross-core")
 	_, skillHome := task43CoreHome(t)
+	for _, name := range []string{"batuta", "batuta-loop", "batuta-review", "batuta/adapters"} {
+		if err := secure.EnsurePrivateDirectory(filepath.Join(skillHome, filepath.FromSlash(name))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	skills := installedSkillFixture(t, skillHome, "batuta", "batuta-loop", "batuta-review")
 	task43CoreWriteFile(t, filepath.Join(skills, "adapters", "codex.md"), "---\nname: codex\nexecutable: codex\nrun: 'codex -test.run=^TestTask43WindowsNativeCoreProviderFixture$ -- task43-core-provider run --model {model} \"{brief}\" < /dev/null'\nreadonly: 'codex -test.run=^TestTask43WindowsNativeCoreProviderFixture$ -- task43-core-provider review --model {model} \"{prompt}\" < /dev/null'\navailable: 'codex -test.run=^TestTask43WindowsNativeCoreProviderFixture$ -- task43-core-provider version'\nmodels: 'codex -test.run=^TestTask43WindowsNativeCoreProviderFixture$ -- task43-core-provider models'\nmodel_flags: --model {model}\nfinished: exit_code\nbrief_limit_lines: 2000\ncwd_flag: env\n---\n")
 	task43CoreWriteFile(t, filepath.Join(skills, "templates", "generic.md"), "# Generic\n## Conventions for briefs\n- Preserve approved scope.\nNever:\n- Edit beyond scope.\n")
