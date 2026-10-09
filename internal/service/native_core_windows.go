@@ -345,10 +345,10 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 					return err
 				}
 			case "done":
-				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
-				if !ready && outcome == nil {
+				if !ready && frame.Done.Error == nil {
 					return domain.ErrInvalidReference
 				}
+				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
 					return err
 				}
