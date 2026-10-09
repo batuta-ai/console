@@ -67,7 +67,7 @@ func TestCapabilityCancellationDoesNotObserveInstallation(t *testing.T) {
 
 func TestSelectedPlatformMatrix(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows", "freebsd", "unknown"} {
-		if SelectedPlatform(goos) != (goos == "darwin" || goos == "linux") {
+		if SelectedPlatform(goos) != (goos == "darwin" || goos == "linux" || goos == "windows") {
 			t.Fatalf("platform %s", goos)
 		}
 	}
