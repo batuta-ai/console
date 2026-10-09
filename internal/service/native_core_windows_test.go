@@ -442,3 +442,69 @@ func TestTask43WindowsNativeCoreRejectsOutOfOrderResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestTask43WindowsNativeCoreRejectsMalformedFrame(t *testing.T) {
+	image := task43CoreImage(t)
+	framed := func(size uint32, payload string) []byte {
+		var b bytes.Buffer
+		if err := binary.Write(&b, binary.LittleEndian, size); err != nil {
+			t.Fatal(err)
+		}
+		b.WriteString(payload)
+		return b.Bytes()
+	}
+	for _, test := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"zero", framed(0, "")},
+		{"oversized", framed((4<<20)+1, "")},
+		{"truncated_header", []byte{1, 0}},
+		{"truncated_payload", framed(64, "{")},
+		{"invalid_json", framed(1, "{")},
+		{"trailing_value", framed(uint32(len(`{"type":"ack"}{}`)), `{"type":"ack"}{}`)},
+		{"unknown_type", framed(uint32(len(`{"type":"unknown"}`)), `{"type":"unknown"}`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env, home := task43CoreHome(t)
+			manager := session.New(home)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var witness windows.Handle
+			result, runErr := (session.NativeRunner{Manager: manager, Environment: env}).Exchange(ctx, publication.Command{Executable: image, Args: []string{"--native-core"}, Directory: home}, func(_ context.Context, r io.Reader, w io.WriteCloser) error {
+				var err error
+				witness, err = task43CoreHello(r)
+				if err != nil {
+					return err
+				}
+				if _, err := io.Copy(w, bytes.NewReader(test.raw)); err != nil {
+					return err
+				}
+				if err := w.Close(); err != nil {
+					return err
+				}
+				tail, err := io.ReadAll(r)
+				if len(tail) != 0 {
+					return errors.New("malformed frame prepared or emitted Core output")
+				}
+				return err
+			})
+			if witness != 0 {
+				wait, err := windows.WaitForSingleObject(witness, 0)
+				windows.CloseHandle(witness)
+				if err != nil || wait != windows.WAIT_OBJECT_0 {
+					t.Fatal("malformed-frame helper remained alive", wait, err)
+				}
+			}
+			if err := manager.Shutdown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if runErr != nil || result.ExitCode != 1 || len(result.Stderr) == 0 {
+				t.Fatalf("malformed frame result=%+v error=%v", result, runErr)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".batuta")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("malformed frame prepared unapproved Core state", err)
+			}
+		})
+	}
+}
