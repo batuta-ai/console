@@ -12,7 +12,7 @@ import (
 
 func (p *ownedProcess) observeTermination() error {
 	var before windowsJobAccounting
-	if err := windows.QueryInformationJobObject(p.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&before)), uint32(unsafe.Sizeof(before)), nil); err != nil {
+	if err := queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&before), uint32(unsafe.Sizeof(before))); err != nil {
 		return err
 	}
 	p.terminationTotal = before.TotalProcesses
@@ -21,7 +21,7 @@ func (p *ownedProcess) observeTermination() error {
 		Count    uint32
 		IDs      [1024]uintptr
 	}
-	if err := windows.QueryInformationJobObject(p.job, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&members)), uint32(unsafe.Sizeof(members)), nil); err != nil {
+	if err := queryWindowsJob(p.job, windows.JobObjectBasicProcessIdList, unsafe.Pointer(&members), uint32(unsafe.Sizeof(members))); err != nil {
 		return fmt.Errorf("observe owned Windows job members: %w", err)
 	}
 	if members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
@@ -49,7 +49,7 @@ func (p *ownedProcess) observeTermination() error {
 		p.terminationWaiters = append(p.terminationWaiters, handle)
 	}
 	var after windowsJobAccounting
-	if err := windows.QueryInformationJobObject(p.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&after)), uint32(unsafe.Sizeof(after)), nil); err != nil {
+	if err := queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&after), uint32(unsafe.Sizeof(after))); err != nil {
 		return err
 	}
 	if after.TotalProcesses != p.terminationTotal {

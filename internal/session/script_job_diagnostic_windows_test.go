@@ -88,7 +88,7 @@ func TestTask43WindowsScriptJobDrainObservation(t *testing.T) {
 			}
 			accounting := func() windowsJobAccounting {
 				var data windowsJobAccounting
-				if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&data)), uint32(unsafe.Sizeof(data)), nil); err != nil {
+				if err := queryWindowsJob(job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&data), uint32(unsafe.Sizeof(data))); err != nil {
 					t.Fatal(err)
 				}
 				return data
@@ -99,7 +99,7 @@ func TestTask43WindowsScriptJobDrainObservation(t *testing.T) {
 				Count    uint32
 				IDs      [64]uintptr
 			}
-			if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&members)), uint32(unsafe.Sizeof(members)), nil); err != nil || members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
+			if err := queryWindowsJob(job, windows.JobObjectBasicProcessIdList, unsafe.Pointer(&members), uint32(unsafe.Sizeof(members))); err != nil || members.Count != members.Assigned || members.Count > uint32(len(members.IDs)) {
 				t.Fatal("actual job member enumeration", members, err)
 			}
 			var processes []windows.Handle

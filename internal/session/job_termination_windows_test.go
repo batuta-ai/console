@@ -73,7 +73,7 @@ func TestTask43WindowsTerminationNewBirthIsUnresolved(t *testing.T) {
 		t.Fatal("new native process did not inherit the original private Job", member, err, observeErr)
 	}
 	var after windowsJobAccounting
-	if err := windows.QueryInformationJobObject(owned.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&after)), uint32(unsafe.Sizeof(after)), nil); err != nil || after.TotalProcesses <= before {
+	if err := queryWindowsJob(owned.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&after), uint32(unsafe.Sizeof(after))); err != nil || after.TotalProcesses <= before {
 		t.Fatal("actual new Job birth was not observed by kernel accounting", before, after, err)
 	}
 	err = owned.retire(nil)

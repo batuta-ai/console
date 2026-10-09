@@ -155,7 +155,7 @@ func newWindowsJob() (*ownedProcess, error) {
 	fail := func(err error) (*ownedProcess, error) { return nil, errors.Join(err, p.closeHandles()) }
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	if _, err = windows.SetInformationJobObject(p.job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
+	if err = setWindowsJob(p.job, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&limits), uint32(unsafe.Sizeof(limits))); err != nil {
 		return fail(err)
 	}
 	p.port, err = windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
@@ -163,7 +163,7 @@ func newWindowsJob() (*ownedProcess, error) {
 		return fail(err)
 	}
 	completion := windowsJobCompletionPort{Key: 1, Port: p.port}
-	if _, err = windows.SetInformationJobObject(p.job, windows.JobObjectAssociateCompletionPortInformation, uintptr(unsafe.Pointer(&completion)), uint32(unsafe.Sizeof(completion))); err != nil {
+	if err = setWindowsJob(p.job, windows.JobObjectAssociateCompletionPortInformation, unsafe.Pointer(&completion), uint32(unsafe.Sizeof(completion))); err != nil {
 		return fail(err)
 	}
 	return p, nil
@@ -328,7 +328,7 @@ func (p *ownedProcess) drainJob() error {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		var accounting windowsJobAccounting
-		if err := windows.QueryInformationJobObject(p.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil); err != nil {
+		if err := queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&accounting), uint32(unsafe.Sizeof(accounting))); err != nil {
 			return err
 		}
 		if accounting.ActiveProcesses == 0 {
@@ -372,7 +372,7 @@ func (p *ownedProcess) retire(observeErr error) error {
 	var remainingErr error
 	if p.native && p.exited {
 		var accounting windowsJobAccounting
-		remainingErr = windows.QueryInformationJobObject(p.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
+		remainingErr = queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&accounting), uint32(unsafe.Sizeof(accounting)))
 		if remainingErr == nil && accounting.ActiveProcesses != 0 {
 			p.forced = true
 		}
