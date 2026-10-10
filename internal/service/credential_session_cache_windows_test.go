@@ -1,3 +1,3 @@
 package service
 
-func credentialSessionCacheKey() string { return "TMPDIR" }
+func credentialSessionCacheKey() string { return "LOCALAPPDATA" }
