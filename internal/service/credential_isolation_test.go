@@ -580,12 +580,12 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 
 func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 	svc, ws, _, account, out, root := isolationFixture(t, "codex")
-	previous := os.Getenv("TMPDIR")
+	previous := os.Getenv(credentialSessionCacheKey())
 	blocked := filepath.Join(root, "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("blocked"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", blocked)
+	t.Setenv(credentialSessionCacheKey(), blocked)
 	sess := domain.Session{ID: domain.NewID("s_"), AccountID: account.ID, Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}
 	p, err := svc.Session.StartPending(sess, nil, ws.Root, 1)
 	if err == nil {
@@ -595,7 +595,7 @@ func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Error("failed setup launched a process")
 	}
-	t.Setenv("TMPDIR", previous)
+	t.Setenv(credentialSessionCacheKey(), previous)
 	sess.ID = domain.NewID("s_")
 	next, err := svc.Session.StartPending(sess, nil, ws.Root, 1)
 	if err != nil {
