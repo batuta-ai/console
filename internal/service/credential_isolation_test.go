@@ -30,10 +30,10 @@ var identityKeys = []string{"HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"
 
 var batutaMetadataKeys = []string{"BATUTA_CONSOLE", "BATUTA_WORKSPACE", "BATUTA_SKILLS", "BATUTA_JOURNAL", "BATUTA_ROLE_SKILLS", "BATUTA_MISSION", "BATUTA_INIT"}
 
-func fixtureRuntime(root, cli string) map[string]string {
+func fixtureRuntime(t *testing.T, root, cli string) map[string]string {
 	return map[string]string{
 		"PATH": cli, "LANG": "C", "LC_ALL": "C", "LC_CTYPE": "C", "LC_COLLATE": "C", "LC_MESSAGES": "C", "LC_MONETARY": "C", "LC_NUMERIC": "C", "LC_TIME": "C", "LC_ADDRESS": "C", "LC_IDENTIFICATION": "C", "LC_MEASUREMENT": "C", "LC_NAME": "C", "LC_PAPER": "C", "LC_TELEPHONE": "C",
-		"TERM": "synthetic-daemon-terminal", "COLORTERM": "truecolor", "SHELL": "/bin/sh", "DISPLAY": "synthetic-display", "WAYLAND_DISPLAY": "synthetic-wayland", "XDG_RUNTIME_DIR": filepath.Join(root, "runtime"), "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + filepath.Join(root, "synthetic-dbus"),
+		"TERM": "synthetic-daemon-terminal", "COLORTERM": "truecolor", "SHELL": credentialRuntimeShell(t), "DISPLAY": "synthetic-display", "WAYLAND_DISPLAY": "synthetic-wayland", "XDG_RUNTIME_DIR": filepath.Join(root, "runtime"), "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + filepath.Join(root, "synthetic-dbus"),
 		"SSL_CERT_FILE": filepath.Join(root, "synthetic-ca.pem"), "SSL_CERT_DIR": filepath.Join(root, "synthetic-certs"), "NODE_EXTRA_CA_CERTS": filepath.Join(root, "synthetic-node-ca.pem"), "CODEX_CA_CERTIFICATE": filepath.Join(root, "synthetic-codex-ca.pem"),
 	}
 }
@@ -67,7 +67,7 @@ func TestCredentialRecordChild(t *testing.T) {
 	output, outputErr := os.Stdout.Stat()
 	record.PTY = inputErr == nil && outputErr == nil && input.Mode()&os.ModeCharDevice != 0 && output.Mode()&os.ModeCharDevice != 0
 	keys := append(append([]string{}, credentialSentinels...), identityKeys...)
-	for key := range fixtureRuntime("", "") {
+	for key := range fixtureRuntime(t, "", "") {
 		keys = append(keys, key)
 	}
 	keys = append(keys, batutaMetadataKeys...)
@@ -162,7 +162,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName(adapter)), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range fixtureRuntime(root, cli) {
+	for key, value := range fixtureRuntime(t, root, cli) {
 		t.Setenv(key, value)
 	}
 	for _, key := range batutaMetadataKeys {
@@ -266,7 +266,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 						t.Errorf("daemon key inherited: %s", key)
 					}
 				}
-				for key, expected := range fixtureRuntime(root, os.Getenv("PATH")) {
+				for key, expected := range fixtureRuntime(t, root, os.Getenv("PATH")) {
 					if key == "TERM" {
 						expected = "xterm-256color"
 					}
