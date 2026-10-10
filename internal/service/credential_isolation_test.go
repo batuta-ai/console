@@ -374,7 +374,7 @@ func TestSessionAndLoginRejectMissingOrUnsafeAccount(t *testing.T) {
 					}
 					var err error
 					if mode == "session" {
-						_, err = svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}})
+						_, err = svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{credentialRejectionExecutable(adapter)}})
 					} else {
 						_, err = svc.StartLogin(account.ID, "web", "test")
 					}
