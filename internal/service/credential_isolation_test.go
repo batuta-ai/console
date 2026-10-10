@@ -456,7 +456,7 @@ func TestSameProviderAccountIdentitiesStayIndependent(t *testing.T) {
 						t.Errorf("required private directory %s: %v", key, err)
 						continue
 					}
-					if !info.IsDir() || info.Mode().Perm() != 0700 {
+					if !credentialPrivateDirectory(record.Env[key], info) {
 						t.Errorf("account directory is not private: %s", key)
 					}
 				}
@@ -558,7 +558,7 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 				continue
 			}
 			info, err := os.Stat(path)
-			if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			if err != nil || !credentialPrivateDirectory(path, info) {
 				t.Errorf("unbound directory not private: %s", key)
 			}
 		}
