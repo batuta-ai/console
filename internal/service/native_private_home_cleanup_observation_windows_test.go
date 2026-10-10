@@ -88,6 +88,9 @@ func credentialCleanupPathState(t *testing.T, path, phase string) credentialClea
 }
 
 func TestNativePrivateHomeCleanupPermissionObservation(t *testing.T) {
+	if credentialCleanupLimitedProcess(t, t.Name()) {
+		return
+	}
 	for _, kind := range []string{"old-chmod", "owned-dacl"} {
 		t.Run(kind, func(t *testing.T) {
 			_, ws, _, _, out, _ := isolationFixture(t, "codex")
