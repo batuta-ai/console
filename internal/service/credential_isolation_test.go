@@ -234,7 +234,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 				case "login":
 					sess, err = svc.StartLogin(account.ID, "web", "test")
 				case "direct":
-					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
+					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(adapter))}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
 				default:
 					sess, err = svc.StartInit(ws.ID, "synthetic init", "web", "test", confirmedFixtureInput(account.ID))
 				}
