@@ -55,4 +55,19 @@ func TestNativeCredentialObservationDiagnostic(t *testing.T) {
 	captured := append([]byte(nil), output...)
 	mu.Unlock()
 	t.Logf("DIAGNOSTIC actualLF ACK=%v processExists=%v process=%s recordExists=%v recordBytes=%d readErr=%v output=%q", ack, exists, snapshot.Process, readErr == nil, len(data), readErr, captured)
+	if !ack {
+		if err := svc.Session.Input(sess.ID, "test", []byte("\r")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-acknowledged:
+			ack = true
+		case <-time.After(5 * time.Second):
+		}
+		mu.Lock()
+		captured = append([]byte(nil), output...)
+		mu.Unlock()
+		t.Logf("DIAGNOSTIC same actual process after nativeEnterCR ACK=%v output=%q", ack, captured)
+	}
+
 }
