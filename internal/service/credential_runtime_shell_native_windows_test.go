@@ -36,7 +36,7 @@ func TestNativeCredentialShellSeedAndForwarding(t *testing.T) {
 			if record.Env["SHELL"] != expected || !record.PTY {
 				t.Fatalf("actual native child SHELL=%q expected=%q PTY=%v", record.Env["SHELL"], expected, record.PTY)
 			}
-			if err := svc.StopSession(sess.ID); err != nil {
+			if _, err := svc.Session.Stop(sess.ID); err != nil {
 				t.Fatal("actual credential child stop", err)
 			}
 			t.Logf("actual native PE shell fixture seed and child unchanged=%q", expected)
