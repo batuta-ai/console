@@ -11,10 +11,10 @@ import (
 )
 
 func checkedDirectory(path string) (os.FileInfo, error) {
-	if err := consoleruntime.EnsurePrivateDirectory(path); err != nil {
+	if err := consoleruntime.EnsureAccountRootDirectory(path); err != nil {
 		return nil, err
 	}
-	f, err := consoleruntime.OpenPrivateDirectory(path)
+	f, err := consoleruntime.OpenAccountRootDirectory(path)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,11 @@ func accountPlatformMetadata(home string) []string {
 	volume := filepath.VolumeName(home)
 	return []string{"HOMEDRIVE=" + volume, "HOMEPATH=" + strings.TrimPrefix(home, volume)}
 }
-func identityDirectoryValid(path string, _ bool) bool {
+func identityDirectoryValid(path string, root bool) bool {
+	if root {
+		f, err := consoleruntime.OpenAccountRootDirectory(path)
+		return err == nil && f.Close() == nil
+	}
 	f, err := consoleruntime.OpenPrivateDirectory(path)
 	return err == nil && f.Close() == nil
 }

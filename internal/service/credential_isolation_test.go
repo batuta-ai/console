@@ -606,7 +606,8 @@ func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 
 func TestAccountSetupKeepsExistingConsoleHomePermissions(t *testing.T) {
 	svc, _, _, account, _, _ := isolationFixture(t, "codex")
-	if err := os.Chmod(svc.Home, 0755); err != nil {
+	checkPermissions, err := credentialExistingConsolePermissions(t, svc.Home)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ConnectAccount(account.ID); err != nil {
@@ -616,7 +617,7 @@ func TestAccountSetupKeepsExistingConsoleHomePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0755 {
+	if !checkPermissions(info) {
 		t.Fatal("account setup changed permissions of the existing Console home")
 	}
 }
