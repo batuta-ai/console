@@ -119,7 +119,7 @@ func TestCredentialRecordChild(t *testing.T) {
 	if err := os.WriteFile(out, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(credentialRecordInput(t))
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
