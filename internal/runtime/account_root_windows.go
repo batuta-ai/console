@@ -57,7 +57,7 @@ func accountRootWindowsHandle(handle windows.Handle) error {
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if windows.EqualSid(sid, user.User.Sid) {
 			currentFullAccess = currentFullAccess || uint32(ace.Mask)&fullAccess == fullAccess
-		} else if uint32(ace.Mask)&^uint32(foreignReadAccess) != 0 {
+		} else if uint32(ace.Mask)&^uint32(foreignReadAccess) != 0 || ace.Header.AceFlags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) != 0 {
 			return fmt.Errorf("account root permits foreign mutation or unsupported access")
 		}
 	}
