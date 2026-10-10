@@ -165,6 +165,10 @@ func windowsFileAtMode(parent windows.Handle, name string, access, disposition u
 }
 
 func windowsDirectory(path string, create bool) (*os.File, error) {
+	return windowsDirectoryWithPolicy(path, create, privateWindowsHandle)
+}
+
+func windowsDirectoryWithPolicy(path string, create bool, validateLeaf func(windows.Handle) error) (*os.File, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("private Windows homes require an absolute local drive path")
 	}
@@ -229,7 +233,7 @@ func windowsDirectory(path string, create bool) (*os.File, error) {
 			return nil, &os.PathError{Op: "open private directory", Path: path, Err: err}
 		}
 		if i == len(parts)-1 {
-			if err := privateWindowsHandle(handle); err != nil {
+			if err := validateLeaf(handle); err != nil {
 				windows.CloseHandle(handle)
 				return nil, err
 			}
