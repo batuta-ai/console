@@ -1,7 +1,18 @@
 package service
 
-import "os"
+import (
+	"os"
+
+	consolert "github.com/batuta-ai/console/internal/runtime"
+)
 
 func credentialPrivateDirectory(path string, info os.FileInfo) bool {
-	return info.IsDir() && info.Mode().Perm() == 0700
+	if !info.IsDir() {
+		return false
+	}
+	directory, err := consolert.OpenPrivateDirectory(path)
+	if err != nil {
+		return false
+	}
+	return directory.Close() == nil
 }
