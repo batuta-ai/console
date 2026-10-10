@@ -12,6 +12,11 @@ func credentialRecordInput(t *testing.T) *os.File {
 	input := windows.Handle(os.Stdin.Fd())
 	var before, after, output uint32
 	if err := windows.GetConsoleMode(input, &before); err != nil {
+		inputType, inputErr := windows.GetFileType(input)
+		outputType, outputErr := windows.GetFileType(windows.Handle(os.Stdout.Fd()))
+		if inputErr == nil && outputErr == nil && inputType == windows.FILE_TYPE_PIPE && outputType == windows.FILE_TYPE_PIPE {
+			return os.Stdin
+		}
 		t.Fatal("credential fixture native console input", err)
 	}
 	if err := windows.GetConsoleMode(windows.Handle(os.Stdout.Fd()), &output); err != nil {
