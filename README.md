@@ -45,6 +45,8 @@ Use Go 1.27.2 or newer and run these commands from a checkout of the desired
 Console revision (the qualified SDK here is Go 1.27.2). `go.mod` and `go.sum` pin the dependency graph, including
 Batuta core `v1.1.0-beta.49`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
+Git must support `git show-ref --exists` for native mission review; the shared
+checks verify this capability before running tests.
 
 ```bash
 export GOWORK=off GOFLAGS=-mod=readonly GOENV=off

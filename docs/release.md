@@ -76,6 +76,8 @@ Put these exact installed tools on PATH: Go **1.27.2**, Node **26.10.0**, npm
 **12.2.0**, govulncheck **1.8.0**, GoReleaser **2.18.2**, actionlint **1.7.12**.
 The preparation reused isolated tools; it did not update personal installations.
 `.node-version` and `web/package.json#packageManager` record the web tooling.
+Git must support `git show-ref --exists`; unsupported versions fail the shared
+tooling check before source tests run.
 No web library graph or `go.mod`/`go.sum` upgrade is part of this work.
 If the shell exports an older `GOROOT`, unset it before using the selected SDK;
 the preflight verifies both the Go command and compiler versions.

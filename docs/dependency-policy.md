@@ -219,6 +219,8 @@ The repository is now public at [batuta-ai/console](https://github.com/batuta-ai
 
 The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. This SDK update preserves the Core beta49, Go module checksum and npm dependency graphs. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
 
+Native mission review requires Git support for `git show-ref --exists`, which Core uses to prove exact parked-ref absence. The shared tooling check rejects unsupported versions; current qualification uses Git 2.56.0.
+
 ## Published Core approved-snapshot API adoption — 2026-10-06
 
 The current pin is [Core v1.1.0-beta.49](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.49),
