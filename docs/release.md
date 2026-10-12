@@ -57,8 +57,8 @@ Console uses the accepted `v0.1.0-beta.N` sequence, independent of the linked
 Core version.
 `.release-please-manifest.json` starts at `0.1.0-beta.0` as **unpublished
 bookkeeping**, not an existing release. The first published release will be
-`v0.1.0-beta.1`. Destination and visibility remain undefined; no Console
-release has been published and this preparation creates no remote or tag.
+`v0.1.0-beta.1`. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console); no Console
+release has been published. Repository creation and source CI do not publish a tag.
 
 The bootstrap boundary is commit `3485c1ca1f02f70ba0101422ee41d4d6fafb2ddb`.
 Release-please considers subsequent Conventional Commits; older history is
@@ -128,13 +128,14 @@ Only `consoled` currently links Core; `console` may truthfully report it missing
 
 ## Repository setup and reviewed release flow
 
-After the owner chooses the destination and visibility, retain the bootstrap
-history, configure the chosen repository's default branch, and enable Actions.
+The public repository is `batuta-ai/console`, its default branch is `main`, and
+Actions is enabled. The bootstrap history has been retained.
 All owner/repository references come from GitHub context; no destination or
 visibility is hard-coded. Protect the default branch and require both native
 macOS/Linux `Console checks` jobs plus ordinary review for release PRs.
 
-Configure a repository secret named `RELEASE_PLEASE_TOKEN` using an owner-approved
+The organization already supplies `RELEASE_PLEASE_TOKEN` to this repository.
+For another installation, configure a secret named `RELEASE_PLEASE_TOKEN` using an owner-approved
 GitHub App installation token or fine-grained token with repository Contents,
 Issues and Pull requests write permissions, matching the pinned release-please
 action's documented requirements and the proposal job. It lets release-please

@@ -215,6 +215,8 @@ and Task37's final full release matrix remain pending. WSL qualifies Linux only.
 
 ## Current Go SDK selection — 2026-10-12
 
+The repository is now public at [batuta-ai/console](https://github.com/batuta-ai/console), and its source-check and beta-release workflows are enabled. The release workflow inherits the organization's `RELEASE_PLEASE_TOKEN`; no credential value was copied into the repository.
+
 The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. This SDK update preserves the Core beta49, Go module checksum and npm dependency graphs. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
 
 ## Published Core approved-snapshot API adoption — 2026-10-06

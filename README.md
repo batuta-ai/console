@@ -203,7 +203,7 @@ terminal is observation; it is not replay of input, Start, Resume or Answer.
 Console uses its own `v0.1.0-beta.N` sequence, independent of the linked
 Core version. The first published version will be `v0.1.0-beta.1`; the manifest
 seed `0.1.0-beta.0` is unpublished bookkeeping. No Console release has been
-published; repository destination/visibility remain undefined.
+published. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console).
 
 With Go 1.27.2, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
 

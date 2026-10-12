@@ -216,7 +216,7 @@ reanexada ou parada como se pertencesse a este daemon. Reconectar um terminal
 O Console usa sua própria sequência `v0.1.0-beta.N`, independente da versão
 Core vinculada. A primeira versão publicada será `v0.1.0-beta.1`; a semente
 `0.1.0-beta.0` do manifesto é controle interno não publicado. Nenhum release
-do Console foi publicado; destino/visibilidade do repositório seguem indefinidos.
+do Console foi publicado. O repositório público está em [batuta-ai/console](https://github.com/batuta-ai/console).
 
 Com Go 1.27.2, Node 26.10.0, npm 12.2.0 e govulncheck 1.8.0 no PATH:
 
