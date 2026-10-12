@@ -81,6 +81,9 @@ func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
 func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 	observeErr := observeOwnedExit(cmd.Process.Pid)
 	cleanupErr := p.retire(observeErr)
+	if cleanupErr == nil {
+		cleanupErr = waitOwnedGroupExit(p.pgid)
+	}
 	waitErr := cmd.Wait()
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {

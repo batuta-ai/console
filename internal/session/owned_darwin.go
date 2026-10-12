@@ -43,6 +43,8 @@ func signalOwnedGroup(pgid int) error {
 	return nil
 }
 
+func waitOwnedGroupExit(int) error { return nil }
+
 func observeOwnedExit(pid int) error {
 	// Darwin x/sys has no Waitid wrapper. kern.proc.pid exposes SZOMB without
 	// consuming wait status (XNU sys/proc.h); Cmd.Wait remains the sole reaper.

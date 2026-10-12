@@ -2,11 +2,13 @@ package session
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func inspectProc(root string, pid int) (ProcessObservation, error) {
@@ -14,7 +16,7 @@ func inspectProc(root string, pid int) (ProcessObservation, error) {
 		return ProcessObservation{}, fmt.Errorf("invalid process PID %d", pid)
 	}
 	stat, err := os.ReadFile(filepath.Join(root, strconv.Itoa(pid), "stat"))
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
 		// hidepid can make an existing foreign PID look like ENOENT.
 		if err := procAbsenceObservable(root); err != nil {
 			return ProcessObservation{}, err
@@ -39,19 +41,9 @@ func parseProcIdentity(pid int, stat, boot []byte) (ProcessObservation, error) {
 	invalid := func() (ProcessObservation, error) {
 		return ProcessObservation{}, fmt.Errorf("invalid proc birth record for PID %d", pid)
 	}
-	text := string(stat)
-	open, close := strings.IndexByte(text, '('), strings.LastIndexByte(text, ')')
-	if open < 1 || close < open || close+1 >= len(text) {
-		return invalid()
-	}
-	recordPID, err := strconv.Atoi(strings.TrimSpace(text[:open]))
-	if err != nil || recordPID != pid {
-		return invalid()
-	}
-	fields := strings.Fields(text[close+1:])
-	// comm (field 2) can contain spaces and parentheses; starttime is field 22.
-	if len(fields) < 20 || len(fields[0]) != 1 || !strings.Contains("RSDZTtXxKWPI", fields[0]) {
-		return invalid()
+	fields, err := procStatFields(pid, stat)
+	if err != nil {
+		return ProcessObservation{}, err
 	}
 	if strings.Contains("ZXx", fields[0]) {
 		return ProcessObservation{Missing: true}, nil
@@ -69,6 +61,27 @@ func parseProcIdentity(pid int, stat, boot []byte) (ProcessObservation, error) {
 		return invalid()
 	}
 	return ProcessObservation{Identity: fmt.Sprintf("linux:%s:%d:%d", strings.ToLower(bootID), pid, ticks)}, nil
+}
+
+func procStatFields(pid int, stat []byte) ([]string, error) {
+	invalid := func() ([]string, error) {
+		return nil, fmt.Errorf("invalid proc birth record for PID %d", pid)
+	}
+	text := string(stat)
+	open, close := strings.IndexByte(text, '('), strings.LastIndexByte(text, ')')
+	if open < 1 || close < open || close+1 >= len(text) {
+		return invalid()
+	}
+	recordPID, err := strconv.Atoi(strings.TrimSpace(text[:open]))
+	if err != nil || recordPID != pid {
+		return invalid()
+	}
+	fields := strings.Fields(text[close+1:])
+	// comm (field 2) can contain spaces and parentheses; starttime is field 22.
+	if len(fields) < 20 || len(fields[0]) != 1 || !strings.Contains("RSDZTtXxKWPI", fields[0]) {
+		return invalid()
+	}
+	return fields, nil
 }
 
 func procAbsenceObservable(root string) error {
