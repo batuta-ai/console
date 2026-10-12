@@ -8,12 +8,14 @@ Codex/Claude provider qualification belongs to Task44.
 ## Evidence and current limits
 
 The implementation starts from `f55edba0e0fd94ac408fba485d1531c3915ab848`.
-The current source candidate is `513e4c1467ba20dd5ebdf978b5084c5c881ccecf`:
-native path red/green and current macOS/Linux rechecks have been observed;
-the native original full-store run still fails one protected-reader prerequisite.
-Independent Sonnet review and atomic integration remain pending with the parent
-conductor. This document records evidence, not Task42 acceptance or release
-qualification.
+The qualified source candidate is `513e4c1467ba20dd5ebdf978b5084c5c881ccecf`,
+integrated into main at `2e092834a5f4a3dda341f2456ae909718836f792` after
+independent Sonnet review accepted all six original Task42 criteria.
+Native path red/green and macOS/Linux rechecks have been observed.
+The native original full-store run still fails one protected-reader
+prerequisite, which remains a Task43 obligation. This evidence completes
+Task42 build portability; native Windows runtime, provider and release
+qualification remain pending.
 
 Conductor capture on 2026-10-08 used native Windows 11 Pro x64 build 26200,
 private Go 1.27.1, Node 26.10.0 and npm 12.2.0. The verified Go archive SHA256 was
@@ -219,8 +221,10 @@ separate added, frozen plan-path regression has actual native red at `00e6933`
 and identical-body/argv native green at `513e4c1`. The conductor's
 `proof-summary.json` methodological judgment distinguishes those facts from
 compiler red and host build-selection red/green; it does not claim a universal
-native behavioral red. Worker-local claims do not replace that judgment or
-the pending independent Sonnet review of all six original Task42 criteria.
+native behavioral red. Worker-local claims do not replace that judgment.
+Independent Sonnet review of all six original Task42 criteria and atomic
+integration (`2e09283`) are complete; native Windows Task43 qualification
+remains mandatory before operational support can be claimed.
 
 The protected manifest contains 401 original tracked files, all still present,
 including 190 test-related files: 181 Go `_test.go` files and nine web
@@ -275,5 +279,6 @@ Before enabling Windows, Task43 must provide:
 
 Task44 alone may exercise the authorized personal provider accounts. Task42
 makes no provider calls and cannot close native security, provider, stable
-release or publication gates. Parent conductor owns candidate freezing,
-independent Sonnet review, canonical updates and the eventual atomic commit.
+release or publication gates. The parent conductor froze the candidate,
+obtained the independent Sonnet review, updated canonical state and made
+the atomic commit (`2e09283`).

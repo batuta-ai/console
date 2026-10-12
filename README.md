@@ -1,3 +1,12 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme-header-console-dark.png">
+  <img src="assets/readme-header-console-light.png" width="100%" alt="batuta-ai / console — Operação local de agentes: daemon, TUI e web. Local agent operation: daemon, TUI and web.">
+</picture>
+
+> 🇧🇷 [Versão em português](README.pt-BR.md)
+
+> *Quem rege não toca.* — The conductor does not play.
+
 # Batuta Console
 
 Local operator surface for agent CLIs. A per-user Go daemon owns sessions
@@ -216,7 +225,8 @@ qualification remain pending.
 The intended product matrix is **Codex and Claude on macOS, Linux and native
 Windows**. The current beta packaging configuration covers macOS/Linux only.
 Native operational and full provider, mission, browser and TUI qualification
-remain pending. Native Windows portability and ConPTY/provider QA are Tasks42–44;
+remain pending. Native Windows build portability (Task42) is complete;
+ConPTY/runtime and provider QA (Tasks43–44) remain pending;
 the current PTY start/resize implementation rejects Windows operations. WSL
 proves Linux only. Other adapter catalog entries remain outside this matrix.
 Reliability work remains open: sporadic Linux fork `EPERM`, event-fixture
@@ -313,7 +323,8 @@ never accepts a secret.
 - [Domain](docs/domain.md)
 - [HTTP and WebSocket API](docs/api.md)
 
-Repository documentation is English. Product UI strings (TUI and web) ship
+Repository documentation is English, with a Brazilian Portuguese sibling
+README. Product UI strings (TUI and web) ship
 in English with a Portuguese pack selected by `BATUTA_LANG`, then `LC_ALL`
 or `LANG`. The web client reads `lang` from `GET /v0/capabilities` so it
 matches the daemon, not the browser locale.
@@ -321,3 +332,14 @@ matches the daemon, not the browser locale.
 Language changes translate product labels and official/custom skill summaries.
 Stored squad names, roles and purposes (including seeded templates), user text,
 provider output, source bytes, IDs and receipt/evidence provenance remain data.
+
+## Repository navigation and qualification notes
+
+- [Documentation index](docs/README.md)
+- [Local presentation assets and regeneration](docs/branding.md)
+
+The Windows build work (Task42) is complete; native Windows runtime (Task43)
+is unqualified and excluded from this source branch. Real-provider operation
+(Task44) and final release qualification remain pending. Build evidence does
+not establish operational support. The original operator documentation above
+retains its qualified source boundaries; no Console package or tag is published.

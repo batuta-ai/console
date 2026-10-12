@@ -211,8 +211,9 @@ authorities. Existing `compatibility.native` and `compatibility.stable` remain
 pending, and the historical native authority string still names macOS/Linux.
 
 The intended product scope includes Codex and Claude on macOS, Linux and native
-Windows. Tasks42–44 cover Windows portability/ConPTY/provider QA; WSL proves
-Linux only. macOS/Linux full provider, browser and interactive TUI operation,
+Windows. Current Task42 build portability is complete, while native Windows
+Task43 runtime (ConPTY/protection) and Task44 provider QA remain pending; WSL
+proves Linux only. macOS/Linux full provider, browser and interactive TUI operation,
 semantic Core/plugin compatibility, Core official CLI binary security, independent
 review and Task37's final full-matrix/native distribution and stable release gates
 remain open. Cross-built Linux/Windows artifacts cannot close runtime gates.

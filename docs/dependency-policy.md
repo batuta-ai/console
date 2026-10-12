@@ -208,7 +208,8 @@ remain unchanged. Earlier qualification tables above retain their original dates
 
 See [release.md](release.md) for the shared checks, local snapshots, reviewed
 release-PR pipeline, exact action pins and local sandbox limitations. The workflow
-configuration has not run on GitHub. Native Windows Tasks42–44, full Codex/Claude
+configuration has not run on GitHub. Current Task42 build portability is complete, while
+native Windows Task43 runtime and Task44 provider qualification, full Codex/Claude
 provider/web/TUI QA, Core official CLI binary security, stable Core/plugin contract
 and Task37's final full release matrix remain pending. WSL qualifies Linux only.
 
