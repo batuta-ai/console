@@ -72,7 +72,7 @@ The prerelease strategy increments beta versions. The vendored schema in
 
 ## Frozen local commands
 
-Put these exact installed tools on PATH: Go **1.27.1**, Node **26.10.0**, npm
+Put these exact installed tools on PATH: Go **1.27.2**, Node **26.10.0**, npm
 **12.2.0**, govulncheck **1.8.0**, GoReleaser **2.18.2**, actionlint **1.7.12**.
 The preparation reused isolated tools; it did not update personal installations.
 `.node-version` and `web/package.json#packageManager` record the web tooling.

@@ -44,8 +44,8 @@ nunca abre o navegador por conta própria.
 
 ## Compilar e instalar a partir do código-fonte
 
-Use Go 1.27.1 ou mais recente e execute os comandos em um checkout da revisão
-desejada do Console (o SDK qualificado aqui é Go 1.27.1). `go.mod` e `go.sum`
+Use Go 1.27.2 ou mais recente e execute os comandos em um checkout da revisão
+desejada do Console (o SDK qualificado aqui é Go 1.27.2). `go.mod` e `go.sum`
 fixam o grafo de dependências, incluindo Batuta core `v1.1.0-beta.49`.
 Os assets web incorporados e rastreados bastam para compilar ambos os binários
 sem Node.js.
@@ -218,7 +218,7 @@ Core vinculada. A primeira versão publicada será `v0.1.0-beta.1`; a semente
 `0.1.0-beta.0` do manifesto é controle interno não publicado. Nenhum release
 do Console foi publicado; destino/visibilidade do repositório seguem indefinidos.
 
-Com Go 1.27.1, Node 26.10.0, npm 12.2.0 e govulncheck 1.8.0 no PATH:
+Com Go 1.27.2, Node 26.10.0, npm 12.2.0 e govulncheck 1.8.0 no PATH:
 
 ```sh
 sh scripts/check-release.sh       # non-root source checks; failures stop the run

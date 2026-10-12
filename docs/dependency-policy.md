@@ -201,7 +201,7 @@ The accepted independent Console numbering is `v0.1.0-beta.N`, with
 `v0.1.0-beta.1` as the first published version and `0.1.0-beta.0` only an
 unpublished manifest seed. No Console release has been published; destination
 and visibility remain undefined. The current linked Core graph is beta49.
-The language/check tools for this preparation are Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
+The language/check tools exercised for this preparation were Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
 govulncheck 1.8.0 and actionlint 1.7.12. That infrastructure preparation changed
 only packageManager metadata; product npm dependencies and the lockfile graph
 remain unchanged. Earlier qualification tables above retain their original dates and authority.
@@ -212,6 +212,10 @@ configuration has not run on GitHub. Current Task42 build portability is complet
 native Windows Task43 runtime and Task44 provider qualification, full Codex/Claude
 provider/web/TUI QA, Core official CLI binary security, stable Core/plugin contract
 and Task37's final full release matrix remain pending. WSL qualifies Linux only.
+
+## Current Go SDK selection — 2026-10-12
+
+The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. This SDK update preserves the Core beta49, Go module checksum and npm dependency graphs. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
 
 ## Published Core approved-snapshot API adoption — 2026-10-06
 
