@@ -259,7 +259,7 @@ func eventFaultCatalog(t *testing.T) (http.Handler, *store.Store, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}
