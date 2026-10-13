@@ -259,7 +259,7 @@ func eventFaultCatalog(t *testing.T) (http.Handler, *store.Store, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,15 +284,16 @@ func TestEventReadFailures(t *testing.T) {
 						t.Fatal(err)
 					}
 				} else {
-					appendEvents(t, st, 1)
-					statement := "UPDATE events SET at='broken'"
+					at := "broken"
+					payload := `{"n":0}`
 					if fault == "payload" {
-						statement = "UPDATE events SET payload='{broken'"
+						at = time.Now().UTC().Format(time.RFC3339Nano)
+						payload = "{broken"
 					}
 					if fault == "encoding" {
-						statement = "UPDATE events SET at='2026-01-01T00:00:00+24:00'"
+						at = "2026-01-01T00:00:00+24:00"
 					}
-					if _, err := db.Exec(statement); err != nil {
+					if _, err := db.Exec(`INSERT INTO events(at,kind,payload) VALUES(?,?,?)`, at, "test", payload); err != nil {
 						t.Fatal(err)
 					}
 				}

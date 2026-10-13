@@ -57,8 +57,8 @@ Console uses the accepted `v0.1.0-beta.N` sequence, independent of the linked
 Core version.
 `.release-please-manifest.json` starts at `0.1.0-beta.0` as **unpublished
 bookkeeping**, not an existing release. The first published release will be
-`v0.1.0-beta.1`. Destination and visibility remain undefined; no Console
-release has been published and this preparation creates no remote or tag.
+`v0.1.0-beta.1`. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console); no Console
+release has been published. Repository creation and source CI do not publish a tag.
 
 The bootstrap boundary is commit `3485c1ca1f02f70ba0101422ee41d4d6fafb2ddb`.
 Release-please considers subsequent Conventional Commits; older history is
@@ -72,10 +72,12 @@ The prerelease strategy increments beta versions. The vendored schema in
 
 ## Frozen local commands
 
-Put these exact installed tools on PATH: Go **1.27.1**, Node **26.10.0**, npm
+Put these exact installed tools on PATH: Go **1.27.2**, Node **26.10.0**, npm
 **12.2.0**, govulncheck **1.8.0**, GoReleaser **2.18.2**, actionlint **1.7.12**.
 The preparation reused isolated tools; it did not update personal installations.
 `.node-version` and `web/package.json#packageManager` record the web tooling.
+Git must support `git show-ref --exists`; unsupported versions fail the shared
+tooling check before source tests run.
 No web library graph or `go.mod`/`go.sum` upgrade is part of this work.
 If the shell exports an older `GOROOT`, unset it before using the selected SDK;
 the preflight verifies both the Go command and compiler versions.
@@ -128,13 +130,14 @@ Only `consoled` currently links Core; `console` may truthfully report it missing
 
 ## Repository setup and reviewed release flow
 
-After the owner chooses the destination and visibility, retain the bootstrap
-history, configure the chosen repository's default branch, and enable Actions.
+The public repository is `batuta-ai/console`, its default branch is `main`, and
+Actions is enabled. The bootstrap history has been retained.
 All owner/repository references come from GitHub context; no destination or
 visibility is hard-coded. Protect the default branch and require both native
 macOS/Linux `Console checks` jobs plus ordinary review for release PRs.
 
-Configure a repository secret named `RELEASE_PLEASE_TOKEN` using an owner-approved
+The organization already supplies `RELEASE_PLEASE_TOKEN` to this repository.
+For another installation, configure a secret named `RELEASE_PLEASE_TOKEN` using an owner-approved
 GitHub App installation token or fine-grained token with repository Contents,
 Issues and Pull requests write permissions, matching the pinned release-please
 action's documented requirements and the proposal job. It lets release-please
