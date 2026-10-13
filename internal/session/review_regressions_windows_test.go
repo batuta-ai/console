@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -141,5 +142,38 @@ func TestWindowsGracefulObserverFailureCancelsOwnedCommand(t *testing.T) {
 		cancel()
 		<-done
 		t.Fatal("graceful command ignored real output observer failure")
+	}
+}
+
+func TestWindowsNativeConsolePreservesCurrentDirectoryRefusal(t *testing.T) {
+	env, home, err := accounts.SessionEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(home); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Chdir(home)
+	t.Setenv("PATH", filepath.Join(home, "absent-path"))
+	t.Setenv("GODEBUG", "execerrdot=1")
+	if err := os.WriteFile("current-directory-probe.exe", []byte("owned lookup fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("current-directory-probe.exe")
+	command.Env = env
+	if !errors.Is(command.Err, exec.ErrDot) {
+		t.Fatal("real current-directory lookup did not refuse", command.Err)
+	}
+	terminal, owned, err := startWindowsConsole(command, 80, 24, nil)
+	if terminal != nil {
+		terminal.Close()
+	}
+	if owned != nil {
+		owned.retire(nil)
+	}
+	if terminal != nil || owned != nil || !errors.Is(err, exec.ErrDot) {
+		t.Fatal("native console bypassed current-directory refusal", err)
 	}
 }
