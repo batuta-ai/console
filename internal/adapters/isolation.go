@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,34 +11,6 @@ import (
 func validIsolate(consoleHome, accountID string) bool {
 	clean := filepath.Clean(consoleHome)
 	return filepath.IsAbs(consoleHome) && filepath.Dir(clean) != clean && accountID != "" && accountID != "." && accountID != ".." && !strings.ContainsAny(accountID, "/\\\x00")
-}
-
-func checkedDirectory(path string) (os.FileInfo, error) {
-	if err := os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
-		return nil, err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("isolation path must be a directory without symlinks: %s", path)
-	}
-	if !credentialOwner(info) {
-		return nil, fmt.Errorf("isolation directory must belong to the current user: %s", path)
-	}
-	return info, nil
-}
-
-func privateDirectory(path string) error {
-	info, err := checkedDirectory(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode().Perm() != 0700 {
-		return os.Chmod(path, 0700)
-	}
-	return nil
 }
 
 // IsolateEnv prepares account-owned identity paths and propagates failures.
@@ -53,7 +24,7 @@ func (a Adapter) IsolateEnv(consoleHome string, account domain.Account) ([]strin
 	}
 	// The Console home may be new, but every controlled path below it is checked
 	// before it can be used as a parent or environment pointer.
-	if err := os.MkdirAll(filepath.Dir(consoleHome), 0700); err != nil {
+	if err := prepareIsolateParent(consoleHome); err != nil {
 		return nil, err
 	}
 	base := filepath.Join(consoleHome, "accounts")
@@ -77,6 +48,9 @@ func (a Adapter) IsolateEnv(consoleHome string, account domain.Account) ([]strin
 	case "cursor-agent":
 		paths = append(paths, struct{ key, path string }{"CURSOR_CONFIG_DIR", filepath.Join(home, ".cursor")})
 	}
+	for key, path := range accountPlatformPaths(home) {
+		paths = append(paths, struct{ key, path string }{key, path})
+	}
 	env := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if err := privateDirectory(path.path); err != nil {
@@ -86,5 +60,6 @@ func (a Adapter) IsolateEnv(consoleHome string, account domain.Account) ([]strin
 			env = append(env, path.key+"="+path.path)
 		}
 	}
+	env = append(env, accountPlatformMetadata(home)...)
 	return env, nil
 }

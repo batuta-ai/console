@@ -7,10 +7,7 @@ import (
 )
 
 func TestPartialSessionEnvironmentRemovesOwnedHome(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "owned-session")
-	if err := os.Mkdir(home, 0700); err != nil {
-		t.Fatal(err)
-	}
+	home := sessionEnvironmentTestHome(t)
 	if err := os.WriteFile(filepath.Join(home, ".config"), []byte("blocking fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -104,9 +104,6 @@ func testImportFileKind(t *testing.T, home, adapter, kind string) {
 			target := path
 			if strings.HasSuffix(kind, "-symlink") {
 				target = filepath.Join(t.TempDir(), "target")
-				if err := os.Symlink(target, path); err != nil {
-					t.Fatal(err)
-				}
 			}
 			switch kind {
 			case "fifo", "fifo-symlink":
@@ -119,6 +116,11 @@ func testImportFileKind(t *testing.T, home, adapter, kind string) {
 				}
 			case "regular-symlink":
 				if err := os.WriteFile(target, importJSON(t, now.Add(-time.Minute), 62), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.HasSuffix(kind, "-symlink") {
+				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
 			}

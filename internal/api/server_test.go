@@ -20,6 +20,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/console/plugins/limits"
 	"github.com/coder/websocket"
 )
@@ -423,7 +424,7 @@ func testServer(t *testing.T) (http.Handler, *service.Service) {
 	}
 	t.Cleanup(func() { st.Close() })
 	svc := service.New(st, session.New(t.TempDir()), limits.New(nil))
-	svc.Home = t.TempDir()
+	svc.Home = testfixture.PrivateHome(t)
 	return (&Server{Svc: svc, Token: "test-token"}).Handler(), svc
 }
 

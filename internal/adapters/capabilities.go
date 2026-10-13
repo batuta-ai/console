@@ -8,7 +8,7 @@ import (
 )
 
 func SelectedPlatform(goos string) bool {
-	return goos == "darwin" || goos == "linux"
+	return goos == "darwin" || goos == "linux" || goos == "windows"
 }
 
 func compatibleBanners(id string) []string {

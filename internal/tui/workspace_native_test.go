@@ -17,6 +17,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // The workspace/account endpoints below are exact typed synthetic handlers. Terminal
@@ -34,22 +35,6 @@ func TestWorkspaceInitActualHTTPWebSocketPTY(t *testing.T) {
 			svc := service.New(st, manager, nil)
 			token := "disposable-account-fixture"
 			baseHandler := (&api.Server{Svc: svc, Token: token}).Handler()
-			for _, id := range []string{"unrelated", "actual-init"} {
-				work, account := "mission", "other"
-				if id == "actual-init" {
-					work, account = "init", "init-account"
-				}
-				pending, err := manager.StartPending(domain.Session{ID: id, AccountID: account, Adapter: adapter, Work: work, WorkspaceID: map[string]string{"actual-init": "selected-workspace", "unrelated": "other-workspace"}[id], Cols: 80, Rows: 24, Argv: []string{"/bin/sh", "-c", "stty raw -echo; printf INIT_READY; exec /bin/cat"}}, []string{"HOME=" + root}, root, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = pending.Persist(st.PutSession); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := manager.Take("actual-init", "web", "other-client"); err != nil {
-				t.Fatal(err)
-			}
 			var calls atomic.Int32
 			var received client.InitWorkspaceRequest
 			listener := &terminalPipeListener{incoming: make(chan net.Conn), done: make(chan struct{})}
@@ -91,6 +76,22 @@ func TestWorkspaceInitActualHTTPWebSocketPTY(t *testing.T) {
 				<-joined
 				_ = st.Close()
 			})
+			for _, id := range []string{"unrelated", "actual-init"} {
+				work, account := "mission", "other"
+				if id == "actual-init" {
+					work, account = "init", "init-account"
+				}
+				pending, err := manager.StartPending(domain.Session{ID: id, AccountID: account, Adapter: adapter, Work: work, WorkspaceID: map[string]string{"actual-init": "selected-workspace", "unrelated": "other-workspace"}[id], Cols: 80, Rows: 24, Argv: testfixture.Argv(t, []string{"/bin/sh", "-c", "stty raw -echo; printf INIT_READY; exec /bin/cat"})}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = pending.Persist(st.PutSession); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := manager.Take("actual-init", "web", "other-client"); err != nil {
+				t.Fatal(err)
+			}
 			m := accountModel(t, c)
 			m.ws = []domain.Workspace{{ID: "selected-workspace", Root: root, Setup: domain.WorkspaceSetup{State: "partial"}}}
 			m = workspaceReview(t, workspaceSetupDraft(t, m, workspaceConfig(), "native fixture notes"))

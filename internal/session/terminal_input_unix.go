@@ -13,7 +13,7 @@ import (
 
 // Rewrap the existing master, not a new PTY. O_NONBLOCK must be set before
 // os.NewFile registers it with the runtime poller, including on Darwin.
-func prepareTerminalPTY(f *os.File) (*os.File, error) {
+func prepareTerminalPTY(f terminalPTY) (terminalPTY, error) {
 	raw, err := f.SyscallConn()
 	if err != nil {
 		return f, errors.Join(ErrTerminalInputUnsupported, err)
@@ -40,7 +40,7 @@ func prepareTerminalPTY(f *os.File) (*os.File, error) {
 	return wrapped, nil
 }
 
-func writeTerminalChunk(f *os.File, data []byte) (int, error) {
+func writeTerminalChunk(f terminalPTY, data []byte) (int, error) {
 	raw, err := f.SyscallConn()
 	if err != nil {
 		return 0, err
@@ -58,7 +58,7 @@ func terminalWouldBlock(err error) bool {
 	return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR)
 }
 
-func waitTerminalWritable(ctx context.Context, revoked <-chan struct{}, f *os.File) error {
+func waitTerminalWritable(ctx context.Context, revoked <-chan struct{}, f terminalPTY) error {
 	raw, err := f.SyscallConn()
 	if err != nil {
 		return err

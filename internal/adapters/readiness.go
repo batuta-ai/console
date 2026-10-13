@@ -127,15 +127,7 @@ func privateIdentityDirectories(home string, account domain.Account) bool {
 	base := filepath.Join(home, "accounts")
 	privateHome := filepath.Join(base, account.ID)
 	for i, path := range []string{home, base, privateHome, filepath.Join(privateHome, config)} {
-		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !credentialOwner(info) {
-			return false
-		}
-		if i == 0 {
-			if info.Mode().Perm()&0022 != 0 {
-				return false
-			}
-		} else if info.Mode().Perm() != 0700 {
+		if !identityDirectoryValid(path, i == 0) {
 			return false
 		}
 	}

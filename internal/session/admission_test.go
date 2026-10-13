@@ -18,12 +18,12 @@ func TestPendingAdmissionAndTerminalPersistence(t *testing.T) {
 			m := New(t.TempDir())
 			exited := make(chan domain.Session, 4)
 			m.OnExit = func(s domain.Session) { exited <- s }
-			pending, err := m.StartPending(domain.Session{ID: "pending", AccountID: "a", Work: work, Argv: []string{"/bin/cat"}}, nil, "", 1)
+			pending, err := m.StartPending(domain.Session{ID: "pending", AccountID: "a", Work: work, Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer m.Stop("pending")
-			if extra, err := m.StartPending(domain.Session{ID: "extra", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1); err == nil {
+			if extra, err := m.StartPending(domain.Session{ID: "extra", AccountID: "a", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1); err == nil {
 				m.Stop(extra.Snapshot().ID)
 				t.Fatal("pending start did not reserve capacity")
 			}
@@ -46,7 +46,7 @@ func TestPendingAdmissionAndTerminalPersistence(t *testing.T) {
 					t.Fatalf("late persistence returned stale state: %+v; terminal %+v", s, terminal)
 				}
 			}
-			next, err := m.StartPending(domain.Session{ID: "next", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1)
+			next, err := m.StartPending(domain.Session{ID: "next", AccountID: "a", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +67,7 @@ func TestExitReleasesAdmissionBeforeCallbackCompletes(t *testing.T) {
 			<-release
 		}
 	}
-	first, err := m.StartPending(domain.Session{ID: "first", AccountID: "a", Argv: []string{"/usr/bin/true"}}, nil, "", 1)
+	first, err := m.StartPending(domain.Session{ID: "first", AccountID: "a", Argv: sessionTestArgv(t, []string{"/usr/bin/true"})}, nil, "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestExitReleasesAdmissionBeforeCallbackCompletes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("exit callback not entered")
 	}
-	second, err := m.StartPending(domain.Session{ID: "second", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1)
+	second, err := m.StartPending(domain.Session{ID: "second", AccountID: "a", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1)
 	if err != nil {
 		t.Fatalf("callback retained capacity: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLogOpenFailureReleasesAdmission(t *testing.T) {
 	root := t.TempDir()
 	logs := filepath.Join(root, "logs")
 	m := New(logs)
-	if _, err := m.StartPending(domain.Session{ID: "failed", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1); !errors.Is(err, os.ErrNotExist) {
+	if _, err := m.StartPending(domain.Session{ID: "failed", AccountID: "a", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("post-spawn cleanup lost original log-open error: %v", err)
 	} else {
 		t.Logf("post-spawn failure after group cleanup and sole wait: %v", err)
@@ -110,7 +110,7 @@ func TestLogOpenFailureReleasesAdmission(t *testing.T) {
 	if err := os.Mkdir(logs, 0700); err != nil {
 		t.Fatal(err)
 	}
-	next, err := m.StartPending(domain.Session{ID: "next", AccountID: "a", Argv: []string{"/bin/cat"}}, nil, "", 1)
+	next, err := m.StartPending(domain.Session{ID: "next", AccountID: "a", Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1)
 	if err != nil {
 		t.Fatalf("spawn cleanup leaked reservation: %v", err)
 	}

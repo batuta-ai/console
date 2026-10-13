@@ -10,6 +10,7 @@ import (
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestReadinessRequiresQualifiedCLIAndAuthentication(t *testing.T) {
@@ -24,10 +25,10 @@ func TestReadinessRequiresQualifiedCLIAndAuthentication(t *testing.T) {
 		{"outside-matrix", "gemini", "0.160.0", "adapter_unsupported", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := t.TempDir()
+			path := testfixture.PrivateHome(t)
 			if tc.banner != "" {
 				script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + tc.banner + "'; exit 0; fi\nexit 91\n"
-				if err := os.WriteFile(filepath.Join(path, tc.adapter), []byte(script), 0700); err != nil {
+				if err := testfixture.WriteScript(t, filepath.Join(path, testfixture.ExecutableName(tc.adapter)), []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}
 			}

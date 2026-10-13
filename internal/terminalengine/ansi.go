@@ -494,7 +494,8 @@ func parseOSC7WorkingDirectory(raw string) (WorkingDirectory, bool) {
 	} else {
 		path = raw
 	}
-	if !filepath.IsAbs(path) {
+	// URI and remote-terminal paths keep slash syntax on every receiving OS.
+	if !strings.HasPrefix(path, "/") && !filepath.IsAbs(path) {
 		return WorkingDirectory{}, false
 	}
 	for _, r := range path {

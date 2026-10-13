@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestRecoveryConcurrentOwnedExitNeverBecomesLost(t *testing.T) {
@@ -28,7 +29,7 @@ func TestRecoveryConcurrentOwnedExitNeverBecomesLost(t *testing.T) {
 	}
 	defer func() { close(finish); readers.Wait() }()
 	for n := range 100 {
-		row, err := svc.Session.Start(domain.Session{ID: fmt.Sprintf("owned-exit-%d", n), Argv: []string{"/bin/cat"}, CreatedAt: domain.Now()}, nil, "")
+		row, err := svc.Session.Start(domain.Session{ID: fmt.Sprintf("owned-exit-%d", n), Argv: testfixture.Argv(t, []string{"/bin/cat"}), CreatedAt: domain.Now()}, nil, "")
 		if err != nil {
 			t.Fatal(err)
 		}

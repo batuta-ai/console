@@ -64,5 +64,5 @@ func runningBuild() buildCapability {
 }
 
 func runningRuntime() runtimeCapability {
-	return runtimeCapability{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Selected: runtime.GOOS == "darwin" || runtime.GOOS == "linux", Build: runningBuild()}
+	return runtimeCapability{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Selected: runtime.GOOS == "darwin" || runtime.GOOS == "linux" || runtime.GOOS == "windows", Build: runningBuild()}
 }

@@ -28,7 +28,11 @@ func TestProjectPanelModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph, _ := json.Marshal(map[string]any{"tasks": []any{}, "waves": []any{}})
-	rec := journal.Record{Kind: loop.KindOpened, At: time.Now().UTC(), Graph: graph, Detail: []byte(`{"slug":"demo","workspace":"` + root + `"}`)}
+	detail, err := json.Marshal(map[string]string{"slug": "demo", "workspace": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := journal.Record{Kind: loop.KindOpened, At: time.Now().UTC(), Graph: graph, Detail: detail}
 	if _, err := store.Append("demo-delivery", rec); err != nil {
 		t.Fatal(err)
 	}

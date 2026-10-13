@@ -28,6 +28,14 @@ func prepareRuntimeHome(home string) error {
 	return nil
 }
 
+func defaultRuntimeHome() (string, error) {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".local", "state", "batuta", "console"), nil
+}
+
 func WriteLock(path string, info LockInfo) (*os.File, error) {
 	dir, err := privateDirectory(filepath.Dir(path))
 	if err != nil {

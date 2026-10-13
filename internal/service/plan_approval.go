@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
@@ -91,7 +90,7 @@ func (s *Service) ApprovePlan(ctx context.Context, identity domain.PlanIdentity)
 	if b != identity.Binding {
 		return domain.PlanApproval{}, domain.ErrBindingConflict
 	}
-	if b.DeliveryID != "" || strings.Contains(b.PlanPath, "/done/") {
+	if b.DeliveryID != "" || batuta.IsArchivedPlanPath(b.PlanPath, b.PlanSlug) {
 		return domain.PlanApproval{}, domain.ErrPlanTransition
 	}
 	return s.Store.ApprovePlan(ctx, identity, func() ([]byte, error) {

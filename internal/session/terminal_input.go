@@ -92,14 +92,14 @@ func (in *TerminalInput) Write(ctx context.Context) error {
 		}
 		n := 0
 		if err == nil {
-			n, err = writeTerminalChunk(l.pty, data[:min(len(data), 4096)])
+			n, err = writeTerminalChunk(l.terminalPTY(), data[:min(len(data), 4096)])
 		}
 		l.mu.Unlock()
 		if n > 0 {
 			data = data[n:]
 		}
 		if terminalWouldBlock(err) {
-			if err = waitTerminalWritable(ctx, in.revoked, l.pty); err != nil {
+			if err = waitTerminalWritable(ctx, in.revoked, l.terminalPTY()); err != nil {
 				if errors.Is(err, os.ErrPermission) {
 					return in.revocationError()
 				}

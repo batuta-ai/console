@@ -19,6 +19,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // net.Pipe exercises the real HTTP, WebSocket, client, API, store and PTY paths
@@ -74,7 +75,7 @@ func (l *terminalPipeListener) dial(ctx context.Context, _, _ string) (net.Conn,
 		return nil, net.ErrClosed
 	}
 }
-func terminalFixture(t *testing.T) (*client.Client, *session.Manager) {
+func terminalFixture(t *testing.T, commands ...map[string][]string) (*client.Client, *session.Manager) {
 	t.Helper()
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "fixture.db"))
@@ -112,7 +113,11 @@ func terminalFixture(t *testing.T) (*client.Client, *session.Manager) {
 		}
 	})
 	for _, id := range []string{"a-unrelated", "z-selected"} {
-		pending, err := manager.StartPending(domain.Session{ID: id, Cols: 80, Rows: 24, Argv: []string{"/bin/sh", "-c", "stty raw -echo; printf READY; exec /bin/cat"}}, []string{"HOME=" + root}, root, 0)
+		argv := testfixture.Argv(t, []string{"/bin/sh", "-c", "stty raw -echo; printf READY; exec /bin/cat"})
+		if len(commands) != 0 && commands[0][id] != nil {
+			argv = commands[0][id]
+		}
+		pending, err := manager.StartPending(domain.Session{ID: id, Cols: 80, Rows: 24, Argv: argv}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,9 +170,9 @@ func terminalAwaitFrame(t *testing.T, l *termLink, accept func(terminalFrame) bo
 		}
 	}
 }
-func terminalAttachedFixture(t *testing.T) (model, *session.Manager) {
+func terminalAttachedFixture(t *testing.T, commands ...map[string][]string) (model, *session.Manager) {
 	t.Helper()
-	c, manager := terminalFixture(t)
+	c, manager := terminalFixture(t, commands...)
 	m := New(c).(model)
 	m.sessID = "z-selected"
 	m.width = 80
@@ -281,7 +286,8 @@ func TestTerminalResizeStormKeepsLatest(t *testing.T) {
 }
 
 func TestTerminalActualUpdateRawControlBytes(t *testing.T) {
-	m, manager := terminalAttachedFixture(t)
+	commands, observe := terminalRawInputFixture(t)
+	m, manager := terminalAttachedFixture(t, commands)
 	m.link.offer(terminalAction{operation: "tui"})
 	terminalAwaitFrame(t, m.link, func(f terminalFrame) bool { return f.owned })
 	m.termMode = true
@@ -308,14 +314,7 @@ func TestTerminalActualUpdateRawControlBytes(t *testing.T) {
 		m = next.(model)
 	}
 	want = []byte{'q', 27, 3, 26, 28, 4}
-	var got []byte
-	for len(got) < len(want) {
-		e, err := sub.Next(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, e.Data...)
-	}
+	got := observe(ctx, sub, m.link, len(want))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("child bytes=%x want=%x", got, want)
 	}

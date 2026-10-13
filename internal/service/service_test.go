@@ -9,6 +9,7 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/console/plugins/limits"
 )
 
@@ -20,7 +21,7 @@ func testSvc(t *testing.T) *Service {
 	}
 	t.Cleanup(func() { st.Close() })
 	svc := New(st, session.New(t.TempDir()), limits.New(nil))
-	svc.Home = t.TempDir()
+	svc.Home = testfixture.PrivateHome(t)
 	return svc
 }
 

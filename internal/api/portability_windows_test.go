@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestWindowsCapabilitiesRemainUnsupported(t *testing.T) {
+func TestWindowsCapabilitiesSelectedWithPendingQualification(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	h := (&Server{Token: "synthetic-windows-token"}).Handler()
 	unauthorized := httptest.NewRecorder()
@@ -27,21 +27,25 @@ func TestWindowsCapabilitiesRemainUnsupported(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Runtime.OS != "windows" || got.Runtime.Selected || !reflect.DeepEqual(got.Matrix.Platforms, []string{"darwin", "linux"}) {
-		t.Fatalf("Windows falsely selected: %+v %+v", got.Runtime, got.Matrix)
+	if got.Runtime.OS != "windows" || !got.Runtime.Selected || !reflect.DeepEqual(got.Matrix.Platforms, []string{"darwin", "linux", "windows"}) {
+		t.Fatalf("Windows not selected: %+v %+v", got.Runtime, got.Matrix)
 	}
-	if got.PTY.Available || got.PTY.Supported || got.PTY.Code != "platform_unsupported" || got.Features["pty"] || got.Features["account_fallback"] {
+	if !got.PTY.Available || !got.PTY.Supported || got.PTY.Code != "pty_available" || !got.Features["pty"] || got.Features["account_fallback"] || got.PTY.Qualification.Status != "pending" || got.Matrix.Qualification.Status != "pending" {
 		t.Fatalf("unsafe capabilities: %+v %+v", got.PTY, got.Features)
 	}
 	if len(got.Providers) == 0 {
 		t.Fatal("missing provider diagnostics")
 	}
 	for _, p := range got.Providers {
-		if p.Supported || p.Qualification.Status != "unsupported" || p.Compatibility.Status != "unsupported" || p.AccountReadiness.Status != "not_checked" {
+		if p.Installation.Status != "missing" || p.AccountReadiness.Status != "not_checked" {
 			t.Fatalf("unsafe provider capability: %+v", p)
 		}
-		if p.Selected && (p.Qualification.Code != "platform_unsupported" || p.Compatibility.Code != "platform_unsupported") {
-			t.Fatalf("wrong selected provider refusal: %+v", p)
+		if p.Selected {
+			if !p.Supported || p.Qualification.Status != "pending" || p.Qualification.Code != "native_operation_qualification_pending" || p.Compatibility.Status != "not_checked" || p.Compatibility.Code != "isolated_account_required" {
+				t.Fatalf("wrong selected provider observation: %+v", p)
+			}
+		} else if p.Supported || p.Qualification.Status != "unsupported" || p.Compatibility.Status != "unsupported" {
+			t.Fatalf("unsafe unsupported provider capability: %+v", p)
 		}
 	}
 }
