@@ -15,6 +15,8 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 )
 
+var ErrOwnedHostUnsupported = errors.New("host cannot verify owned process group cleanup")
+
 var ErrInvalidControl = errors.New("control requires web, tui, or none and a client identity")
 
 type Subscriber func([]byte)
@@ -41,6 +43,7 @@ type live struct {
 }
 
 type Manager struct {
+	hostErr       error
 	mu            sync.Mutex
 	live          map[string]*live
 	probes        map[*ownedProcess]struct{}
@@ -56,8 +59,11 @@ type Manager struct {
 }
 
 func New(logs string) *Manager {
-	return &Manager{live: map[string]*live{}, probes: map[*ownedProcess]struct{}{}, logs: logs, accounts: map[string]int{}, shutdownDone: make(chan struct{})}
+	return &Manager{hostErr: ownedHostError(), live: map[string]*live{}, probes: map[*ownedProcess]struct{}{}, logs: logs, accounts: map[string]int{}, shutdownDone: make(chan struct{})}
 }
+
+// HostError reports a platform requirement detected before admitting processes.
+func (m *Manager) HostError() error { return m.hostErr }
 
 func (m *Manager) Live(id string) (*live, bool) {
 	m.mu.Lock()
@@ -91,6 +97,9 @@ func (p *Pending) Persist(write func(domain.Session) error) (domain.Session, err
 // StartPending reserves account capacity before spawning. Nonpositive capacity
 // is unlimited; all account-bound starts still contribute to the same count.
 func (m *Manager) StartPending(sess domain.Session, env []string, dir string, capacity int) (pending *Pending, startErr error) {
+	if m.hostErr != nil {
+		return nil, m.hostErr
+	}
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()

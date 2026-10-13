@@ -76,7 +76,11 @@ func runDaemon(paths runtime.Paths, options ...daemonOptions) (err error) {
 			err = errors.Join(err, st.Close())
 		}
 	}()
-	svc := service.New(st, session.New(paths.Logs), limits.New(limits.Disk{Home: paths.Home}))
+	sessions := session.New(paths.Logs)
+	if err := sessions.HostError(); err != nil {
+		return err
+	}
+	svc := service.New(st, sessions, limits.New(limits.Disk{Home: paths.Home}))
 	svc.Home = paths.Home
 	if len(options) == 1 {
 		svc.CoreExecutable = options[0].CoreExecutable

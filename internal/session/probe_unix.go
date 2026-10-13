@@ -52,6 +52,9 @@ func (w probeWriter) Write(data []byte) (int, error) {
 // Cancellation bounds the caller; Manager retains cleanup until Shutdown drains.
 func (m *Manager) Probe(ctx context.Context, argv, env []string, dir string) (result ProbeResult, probeErr error) {
 	result.ExitCode = -1
+	if m.hostErr != nil {
+		return result, m.hostErr
+	}
 	if len(argv) == 0 || argv[0] == "" {
 		return result, ErrInvalidProbe
 	}

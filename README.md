@@ -48,6 +48,8 @@ to build both binaries without Node.js.
 Git must support `git show-ref --exists` for native mission review; the shared
 checks verify this capability before running tests.
 
+Linux requires a readable `/proc` mount without `hidepid` restrictions to verify owned-group cleanup; unsupported hosts are rejected before the daemon listens. See [session lifecycle](docs/session-lifecycle.md).
+
 ```bash
 export GOWORK=off GOFLAGS=-mod=readonly GOENV=off
 export GOSUMDB=sum.golang.org GONOSUMDB= GOPRIVATE=

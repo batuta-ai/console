@@ -12,6 +12,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func ownedHostError() error {
+	if err := procAbsenceObservable("/proc"); err != nil {
+		return errors.Join(ErrOwnedHostUnsupported, err)
+	}
+	return nil
+}
+
 func signalOwnedGroup(pgid int) error { return unix.Kill(-pgid, unix.SIGKILL) }
 
 // The final signal has been sent, but Cmd.Wait has not reaped the leader yet.
@@ -51,7 +58,7 @@ func waitProcGroupExit(root string, pgid int) error {
 			}
 			fields, err := procStatFields(pid, stat)
 			if err != nil {
-				return err
+				return fmt.Errorf("inspect owned group %d: %w", pgid, err)
 			}
 			group, err := strconv.Atoi(fields[2])
 			if err != nil || group < -1 {

@@ -52,6 +52,8 @@ sem Node.js.
 O Git precisa oferecer `git show-ref --exists` para a revisão nativa de missões;
 os checks compartilhados verificam essa capacidade antes dos testes.
 
+No Linux, o encerramento dos grupos exige um `/proc` legível sem restrições `hidepid`; hosts sem esse recurso são recusados antes de o daemon abrir a porta. Veja o [ciclo de sessões](docs/session-lifecycle.md).
+
 ```bash
 export GOWORK=off GOFLAGS=-mod=readonly GOENV=off
 export GOSUMDB=sum.golang.org GONOSUMDB= GOPRIVATE=

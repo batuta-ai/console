@@ -9,5 +9,6 @@ git_ref_status=0
 git show-ref --exists -- HEAD || git_ref_status=$?
 case "$git_ref_status" in
   0|2) ;;
-  *) echo "Git exact ref-existence lookup required: git show-ref --exists failed (exit $git_ref_status)." >&2; exit 1 ;;
+  129) echo 'Git exact ref-existence lookup required: git show-ref --exists is unsupported (exit 129).' >&2; exit 1 ;;
+  *) echo "Git exact ref-existence lookup required: repository access failed (exit $git_ref_status)." >&2; exit 1 ;;
 esac

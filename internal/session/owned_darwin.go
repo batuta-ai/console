@@ -8,6 +8,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func ownedHostError() error { return nil }
+
 // Called only under the active unreaped-child authority's mutex. Observation
 // resolves Darwin's zombie-only EPERM; it never supplies signaling authority.
 func signalOwnedGroup(pgid int) error {

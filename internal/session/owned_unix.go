@@ -62,6 +62,10 @@ func (p *ownedProcess) signalLocked() error {
 }
 
 func (p *ownedProcess) retire(observeErr error) error {
+	return p.retireWithGroupWait(observeErr, waitOwnedGroupExit)
+}
+
+func (p *ownedProcess) retireWithGroupWait(observeErr error, waitGroup func(int) error) error {
 	p.mu.Lock()
 	if p.retired {
 		err := p.err
@@ -79,7 +83,7 @@ func (p *ownedProcess) retire(observeErr error) error {
 	var groupErr error
 	groupVerified := false
 	if observeErr == nil && (signalErr == nil || errors.Is(signalErr, errGroupExiting)) {
-		groupErr = waitOwnedGroupExit(p.pgid)
+		groupErr = waitGroup(p.pgid)
 		groupVerified = groupErr == nil
 	}
 	p.mu.Lock()
@@ -87,8 +91,12 @@ func (p *ownedProcess) retire(observeErr error) error {
 	if groupVerified && errors.Is(p.err, errGroupExiting) {
 		p.err = nil
 	}
+	if !errors.Is(signalErr, errGroupExiting) {
+		p.err = errors.Join(signalErr, p.err)
+	}
+	p.err = errors.Join(observeErr, p.err, groupErr)
 	p.retired = true
-	return errors.Join(observeErr, p.err, groupErr)
+	return p.err
 }
 
 func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {

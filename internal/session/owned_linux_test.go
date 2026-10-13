@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/core/publication"
 	"golang.org/x/sys/unix"
 )
@@ -219,6 +220,46 @@ func TestNativeCancellationWaitsForDetachedDescendantTermination(t *testing.T) {
 			drain, stop := context.WithTimeout(context.Background(), time.Second)
 			defer stop()
 			if err := m.Shutdown(drain); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRestrictedProcHostRejectsLaunchBeforeSpawning(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "mounts"), []byte("proc /proc proc rw,hidepid=2 0 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"session", "native", "probe"} {
+		t.Run(operation, func(t *testing.T) {
+			m := New(t.TempDir())
+			m.hostErr = errors.Join(ErrOwnedHostUnsupported, procAbsenceObservable(root))
+			marker := filepath.Join(t.TempDir(), "started")
+			argv := []string{"/bin/sh", "-c", `printf started > "$1"`, "fixture", marker}
+			var err error
+			switch operation {
+			case "session":
+				row, e := m.Start(domain.Session{ID: "restricted", Argv: argv}, nil, "")
+				err = e
+				if e == nil {
+					_, _ = m.Stop(row.ID)
+				}
+			case "native":
+				_, err = (NativeRunner{Manager: m}).Run(context.Background(), publication.Command{Executable: argv[0], Args: argv[1:]})
+			case "probe":
+				_, err = m.Probe(context.Background(), argv, nil, "")
+			}
+			if !errors.Is(err, ErrOwnedHostUnsupported) {
+				t.Errorf("unsupported host launch: %v", err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Errorf("operation spawned before capability rejection: %v", err)
+			}
+			if m.closing {
+				t.Error("unsupported operation permanently closed admission")
+			}
+			if err := m.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 		})
