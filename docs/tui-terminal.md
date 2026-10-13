@@ -16,7 +16,7 @@ Versions checked against official Go module proxy metadata on 2026-10-07:
 | `github.com/charmbracelet/x/cellbuf` | `v0.0.15` | Necessary current transitive version for ANSI compatibility |
 | `golang.org/x/text` | `v0.42.0` | Current version of the newly introduced transitive module |
 
-Pin the selected module, checksums and necessary graph. Preserve Go 1.27.1, Core 49 and every existing dependency version. Portalis brings legacy Bubble Tea/Lip Gloss modules as dependencies; they are not used to replace Console's host, state or styling. The old transitive cellbuf version failed to compile against the existing ANSI version; the current published cellbuf resolved that failure. All ten newly introduced modules were checked against official current metadata in the isolated probe; no original Console pin changed. No floating dependency installation occurs during qualification.
+Pin the selected module, checksums and necessary graph. Preserve Core 49 and every existing dependency version; the current SDK selection is Go 1.27.2. The isolated dependency probe on 2026-10-07 preserved the then-selected Go 1.27.1 SDK. Portalis brings legacy Bubble Tea/Lip Gloss modules as dependencies; they are not used to replace Console's host, state or styling. The old transitive cellbuf version failed to compile against the existing ANSI version; the current published cellbuf resolved that failure. All ten newly introduced modules were checked against official current metadata in the isolated probe; no original Console pin changed. No floating dependency installation occurs during qualification.
 
 | Approach | Decision and evidence |
 | --- | --- |

@@ -23,7 +23,7 @@ terminal rendering is outside this journey and the warning is not suppressed.
 npm --prefix web run test:journey
 ```
 
-Requires Go 1.27.1, cached Go modules or access to download them, and permission
+Requires Go 1.27.2, cached Go modules or access to download them, and permission
 to bind loopback sockets. The script builds the current consoled in a temporary
 directory, launches it with a disposable runtime/catalog, HOME and workspace,
 and a credential-free environment with an empty PATH. It checks unauthorized

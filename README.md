@@ -1,3 +1,12 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme-header-console-dark.png">
+  <img src="assets/readme-header-console-light.png" width="100%" alt="batuta-ai / console — Operação local de agentes: daemon, TUI e web. Local agent operation: daemon, TUI and web.">
+</picture>
+
+> 🇧🇷 [Versão em português](README.pt-BR.md)
+
+> *Quem rege não toca.* — The conductor does not play.
+
 # Batuta Console
 
 Local operator surface for agent CLIs. A per-user Go daemon owns sessions
@@ -32,10 +41,14 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 ## Build and install from source
 
-Use Go 1.27.1 or newer and run these commands from a checkout of the desired
-Console revision (the qualified SDK here is Go 1.27.1). `go.mod` and `go.sum` pin the dependency graph, including
+Use Go 1.27.2 or newer and run these commands from a checkout of the desired
+Console revision (the qualified SDK here is Go 1.27.2). `go.mod` and `go.sum` pin the dependency graph, including
 Batuta core `v1.1.0-beta.49`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
+Git must support `git show-ref --exists` for native mission review; the shared
+checks verify this capability before running tests.
+
+Linux requires a readable `/proc` mount without `hidepid` restrictions to verify owned-group cleanup; unsupported hosts are rejected before the daemon listens. See [session lifecycle](docs/session-lifecycle.md).
 
 ```bash
 export GOWORK=off GOFLAGS=-mod=readonly GOENV=off
@@ -194,9 +207,9 @@ terminal is observation; it is not replay of input, Start, Resume or Answer.
 Console uses its own `v0.1.0-beta.N` sequence, independent of the linked
 Core version. The first published version will be `v0.1.0-beta.1`; the manifest
 seed `0.1.0-beta.0` is unpublished bookkeeping. No Console release has been
-published; repository destination/visibility remain undefined.
+published. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console).
 
-With Go 1.27.1, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
+With Go 1.27.2, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
 
 ```sh
 sh scripts/check-release.sh       # non-root source checks; failures stop the run
@@ -216,7 +229,8 @@ qualification remain pending.
 The intended product matrix is **Codex and Claude on macOS, Linux and native
 Windows**. The current beta packaging configuration covers macOS/Linux only.
 Native operational and full provider, mission, browser and TUI qualification
-remain pending. Native Windows portability and ConPTY/provider QA are Tasks42–44;
+remain pending. Native Windows build portability (Task42) is complete;
+ConPTY/runtime and provider QA (Tasks43–44) remain pending;
 the current PTY start/resize implementation rejects Windows operations. WSL
 proves Linux only. Other adapter catalog entries remain outside this matrix.
 Reliability work remains open: sporadic Linux fork `EPERM`, event-fixture
@@ -313,7 +327,8 @@ never accepts a secret.
 - [Domain](docs/domain.md)
 - [HTTP and WebSocket API](docs/api.md)
 
-Repository documentation is English. Product UI strings (TUI and web) ship
+Repository documentation is English, with a Brazilian Portuguese sibling
+README. Product UI strings (TUI and web) ship
 in English with a Portuguese pack selected by `BATUTA_LANG`, then `LC_ALL`
 or `LANG`. The web client reads `lang` from `GET /v0/capabilities` so it
 matches the daemon, not the browser locale.
@@ -321,3 +336,14 @@ matches the daemon, not the browser locale.
 Language changes translate product labels and official/custom skill summaries.
 Stored squad names, roles and purposes (including seeded templates), user text,
 provider output, source bytes, IDs and receipt/evidence provenance remain data.
+
+## Repository navigation and qualification notes
+
+- [Documentation index](docs/README.md)
+- [Local presentation assets and regeneration](docs/branding.md)
+
+The Windows build work (Task42) is complete; native Windows runtime (Task43)
+is unqualified and excluded from this source branch. Real-provider operation
+(Task44) and final release qualification remain pending. Build evidence does
+not establish operational support. The original operator documentation above
+retains its qualified source boundaries; no Console package or tag is published.

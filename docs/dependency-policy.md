@@ -201,16 +201,25 @@ The accepted independent Console numbering is `v0.1.0-beta.N`, with
 `v0.1.0-beta.1` as the first published version and `0.1.0-beta.0` only an
 unpublished manifest seed. No Console release has been published; destination
 and visibility remain undefined. The current linked Core graph is beta49.
-The language/check tools for this preparation are Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
+The language/check tools exercised for this preparation were Go 1.27.1, Node 26.10.0, npm 12.2.0, GoReleaser 2.18.2,
 govulncheck 1.8.0 and actionlint 1.7.12. That infrastructure preparation changed
 only packageManager metadata; product npm dependencies and the lockfile graph
 remain unchanged. Earlier qualification tables above retain their original dates and authority.
 
 See [release.md](release.md) for the shared checks, local snapshots, reviewed
 release-PR pipeline, exact action pins and local sandbox limitations. The workflow
-configuration has not run on GitHub. Native Windows Tasks42–44, full Codex/Claude
+configuration has not run on GitHub. Current Task42 build portability is complete, while
+native Windows Task43 runtime and Task44 provider qualification, full Codex/Claude
 provider/web/TUI QA, Core official CLI binary security, stable Core/plugin contract
 and Task37's final full release matrix remain pending. WSL qualifies Linux only.
+
+## Current Go SDK selection — 2026-10-12
+
+The repository is now public at [batuta-ai/console](https://github.com/batuta-ai/console), and its source-check and beta-release workflows are enabled. The release workflow inherits the organization's `RELEASE_PLEASE_TOKEN`; no credential value was copied into the repository.
+
+The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. This SDK update preserves the Core beta49, Go module checksum and npm dependency graphs. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
+
+Native mission review requires Git support for `git show-ref --exists`, which Core uses to prove exact parked-ref absence. The shared tooling check rejects unsupported versions; current qualification uses Git 2.56.0.
 
 ## Published Core approved-snapshot API adoption — 2026-10-06
 
@@ -229,3 +238,32 @@ Console does not yet call native `loop.New` or `loop.Resume`. Task21 must bind
 the immutable Console receipt and snapshot to native delivery ownership.
 Official Core CLI binary qualification, full provider/web/TUI operation, native
 Windows and stable Core/plugin publication remain separate open gates.
+
+## PTY compatibility exception — 2026-10-12
+
+Console pins `github.com/creack/pty v1.1.25-0.20260601142114-9246436fffe8`
+as a deliberate exception to the published-release policy. The latest official
+tag, v1.1.24, still contains the wrong-slave allocation bug: an early
+pointer-to-uintptr conversion can become stale when GC moves a shrinking stack.
+The minimal official upstream snapshot is immutable commit
+[`9246436fffe85773950f49dcc73de333da5212e6`](https://github.com/creack/pty/commit/9246436fffe85773950f49dcc73de333da5212e6),
+merged through [PR215](https://github.com/creack/pty/pull/215) on June 1.
+[PR216](https://github.com/creack/pty/pull/216) describes the same bug.
+
+The exact commit was resolved through the official Go proxy and checksum
+database. The module archive checksums and four affected Go files were verified
+against the official commit. An independent native Linux
+regression using an overlay, without product source changes, failed on v1.1.24
+in 0.67 seconds: master index 6 selected `/dev/pts/0` (device 0), while both
+syscalls returned 0. The red regression and official provenance are retained in
+the ignored `.batuta/runs/2026-10-12-console-ci-repair` evidence directory.
+The [native regression](../internal/session/pty_gc_linux_test.go) protects the
+master/slave pairing under GC pressure.
+
+Only the PTY version and checksum pair change; Go 1.27.2, Core beta49 and all
+other Go and npm pins remain unchanged, with no replacement. The historical
+v1.1.24 qualification and prior SDK facts above retain their dated authority.
+Source compatibility checks for this snapshot include native macOS and Linux
+sessions, regression tests, race checks, the full source contract, public CI and
+Windows builds. Native Windows runtime and provider qualification remain
+separate gates.

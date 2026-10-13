@@ -18,6 +18,9 @@ import (
 
 func (m *Manager) runNativeCommand(ctx context.Context, command publication.Command, explicit []string, graceful bool) (result publication.CommandResult, runErr error) {
 	result.ExitCode = -1
+	if m.hostErr != nil {
+		return result, m.hostErr
+	}
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()

@@ -71,15 +71,41 @@ func (p *ownedProcess) signalLocked() error {
 }
 
 func (p *ownedProcess) retire(observeErr error) error {
+	return p.retireWithGroupWait(observeErr, waitOwnedGroupExit)
+}
+
+func (p *ownedProcess) retireWithGroupWait(observeErr error, waitGroup func(int) error) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.retired {
+		err := p.err
+		p.mu.Unlock()
+		return errors.Join(observeErr, err)
+	}
 	if !errors.Is(observeErr, errAnchorLost) {
 		// Sweep once more after leader exit, before irrevocably permitting reap.
 		p.signaled = false
 		_ = p.signalLocked()
 	}
+	signalErr := p.err
+	p.mu.Unlock()
+	// Keep the unreaped anchor while observing; Stop must not wait on this lock.
+	var groupErr error
+	groupVerified := false
+	if observeErr == nil && (signalErr == nil || errors.Is(signalErr, errGroupExiting)) {
+		groupErr = waitGroup(p.pgid)
+		groupVerified = groupErr == nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if groupVerified && errors.Is(p.err, errGroupExiting) {
+		p.err = nil
+	}
+	if !errors.Is(signalErr, errGroupExiting) && !errors.Is(p.err, signalErr) {
+		p.err = errors.Join(signalErr, p.err)
+	}
+	p.err = errors.Join(observeErr, p.err, groupErr)
 	p.retired = true
-	return errors.Join(observeErr, p.err)
+	return p.err
 }
 
 func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 )
 
+func ownedHostError() error { return nil }
+
 type ownedProcess struct{}
 
 func newOwnedProcess(cmd *exec.Cmd) *ownedProcess    { return &ownedProcess{} }

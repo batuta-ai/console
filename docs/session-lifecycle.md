@@ -20,6 +20,13 @@ without `hidepid` restrictions; hidden PIDs or an unavailable proc filesystem
 are unverified. This deliberately avoids interpreting restricted visibility as
 physical absence.
 
+Owned-group cleanup also requires a complete, readable `/proc` mount on Linux.
+Manager checks this requirement at construction, and the daemon rejects an
+unsupported host before listening. Session, native-command and diagnostic
+launches report `ErrOwnedHostUnsupported` before spawning; this capability
+failure does not close admission or record an unresolved cleanup. Final group
+observation still checks visibility because the mount may change after startup.
+
 A fast exit may leave no captured identity. Capture errors are logged and leave
 identity empty; they do not weaken pending admission or turn an already observed
 exit back into running. Initial persistence and exit observation share the
