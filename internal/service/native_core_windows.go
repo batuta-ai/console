@@ -75,7 +75,7 @@ func nativeCoreShellPath() (string, error) {
 	}
 	git, err := exec.LookPath("git")
 	if err != nil {
-		return "", err
+		return "", errors.Join(domain.ErrExecutionUnavailable, err)
 	}
 	// Git for Windows installs the actual MSYS shell beside its native cmd
 	// directory. Resolve that executable; neither cmd.exe nor a script is a
@@ -265,6 +265,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 	}
 	var state string
 	var outcome, parentCause, cleanup error
+	completed := false
 	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).Exchange(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(callback context.Context, input io.Reader, output io.WriteCloser) error {
 		stream := &nativeCoreStream{reader: input, writer: output}
 		frame, err := stream.receive()
@@ -358,6 +359,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 				}
+				completed = true
 				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
 					return err
@@ -377,6 +379,17 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 	})
 	if result.ExitCode != 0 && exchangeErr == nil {
 		exchangeErr = fmt.Errorf("native Core helper exited %d", result.ExitCode)
+	}
+	if !completed && exchangeErr != nil {
+		if !active.Load() && (errors.Is(exchangeErr, io.EOF) || errors.Is(exchangeErr, io.ErrUnexpectedEOF)) {
+			exchangeErr = errors.Join(domain.ErrExecutionUnavailable, exchangeErr)
+		}
+		if diagnostic := strings.TrimSpace(result.Stderr); diagnostic != "" {
+			if len(diagnostic) > 4096 {
+				diagnostic = diagnostic[:4096]
+			}
+			exchangeErr = errors.Join(exchangeErr, fmt.Errorf("native Core helper: %s", diagnostic))
+		}
 	}
 	if cleanup != nil || errors.Is(exchangeErr, session.ErrNativeCleanupUnresolved) {
 		s.recordNativeCleanup(errors.Join(cleanup, exchangeErr))
