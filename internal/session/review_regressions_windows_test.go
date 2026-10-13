@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -56,17 +55,20 @@ func TestWindowsExchangeProtocolTimeoutKeepsCleanManager(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	foreign := task43ForeignSibling(t)
-	var birth task43ExchangeBirth
+	var witnesses []windows.Handle
 	result, err := runner.Exchange(ctx, task43ExchangeCommand(t, "hold", "owned"), func(_ context.Context, output io.Reader, _ io.WriteCloser) error {
-		var err error
-		birth, err = task43ExchangeReceiveBirth(output)
+		birth, err := task43ExchangeReceiveBirth(output)
+		if err == nil {
+			for _, identity := range []string{birth.Root, birth.Child} {
+				witnesses = append(witnesses, task43ObserveLifetimeChild(t, identity))
+			}
+		}
 		return err
 	})
 	if result.ExitCode != -1 || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("protocol timeout was not reported", result.ExitCode, err)
 	}
-	for _, identity := range []string{birth.Root, birth.Child} {
-		process := task43ObserveLifetimeChild(t, identity)
+	for _, process := range witnesses {
 		if status, err := windows.WaitForSingleObject(process, 0); err != nil || status != windows.WAIT_OBJECT_0 {
 			t.Fatal("protocol timeout left owned process alive", status, err)
 		}
@@ -87,11 +89,9 @@ func TestWindowsNativeConsolePreservesLookupFailure(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	command := exec.Command(filepath.Join(home, "missing-owned-executable.exe"))
-	command.Env = env
 	// Go records the lookup failure only for a bare executable name.
 	t.Setenv("PATH", home)
-	command = exec.Command("missing-owned-executable")
+	command := exec.Command("missing-owned-executable")
 	command.Env = env
 	if command.Err == nil {
 		t.Fatal("real lookup did not fail")
