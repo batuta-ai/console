@@ -381,12 +381,12 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 		exchangeErr = fmt.Errorf("native Core helper exited %d", result.ExitCode)
 	}
 	if !completed && exchangeErr != nil {
-		if !active.Load() && (errors.Is(exchangeErr, io.EOF) || errors.Is(exchangeErr, io.ErrUnexpectedEOF)) {
+		if !active.Load() && job.ctx.Err() == nil && !errors.Is(exchangeErr, context.Canceled) && (errors.Is(exchangeErr, io.EOF) || errors.Is(exchangeErr, io.ErrUnexpectedEOF)) {
 			exchangeErr = errors.Join(domain.ErrExecutionUnavailable, exchangeErr)
 		}
 		if diagnostic := strings.TrimSpace(string(result.Stderr)); diagnostic != "" {
 			if len(diagnostic) > 4096 {
-				diagnostic = diagnostic[:4096]
+				diagnostic = strings.ToValidUTF8(diagnostic[:4096], "")
 			}
 			exchangeErr = errors.Join(exchangeErr, fmt.Errorf("native Core helper: %s", diagnostic))
 		}

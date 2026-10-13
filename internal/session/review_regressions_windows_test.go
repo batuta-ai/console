@@ -57,15 +57,41 @@ func TestWindowsExchangeProtocolTimeoutKeepsCleanManager(t *testing.T) {
 	defer cancel()
 	foreign := task43ForeignSibling(t)
 	var witnesses []windows.Handle
-	result, err := runner.Exchange(ctx, task43ExchangeCommand(t, "hold", "owned"), func(_ context.Context, output io.Reader, _ io.WriteCloser) error {
-		birth, err := task43ExchangeReceiveBirth(output)
-		if err == nil {
-			for _, identity := range []string{birth.Root, birth.Child} {
-				witnesses = append(witnesses, task43ObserveLifetimeChild(t, identity))
+	birthReady := make(chan task43ExchangeBirth, 1)
+	observed := make(chan struct{})
+	type exchangeResult struct {
+		result publication.CommandResult
+		err    error
+	}
+	finished := make(chan exchangeResult, 1)
+	go func() {
+		result, err := runner.Exchange(ctx, task43ExchangeCommand(t, "hold", "owned"), func(_ context.Context, output io.Reader, _ io.WriteCloser) error {
+			birth, err := task43ExchangeReceiveBirth(output)
+			if err != nil {
+				return err
 			}
+			birthReady <- birth
+			select {
+			case <-observed:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		finished <- exchangeResult{result, err}
+	}()
+	select {
+	case birth := <-birthReady:
+		for _, identity := range []string{birth.Root, birth.Child} {
+			witnesses = append(witnesses, task43ObserveLifetimeChild(t, identity))
 		}
-		return err
-	})
+	case <-ctx.Done():
+		close(observed)
+		t.Fatal(ctx.Err())
+	}
+	close(observed)
+	ended := <-finished
+	result, err := ended.result, ended.err
 	if result.ExitCode != -1 || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("protocol timeout was not reported", result.ExitCode, err)
 	}

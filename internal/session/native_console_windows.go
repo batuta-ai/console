@@ -80,8 +80,8 @@ func newWindowsCommandStreams() (*windowsCommandStreams, error) {
 // explicit standard streams are inherited by the freshly born command.
 func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (exitCode int, runErr error) {
 	exitCode = -1
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	streams, err := newWindowsCommandStreams()
 	if err != nil {
 		return exitCode, err
@@ -101,11 +101,11 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 			m.mu.Unlock()
 			if cleanup != nil || errors.Is(runErr, ErrNativeCleanupUnresolved) {
 				m.CloseAdmission()
-				cleanup := errors.Join(ErrNativeCleanupUnresolved, cleanup, runErr)
-				m.recordCleanup(cleanup, cleanup)
+				unresolved := errors.Join(ErrNativeCleanupUnresolved, runErr)
+				m.recordCleanup(unresolved, unresolved)
 			}
 		}
-		runErr = errors.Join(runErr, ctx.Err())
+		runErr = errors.Join(runErr, context.Cause(ctx))
 	}()
 	terminal, process, err := startWindowsConsole(cmd, 80, 24, streams.children)
 	if err != nil {
@@ -128,14 +128,14 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	copyOutput := func(destination io.Writer, source io.Reader) {
 		_, err := io.Copy(destination, source)
 		if err != nil {
-			cancel()
+			cancel(err)
 		}
 		ioDone <- err
 	}
 	go copyOutput(cmd.Stdout, streams.output)
 	go copyOutput(cmd.Stderr, streams.stderr)
 	owned.mu.Lock()
-	owned.cancel = cancel
+	owned.cancel = func() { cancel(context.Canceled) }
 	owned.mu.Unlock()
 	m.mu.Lock()
 	m.probes[owned] = struct{}{}
@@ -151,7 +151,7 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 		done <- errors.Join(cleanup, wait)
 	}()
 	if closing {
-		cancel()
+		cancel(context.Canceled)
 	}
 	select {
 	case err = <-done:
