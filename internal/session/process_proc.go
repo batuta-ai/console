@@ -65,7 +65,7 @@ func parseProcIdentity(pid int, stat, boot []byte) (ProcessObservation, error) {
 
 func procStatFields(pid int, stat []byte) ([]string, error) {
 	invalid := func() ([]string, error) {
-		return nil, fmt.Errorf("invalid proc birth record for PID %d", pid)
+		return nil, fmt.Errorf("invalid proc stat record for PID %d", pid)
 	}
 	text := string(stat)
 	open, close := strings.IndexByte(text, '('), strings.LastIndexByte(text, ')')

@@ -91,7 +91,7 @@ func (p *ownedProcess) retireWithGroupWait(observeErr error, waitGroup func(int)
 	if groupVerified && errors.Is(p.err, errGroupExiting) {
 		p.err = nil
 	}
-	if !errors.Is(signalErr, errGroupExiting) {
+	if !errors.Is(signalErr, errGroupExiting) && !errors.Is(p.err, signalErr) {
 		p.err = errors.Join(signalErr, p.err)
 	}
 	p.err = errors.Join(observeErr, p.err, groupErr)

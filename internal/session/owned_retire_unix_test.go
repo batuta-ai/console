@@ -5,6 +5,7 @@ package session
 import (
 	"errors"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -93,5 +94,15 @@ func TestOwnedRetireClearsOnlyVerifiedPendingError(t *testing.T) {
 				t.Fatalf("repeated retirement: %v", again)
 			}
 		})
+	}
+}
+
+func TestOwnedRetireReportsNonpendingSignalFailureOnce(t *testing.T) {
+	_, owned := exitedOwnedFixture(t)
+	failure := errors.New("retained signal denial")
+	owned.err = failure
+	err := owned.retire(nil)
+	if !errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1 {
+		t.Fatalf("signal failure duplicated or lost: %v", err)
 	}
 }
