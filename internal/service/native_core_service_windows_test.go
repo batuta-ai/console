@@ -223,6 +223,7 @@ func task43CoreParentImage(t *testing.T, consoled, home, mode string) string {
 	_, build := task43CoreHome(t)
 	source := fmt.Sprintf(`package main
 import (
+ "fmt"
  "encoding/binary"
  "encoding/json"
  "io"
@@ -249,6 +250,7 @@ func receive() {
 func main() {
  if os.Getenv("OPENAI_API_KEY")!="" || os.Getenv("ANTHROPIC_API_KEY")!="" {os.Exit(90)}
  if os.WriteFile(record,[]byte(os.Getenv("HOME")),0600)!=nil {os.Exit(76)}
+ if mode=="pre_hello_exit" {fmt.Fprintln(os.Stderr,"owned startup diagnostic");os.Exit(1)}
  if mode=="relay" || mode=="crash" {
   c:=exec.Command(image,"--native-core"); c.Stdin,c.Stdout,c.Stderr=os.Stdin,os.Stdout,os.Stderr; c.Env=os.Environ()
   if c.Start()!=nil {os.Exit(77)}
@@ -262,8 +264,20 @@ func main() {
  var born,ended,kernel,user windows.Filetime
  if windows.GetProcessTimes(windows.CurrentProcess(),&born,&ended,&kernel,&user)!=nil {os.Exit(80)}
  h["created"]=uint64(born.HighDateTime)<<32|uint64(born.LowDateTime)
+ if mode=="unqualified_hello" {h["core_sum"]="unqualified-owned-fixture"}
  send(map[string]any{"type":"hello","hello":h});receive()
  switch mode {
+ case "foreign_argv":
+  send(map[string]any{"type":"ready","id":1});receive()
+  root,e:=os.Getwd();if e!=nil {os.Exit(86)}
+  send(map[string]any{"type":"guard","id":2,"guard":map[string]any{"executable":image,"directory":root,"args":[]string{"exec","--model","not-admitted","--json","owned prompt"}}})
+  var n uint32;if binary.Read(os.Stdin,binary.LittleEndian,&n)!=nil || n==0 || n>4<<20 {os.Exit(87)}
+  payload:=make([]byte,n);if _,e:=io.ReadFull(os.Stdin,payload);e!=nil {os.Exit(88)}
+  var response struct {Error *struct {Invalid bool } }
+  if json.Unmarshal(payload,&response)!=nil {os.Exit(89)}
+  done:=map[string]any{"state":"done"}
+  if response.Error!=nil && response.Error.Invalid {done=map[string]any{"state":"","error":map[string]any{"message":"owned unbound argv refused","invalid":true}}}
+  send(map[string]any{"type":"done","done":done});receive()
  case "duplicate_ready": send(map[string]any{"type":"ready","id":1});receive();send(map[string]any{"type":"ready","id":2})
  case "guard_before_ready":send(map[string]any{"type":"guard","id":1,"guard":map[string]any{}})
  case "nonmonotonic":send(map[string]any{"type":"ready","id":2})
