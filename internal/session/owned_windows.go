@@ -21,6 +21,8 @@ import (
 // WinBase.h defines ProcThreadAttributeJobList = 13, with the input bit set.
 const windowsJobListAttribute = 0x0002000d
 
+func ownedHostError() error { return nil }
+
 type windowsJobAccounting struct {
 	TotalUserTime             int64
 	TotalKernelTime           int64
