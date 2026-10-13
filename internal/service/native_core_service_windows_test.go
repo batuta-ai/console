@@ -269,6 +269,7 @@ func main() {
  h["created"]=uint64(born.HighDateTime)<<32|uint64(born.LowDateTime)
  if mode=="unqualified_hello" {h["core_sum"]="unqualified-owned-fixture"}
  send(map[string]any{"type":"hello","hello":h});receive()
+ if mode=="unqualified_hello" {if os.WriteFile(filepath.Join(filepath.Dir(record),"unqualified-start"),[]byte("start received"),0600)!=nil {os.Exit(92)}}
  switch mode {
  case "foreign_argv":
   send(map[string]any{"type":"ready","id":1});receive()

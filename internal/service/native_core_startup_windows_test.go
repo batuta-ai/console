@@ -89,6 +89,9 @@ func TestWindowsNativeCoreParentRejectsUnqualifiedHello(t *testing.T) {
 	if state != "" || active || !errors.Is(err, domain.ErrExecutionUnavailable) {
 		t.Fatal("unqualified child hello was accepted", state, active, err)
 	}
+	if _, err := os.Stat(home + string(os.PathSeparator) + "unqualified-start"); !os.IsNotExist(err) {
+		t.Fatal("unqualified helper received start authority", err)
+	}
 	if _, err := os.Stat(home + string(os.PathSeparator) + "native-launches"); !os.IsNotExist(err) {
 		t.Fatal("unqualified helper submitted worker", err)
 	}
