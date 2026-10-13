@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	stdruntime "runtime"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestDaemonRejectsRestrictedProcBeforeListener(t *testing.T) {
 	binary := filepath.Join(fixture, "consoled-host.test")
 	// Only the native reader's filesystem path changes. Constructor and startup
 	// guards are real code; the installed daemon gains no fixture setting.
-	build := exec.Command("go", "test", "-race", "-c", "-overlay", overlayFile, "-o", binary, ".")
+	build := exec.Command(filepath.Join(stdruntime.GOROOT(), "bin", "go"), "test", "-c", "-overlay", overlayFile, "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build restricted host fixture: %v\n%s", err, output)
 	}
