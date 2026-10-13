@@ -384,7 +384,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 		if !active.Load() && (errors.Is(exchangeErr, io.EOF) || errors.Is(exchangeErr, io.ErrUnexpectedEOF)) {
 			exchangeErr = errors.Join(domain.ErrExecutionUnavailable, exchangeErr)
 		}
-		if diagnostic := strings.TrimSpace(result.Stderr); diagnostic != "" {
+		if diagnostic := strings.TrimSpace(string(result.Stderr)); diagnostic != "" {
 			if len(diagnostic) > 4096 {
 				diagnostic = diagnostic[:4096]
 			}
