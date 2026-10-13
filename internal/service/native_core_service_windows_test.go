@@ -224,6 +224,7 @@ func task43CoreParentImage(t *testing.T, consoled, home, mode string) string {
 	source := fmt.Sprintf(`package main
 import (
  "fmt"
+ "strings"
  "encoding/binary"
  "encoding/json"
  "io"
@@ -251,6 +252,8 @@ func main() {
  if os.Getenv("OPENAI_API_KEY")!="" || os.Getenv("ANTHROPIC_API_KEY")!="" {os.Exit(90)}
  if os.WriteFile(record,[]byte(os.Getenv("HOME")),0600)!=nil {os.Exit(76)}
  if mode=="pre_hello_exit" {fmt.Fprintln(os.Stderr,"owned startup diagnostic");os.Exit(1)}
+ if mode=="long_early_diagnostic" {fmt.Fprint(os.Stderr,strings.Repeat("x",4095)+"éDIAGNOSTIC-END");os.Exit(1)}
+ if mode=="pre_hello_hold" {e,err:=windows.CreateEvent(nil,1,0,nil);if err!=nil {os.Exit(91)};defer windows.CloseHandle(e);windows.WaitForSingleObject(e,windows.INFINITE);return}
  if mode=="relay" || mode=="crash" {
   c:=exec.Command(image,"--native-core"); c.Stdin,c.Stdout,c.Stderr=os.Stdin,os.Stdout,os.Stderr; c.Env=os.Environ()
   if c.Start()!=nil {os.Exit(77)}

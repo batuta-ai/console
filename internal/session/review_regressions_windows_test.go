@@ -64,8 +64,9 @@ func TestWindowsExchangeProtocolTimeoutKeepsCleanManager(t *testing.T) {
 		err    error
 	}
 	finished := make(chan exchangeResult, 1)
+	command := task43ExchangeCommand(t, "hold", "owned")
 	go func() {
-		result, err := runner.Exchange(ctx, task43ExchangeCommand(t, "hold", "owned"), func(_ context.Context, output io.Reader, _ io.WriteCloser) error {
+		result, err := runner.Exchange(ctx, command, func(_ context.Context, output io.Reader, _ io.WriteCloser) error {
 			birth, err := task43ExchangeReceiveBirth(output)
 			if err != nil {
 				return err
@@ -85,9 +86,13 @@ func TestWindowsExchangeProtocolTimeoutKeepsCleanManager(t *testing.T) {
 		for _, identity := range []string{birth.Root, birth.Child} {
 			witnesses = append(witnesses, task43ObserveLifetimeChild(t, identity))
 		}
+	case early := <-finished:
+		close(observed)
+		t.Fatal("exchange ended before birth", early.result.ExitCode, early.err)
 	case <-ctx.Done():
 		close(observed)
-		t.Fatal(ctx.Err())
+		ended := <-finished
+		t.Fatal(ctx.Err(), ended.err)
 	}
 	close(observed)
 	ended := <-finished
