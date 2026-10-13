@@ -5,6 +5,117 @@ unsupported until Task43 qualifies effective protection, process ownership and
 ConPTY. Cross-compilation and WSL2 do not qualify native Windows behavior. Real
 Codex/Claude provider qualification belongs to Task44.
 
+## Fixture command and scope — 2026-10-13
+
+```sh
+sh scripts/qualify-release.sh --fixtures
+```
+
+This is the only supported mode, for native macOS/Linux with Go 1.27.2,
+Node 26.10.0, npm 12.2.0, cached pinned Go modules, loopback sockets and PTYs.
+Select the pinned tools on PATH (and GOROOT if set) before running. The command
+uses an owned temporary build cache, HOME and output directory; `GOMODCACHE`
+may point to a prepared module cache. Module downloads are disabled. It prints
+exact stage commands, fails on errors/timeouts/skips, and requires every named
+test both to exist before selection and to produce a passing test event.
+The cache must already contain both Console's pinned build list and the pinned
+Core release's own build list, including their checksum records. The API journey
+builds the Core CLI from its module directory, while the TUI journey builds it
+from Console's module context. Prepare both lists before offline qualification:
+
+```sh
+go mod download
+core_dir=$(go list -m -f '{{.Dir}}' github.com/batuta-ai/core)
+(cd "$core_dir" && go mod download)
+```
+
+`GOPROXY=off` keeps resolution offline, while `GOSUMDB=sum.golang.org` and
+empty private/no-sum exclusions retain public checksum policy. `go mod verify`
+checks cached module integrity in both module contexts before test inventory or
+builds. A missing or modified cached module stops qualification.
+Missing `scripts/qualify-release.sh` was the baseline missing-capability red,
+not a product behavior regression.
+
+Fresh current-source console/consoled builds report public `-version` JSON;
+the command compares diagnostic fields with the SDK's `go version -m -json`
+output and the current Git revision. It checks Go and unreplaced Core
+`v1.1.0-beta.49`, preserving the observed module version (including a Go-derived
+pseudo-version) while requiring release labels to remain development/unknown/unset.
+The final PASS line records the observed revision and modified state; a dirty
+source run qualifies those current bytes, rather than the commit alone.
+It then runs `web/tests/daemon-journey.mjs`, which builds its own
+current consoled and restarts that same binary against one disposable catalog.
+The HTTP journey covers two accounts/vaults, a custom squad revision, two
+independent mission snapshots, configuration/init-negative cases and persisted
+authenticated rereads. It performs no successful login/init or model execution.
+Both normal daemon stops require exit zero without a signal or forced kill;
+the original five-second SIGKILL fallback still drains a stuck owned child.
+
+Stage deadlines are 180 seconds by default (including builds, module verification
+and test inventory), 10 seconds for cache/revision/build-information/diagnostic
+reads, 240 seconds for the HTTP journey, and 22 minutes for each fixture package.
+Go test inventory uses `-timeout=120s`; fixture execution uses `-timeout=20m`,
+admitting the heap fixture's unchanged 10-minute context plus the other tests
+and cleanup. Stage termination escalates after 10 seconds. The HTTP journey's
+original build/startup/request/stop deadlines remain 180/10/5/5 seconds.
+
+The required fixture list in the script joins these existing proofs:
+
+- `TestJourneyPublicCoreQuestionResumeAndRestart`: model-driven TUI, pinned
+  public Core, synthetic CLIs, exact approval/question/resume, two missions
+  and service/store restart. This is not full daemon execution restart.
+- `TestJourneyRealDaemonPlanningBindingApprovalTwoMissions`: TUI model plus
+  real service/API over in-process transport and local TLS/readiness helpers.
+- `TestAccountOfficialLoginOpensActualTerminal` and
+  `TestWorkspaceInitActualHTTPWebSocketPTY`: actual terminal attachment/control
+  and PTYs, with substituted account/login/init DTO handlers; neither proves
+  completed official login or full real Workspace init.
+- Explicit `TestTerminalNative…` selections in TUI and API cover raw keyboard
+  input, control, ownership, resize, stop and transport fixtures.
+- `TestNativeApprovedHTTPJourneyUsesOneDeliveryAfterAnswerAndDeletion`:
+  approved HTTP execution with public Core, a synthetic CLI and local auth
+  fixture; it does not contact a real provider.
+
+The conductor ran the expanded HTTP journey successfully on candidate
+`d3e1143dccdae506685d53fe7a24910f5c0c1b8f`; its qualifier failed on the
+incorrect `(devel)` assumption. The retry locally passed pinned toolchains,
+cached module integrity, required-test inventory, fresh builds and both revised
+provenance checks. It then failed with sandbox `listen EPERM` on `127.0.0.1`
+before consoled startup. Source-extracted shutdown checks using owned Node
+children passed zero/nonzero/signal/forced-kill cases; these do not establish
+native daemon success. The conductor subsequently ran the revised qualifier on
+native Darwin/arm64 and Linux/amd64 in a Docker Desktop container as UID 1000:
+each passed 40 test events without skips, plus the HTTP catalog/restart journey
+and builds. A controlled shutdown mutant was rejected. Independent review then
+identified the separate Core build-list verification gap; an owned cache with
+a harmless change to Core-only `x/sync v0.21.0` reproduced that gap. Verification
+now covers both module contexts. Candidate `21bf25e` passed on native
+Darwin/arm64 and Linux/amd64 in the same UID-1000 container, with 40 passing
+test events per platform and no failures or skips.
+
+The integrity red/green pair used one complete, owned module-cache copy with
+only `golang.org/x/sync@v0.21.0/README.md` altered. The original cache's copy
+of that README kept its SHA256. In each source checkout the exact command was:
+
+```sh
+GOMODCACHE=/tmp/console-journey-core-cache-canary-complete-21bf \
+  sh scripts/qualify-release.sh --fixtures
+```
+
+Candidate `3f9c1bd` accepted that cache (exit 0). Candidate `21bf25e` rejected
+the same cache (exit 1) at `Core cached module integrity`, before inventory or
+builds, with `golang.org/x/sync v0.21.0: dir has been modified`.
+Conductor receipts and full stdout/stderr are retained under
+`.batuta/runs/2026-10-13-complete-journey/` in the parent checkout (untracked
+conductor evidence): `core-cache-complete-canary.json`,
+`qualifier-core-cache-complete-red.*`, `qualifier-core-cache-complete-green.*`,
+`qualifier-mac-verified.*` and `qualifier-linux-complete-cache.*`.
+These are fixture proofs; no check was weakened.
+Rendered browser, outer Console PTY, clean-install bundle discovery,
+standard-user Windows, real providers, stable/beta publication and whole
+Task38 completion remain outside this command. Task43's 107 native failures
+remain open. Historical evidence below is unchanged.
+
 ## Evidence and current limits
 
 The implementation starts from `f55edba0e0fd94ac408fba485d1531c3915ab848`.

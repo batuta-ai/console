@@ -23,22 +23,46 @@ terminal rendering is outside this journey and the warning is not suppressed.
 npm --prefix web run test:journey
 ```
 
-Requires Go 1.27.2, cached Go modules or access to download them, and permission
-to bind loopback sockets. The script builds the current consoled in a temporary
-directory, launches it with a disposable runtime/catalog, HOME and workspace,
-and a credential-free environment with an empty PATH. It checks unauthorized
-access rejection, workspace creation/listing, account connection to its isolated
-directory, account rename/listing, and absence of sessions. Only catalog APIs
-are used: no login, workspace initialization, model execution, or CLI is invoked.
-No fake provider CLI is installed. Authentication uses only the daemon's fresh
-temporary auth.secret. Processes and data are removed on success, failure,
-SIGINT, and SIGTERM. Startup and API calls have bounded deadlines.
+Requires Go 1.27.2, Node 26.10.0, cached Go modules or access to download
+them, and permission to bind loopback sockets. The script builds current
+consoled in a temporary directory and launches it with a disposable
+runtime/catalog, HOME and workspace, an empty PATH and no inherited credentials.
+Authenticated HTTP checks cover:
 
-This is **synthetic API qualification using a real daemon**, not real browser
-qualification or proof of official Codex/Claude login, credentials, or model
-execution. Those remain later release qualifications. The ephemeral port probe
-releases its port before consoled starts; a competing bind produces a startup
-failure rather than connecting to another process with personal credentials.
+- Unauthorized access rejection, workspace creation/listing, all original
+  init-negative validation/readiness cases, and missing/partial/ready
+  configuration. Profile/routing/WORK files are disposable fixture inputs;
+  successful Workspace init is not exercised.
+- Distinct Codex and Claude accounts, connection to distinct isolated vault
+  directories, rename/listing and missing-CLI readiness.
+- A custom squad and its revision, two missions capturing different squad
+  snapshots, and selection by mission identity independent of list order.
+- Stopping and restarting the same built consoled as an owned child against
+  the same runtime/catalog. Restart requires a graceful zero exit; a nonzero
+  exit, signal termination or forced kill fails before the second instance
+  starts. The second instance must also stop gracefully. Authenticated rereads
+  compare workspace/setup, accounts/vault references, squad and both complete
+  mission records. Only the dynamic account readiness `checked_at` timestamp
+  is excluded.
+- Empty sessions before and after restart; no login, successful init, native
+  mission start or model execution. Catalog writes use real endpoints, with
+  no direct database writes or substituted handlers.
+
+Authentication uses only the daemon's fresh temporary `auth.secret`. Owned
+processes and data are cleaned up on success, failure, SIGINT and SIGTERM.
+Build, startup, API calls and graceful-stop escalation have bounded deadlines;
+startup waits on the daemon's listening message, without readiness sleeps.
+The five-second stop fallback still kills and reaps a stuck owned child;
+cleanup removes disposable data even when stopping fails and preserves the
+original journey error if cleanup also fails.
+The ephemeral port probe releases its port before consoled starts; a competing
+bind fails startup rather than connecting to another process.
+
+This is **synthetic API qualification using a real daemon**, not a rendered
+browser or official provider login/model proof. Restart verifies catalog
+persistence, not recovery of active model execution. To also run the existing
+TUI/Core/PTY/HTTP fixtures, use `sh scripts/qualify-release.sh --fixtures` from
+the repository root; see [release qualification](../../docs/release-qualification.md).
 
 Testing dependencies are pinned to the latest verified releases for this foundation:
 Vitest 5.0.3, Testing Library React 16.3.3, DOM 10.4.2, user-event 14.6.7,
