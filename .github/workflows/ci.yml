@@ -45,15 +45,3 @@ jobs:
           node scripts/check-release-config.mjs
       - name: Shared non-root source contract
         run: sh scripts/check-release.sh
-      - name: Diagnose native PTY failure on Linux
-        if: failure() && runner.os == 'Linux'
-        run: |
-          command -v strace
-          go test -c ./internal/service -o "$RUNNER_TEMP/console-service.test"
-          set +e
-          timeout 300 strace -f -qq -o "$RUNNER_TEMP/console-pty.strace" -e trace=clone,clone3,execve,setsid,ioctl "$RUNNER_TEMP/console-service.test" -test.v -test.count=100 -test.run='^(TestRecoveryConcurrentOwnedExitNeverBecomesLost|TestSetupConcurrentOwnedExitNeverInterrupted)$' > "$RUNNER_TEMP/console-pty-tests.log" 2>&1
-          trace_status=$?
-          set -e
-          echo "Native PTY diagnostic status: $trace_status"
-          tail -100 "$RUNNER_TEMP/console-pty-tests.log"
-          rg -n -C 6 'EPERM' "$RUNNER_TEMP/console-pty.strace" || test "$?" = 1

@@ -6,7 +6,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	github.com/batuta-ai/core v1.1.0-beta.49
 	github.com/coder/websocket v1.8.15
-	github.com/creack/pty v1.1.24
+	github.com/creack/pty v1.1.25-0.20260601142114-9246436fffe8
 	github.com/mattn/go-isatty v0.0.24
 	github.com/starframe-dev/portalis v0.1.0
 	modernc.org/sqlite v1.60.1

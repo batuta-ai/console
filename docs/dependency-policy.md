@@ -238,3 +238,32 @@ Console does not yet call native `loop.New` or `loop.Resume`. Task21 must bind
 the immutable Console receipt and snapshot to native delivery ownership.
 Official Core CLI binary qualification, full provider/web/TUI operation, native
 Windows and stable Core/plugin publication remain separate open gates.
+
+## PTY compatibility exception — 2026-10-12
+
+Console pins `github.com/creack/pty v1.1.25-0.20260601142114-9246436fffe8`
+as a deliberate exception to the published-release policy. The latest official
+tag, v1.1.24, still contains the wrong-slave allocation bug: an early
+pointer-to-uintptr conversion can become stale when GC moves a shrinking stack.
+The minimal official upstream snapshot is immutable commit
+[`9246436fffe85773950f49dcc73de333da5212e6`](https://github.com/creack/pty/commit/9246436fffe85773950f49dcc73de333da5212e6),
+merged through [PR215](https://github.com/creack/pty/pull/215) on June 1.
+[PR216](https://github.com/creack/pty/pull/216) describes the same bug.
+
+The exact commit was resolved through the official Go proxy and checksum
+database. The module archive checksums and four affected Go files were verified
+against the official commit. An independent native Linux
+regression using an overlay, without product source changes, failed on v1.1.24
+in 0.67 seconds: master index 6 selected `/dev/pts/0` (device 0), while both
+syscalls returned 0. The red regression and official provenance are retained in
+the ignored `.batuta/runs/2026-10-12-console-ci-repair` evidence directory.
+The [native regression](../internal/session/pty_gc_linux_test.go) protects the
+master/slave pairing under GC pressure.
+
+Only the PTY version and checksum pair change; Go 1.27.2, Core beta49 and all
+other Go and npm pins remain unchanged, with no replacement. The historical
+v1.1.24 qualification and prior SDK facts above retain their dated authority.
+Source compatibility checks for this snapshot include native macOS and Linux
+sessions, regression tests, race checks, the full source contract, public CI and
+Windows builds. Native Windows runtime and provider qualification remain
+separate gates.
