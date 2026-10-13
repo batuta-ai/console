@@ -90,17 +90,18 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	var owned *ownedProcess
 	registered := false
 	defer func() {
-		runErr = errors.Join(runErr, streams.Close())
+		cleanup := streams.Close()
 		if console != nil {
-			runErr = errors.Join(runErr, console.Close())
+			cleanup = errors.Join(cleanup, console.Close())
 		}
+		runErr = errors.Join(runErr, cleanup)
 		if registered {
 			m.mu.Lock()
 			delete(m.probes, owned)
 			m.mu.Unlock()
-			if runErr != nil {
+			if cleanup != nil || errors.Is(runErr, ErrNativeCleanupUnresolved) {
 				m.CloseAdmission()
-				cleanup := errors.Join(ErrNativeCleanupUnresolved, runErr)
+				cleanup := errors.Join(ErrNativeCleanupUnresolved, cleanup, runErr)
 				m.recordCleanup(cleanup, cleanup)
 			}
 		}
@@ -124,8 +125,15 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 		}
 		ioDone <- errors.Join(err, streams.input.Close())
 	}()
-	go func() { _, err := io.Copy(cmd.Stdout, streams.output); ioDone <- err }()
-	go func() { _, err := io.Copy(cmd.Stderr, streams.stderr); ioDone <- err }()
+	copyOutput := func(destination io.Writer, source io.Reader) {
+		_, err := io.Copy(destination, source)
+		if err != nil {
+			cancel()
+		}
+		ioDone <- err
+	}
+	go copyOutput(cmd.Stdout, streams.output)
+	go copyOutput(cmd.Stderr, streams.stderr)
 	owned.mu.Lock()
 	owned.cancel = cancel
 	owned.mu.Unlock()
@@ -135,7 +143,13 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	m.mu.Unlock()
 	registered = true
 	done := make(chan error, 1)
-	go func() { cleanup, wait := waitOwnedOutcome(cmd, owned); done <- errors.Join(cleanup, wait) }()
+	go func() {
+		cleanup, wait := waitOwnedOutcome(cmd, owned)
+		if cleanup != nil {
+			cleanup = errors.Join(ErrNativeCleanupUnresolved, cleanup)
+		}
+		done <- errors.Join(cleanup, wait)
+	}()
 	if closing {
 		cancel()
 	}

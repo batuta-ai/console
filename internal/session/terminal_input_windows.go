@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var errWindowsTerminalFull = errors.New("Windows terminal input buffer full")
+
 func prepareTerminalPTY(f terminalPTY) (terminalPTY, error) {
 	if _, ok := f.(*windowsTerminal); !ok {
 		return f, ErrTerminalInputUnsupported
@@ -36,12 +38,12 @@ func writeTerminalChunk(f terminalPTY, data []byte) (int, error) {
 	// A PIPE_NOWAIT byte write reports a successful zero-byte operation when
 	// its buffer is full. No kernel operation or caller buffer remains pending.
 	if written == 0 && writeErr == nil && len(data) > 0 {
-		writeErr = windows.ERROR_NO_DATA
+		writeErr = errWindowsTerminalFull
 	}
 	return int(written), writeErr
 }
 
-func terminalWouldBlock(err error) bool { return errors.Is(err, windows.ERROR_NO_DATA) }
+func terminalWouldBlock(err error) bool { return errors.Is(err, errWindowsTerminalFull) }
 
 func waitTerminalWritable(ctx context.Context, revoked <-chan struct{}, f terminalPTY) error {
 	// Immediate try-writes serialize with ownership changes; the retry wait

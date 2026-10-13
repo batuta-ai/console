@@ -248,6 +248,9 @@ func (p *ownedProcess) captureRoot(cmd *exec.Cmd) error {
 }
 
 func validateWindowsCommand(cmd *exec.Cmd) error {
+	if cmd.Err != nil {
+		return cmd.Err
+	}
 	if err := accounts.ValidateWindowsTemporaryEnvironment(cmd.Env); err != nil {
 		return err
 	}

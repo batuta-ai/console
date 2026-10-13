@@ -175,12 +175,21 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		ownership, wait := waitOwnedOutcome(cmd, owned)
 		cleanup := errors.Join(ownership, wait)
 		if cleanup != nil {
+			cleanup = errors.Join(ErrNativeCleanupUnresolved, cleanup)
 			m.CloseAdmission()
-			m.recordCleanup(cleanup, ownership)
+			m.recordCleanup(cleanup, cleanup)
 		}
 		processDone <- cleanup
 	}()
-	var callbackErr, processErr, stderrErr, stopErr error
+	var callbackErr, processErr, stderrErr, stopErr, protocolErr error
+	stopOwned := func() {
+		if err := owned.stop(); err != nil {
+			cleanup := errors.Join(ErrNativeCleanupUnresolved, err)
+			stopErr = errors.Join(stopErr, cleanup)
+			m.CloseAdmission()
+			m.recordCleanup(cleanup, cleanup)
+		}
+	}
 	stopRequested := stopContext.Done()
 	var grace *time.Timer
 	var expired <-chan time.Time
@@ -201,7 +210,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 			callbackDone = nil
 			callbackErr = errors.Join(callbackErr, pipes.inputWrite.Close())
 			if callbackErr != nil {
-				stopErr = errors.Join(stopErr, owned.stop())
+				stopOwned()
 			} else if processDone != nil {
 				startGrace()
 			}
@@ -212,22 +221,21 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 			stderrDone = nil
 			if stderrErr != nil {
 				cancelCallback()
-				stopErr = errors.Join(stopErr, owned.stop())
+				stopOwned()
 			}
 		case <-stopRequested:
 			stopRequested = nil
 			startGrace()
 		case <-expired:
 			expired = nil
-			stopErr = errors.Join(stopErr, owned.stop())
+			stopOwned()
 			if stopContext.Err() == nil {
-				stopErr = errors.Join(stopErr, errors.New("native exchange did not finish after protocol closure"), context.DeadlineExceeded)
+				protocolErr = errors.Join(errors.New("native exchange did not finish after protocol closure"), context.DeadlineExceeded)
 			}
 		}
 	}
-	m.recordCleanup(stopErr, stopErr)
 	result.Stderr, result.StderrTruncated = append([]byte(nil), stderr.data...), stderr.truncated
-	runErr = errors.Join(callbackErr, processErr, stderrErr, stopErr, stopContext.Err())
+	runErr = errors.Join(callbackErr, processErr, stderrErr, stopErr, protocolErr, stopContext.Err())
 	if runErr == nil && cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()
 	}
