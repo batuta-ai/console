@@ -133,6 +133,26 @@ func TestOwnedGroupExitRequiresVerifiedTerminalMembers(t *testing.T) {
 	}
 }
 
+func TestOwnedGroupExitDoesNotCompleteWithUnresolvedKernelGroup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "mounts"), []byte("proc /proc proc rw 0 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "42"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stat := procStat(42, "exiting", "R", "123")
+	close := strings.LastIndexByte(stat, ')')
+	fields := strings.Fields(stat[close+1:])
+	fields[2], fields[3], fields[17] = "-1", "-1", "0"
+	if err := os.WriteFile(filepath.Join(root, "42", "stat"), []byte(stat[:close+1]+" "+strings.Join(fields, " ")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitProcGroupExit(root, 42); !errors.Is(err, errGroupExiting) {
+		t.Fatalf("unresolved kernel membership must remain pending: %v", err)
+	}
+}
+
 func TestNativeCancellationWaitsForDetachedDescendantTermination(t *testing.T) {
 	for i := range 100 {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {

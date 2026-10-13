@@ -54,8 +54,14 @@ func waitProcGroupExit(root string, pgid int) error {
 				return err
 			}
 			group, err := strconv.Atoi(fields[2])
-			if err != nil || group < 0 {
+			if err != nil || group < -1 {
 				return fmt.Errorf("invalid proc group record for PID %d", pid)
+			}
+			// procfs leaves pgrp=-1 when exit races with sighand observation.
+			// Membership is unresolved until a subsequent scan, not absent.
+			if group == -1 {
+				live = true
+				continue
 			}
 			if group == pgid {
 				threads, err := strconv.Atoi(fields[17])

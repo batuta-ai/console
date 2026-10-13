@@ -43,7 +43,38 @@ func signalOwnedGroup(pgid int) error {
 	return nil
 }
 
-func waitOwnedGroupExit(int) error { return nil }
+func waitOwnedGroupExit(pgid int) error {
+	if pgid <= 1 {
+		return fmt.Errorf("invalid owned process group %d", pgid)
+	}
+	deadline := time.NewTimer(250 * time.Millisecond)
+	ticker := time.NewTicker(time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
+		records, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
+		if err != nil {
+			return fmt.Errorf("inspect anchored group %d: %w", pgid, err)
+		}
+		live := false
+		for _, record := range records {
+			if record.Proc.P_pid <= 0 || int(record.Eproc.Pgid) != pgid {
+				return fmt.Errorf("unverifiable anchored group %d record PID %d", pgid, record.Proc.P_pid)
+			}
+			if record.Proc.P_stat != 5 {
+				live = true
+			}
+		}
+		if !live {
+			return nil
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			return fmt.Errorf("anchored group %d: %w", pgid, errGroupExiting)
+		}
+	}
+}
 
 func observeOwnedExit(pid int) error {
 	// Darwin x/sys has no Waitid wrapper. kern.proc.pid exposes SZOMB without

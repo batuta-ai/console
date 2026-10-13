@@ -63,14 +63,32 @@ func (p *ownedProcess) signalLocked() error {
 
 func (p *ownedProcess) retire(observeErr error) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.retired {
+		err := p.err
+		p.mu.Unlock()
+		return errors.Join(observeErr, err)
+	}
 	if !errors.Is(observeErr, errAnchorLost) {
 		// Sweep once more after leader exit, before irrevocably permitting reap.
 		p.signaled = false
 		_ = p.signalLocked()
 	}
+	signalErr := p.err
+	p.mu.Unlock()
+	// Keep the unreaped anchor while observing; Stop must not wait on this lock.
+	var groupErr error
+	groupVerified := false
+	if observeErr == nil && (signalErr == nil || errors.Is(signalErr, errGroupExiting)) {
+		groupErr = waitOwnedGroupExit(p.pgid)
+		groupVerified = groupErr == nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if groupVerified && errors.Is(p.err, errGroupExiting) {
+		p.err = nil
+	}
 	p.retired = true
-	return errors.Join(observeErr, p.err)
+	return errors.Join(observeErr, p.err, groupErr)
 }
 
 func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
@@ -81,9 +99,6 @@ func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
 func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 	observeErr := observeOwnedExit(cmd.Process.Pid)
 	cleanupErr := p.retire(observeErr)
-	if cleanupErr == nil {
-		cleanupErr = waitOwnedGroupExit(p.pgid)
-	}
 	waitErr := cmd.Wait()
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
