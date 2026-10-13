@@ -23,6 +23,7 @@ import (
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func providerTLSClient(t *testing.T, handler http.Handler) *http.Client {
@@ -67,13 +68,13 @@ func authFixture(t *testing.T, id string, client *http.Client) (*adapters.Readin
 	if _, err := ad.IsolateEnv(home, account); err != nil {
 		t.Fatal(err)
 	}
-	path := t.TempDir()
+	path := testfixture.PrivateHome(t)
 	banner := "codex-cli 0.160.0"
 	if id == "claude" {
 		banner = "2.1.289 (Claude Code)"
 	}
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\nexit 91\n"
-	if err := os.WriteFile(filepath.Join(path, id), []byte(script), 0700); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(path, testfixture.ExecutableName(id)), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", path)
@@ -89,6 +90,9 @@ func authFixture(t *testing.T, id string, client *http.Client) (*adapters.Readin
 		payload = map[string]any{"claudeAiOauth": map[string]any{"accessToken": token, "refreshToken": "synthetic-refresh-never-real", "expiresAt": time.Now().Add(time.Hour).UnixMilli(), "scopes": []string{"user:inference", "user:profile"}}}
 	}
 	data, _ := json.Marshal(payload)
+	if err := testfixture.PreparePrivateFile(filepath.Join(ad.IsolateDir(home, account.ID), config, name)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(ad.IsolateDir(home, account.ID), config, name), data, 0600); err != nil {
 		t.Fatal(err)
 	}

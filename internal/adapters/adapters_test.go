@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestGetCodex(t *testing.T) {
@@ -40,7 +41,7 @@ func TestUnknown(t *testing.T) {
 }
 
 func TestIsolateEnvDistinctHomes(t *testing.T) {
-	home := t.TempDir()
+	home := testfixture.PrivateHome(t)
 	a, err := Get("codex")
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +64,7 @@ func TestIsolateEnvDistinctHomes(t *testing.T) {
 }
 
 func TestIsolateEnvCursorAgent(t *testing.T) {
-	home := t.TempDir()
+	home := testfixture.PrivateHome(t)
 	a, err := Get("cursor-agent")
 	if err != nil {
 		t.Fatal(err)

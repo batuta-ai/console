@@ -10,6 +10,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestRecoveryDaemonChild(t *testing.T) {
@@ -25,7 +26,7 @@ func TestRecoveryDaemonChild(t *testing.T) {
 func TestStartupRecoversBeforeListenerWithoutGET(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recover", true: "event-failure"}[reject], func(t *testing.T) {
-			home := t.TempDir()
+			home := testfixture.PrivateHome(t)
 			path := filepath.Join(home, "console.db")
 			st, err := store.Open(path)
 			if err != nil {

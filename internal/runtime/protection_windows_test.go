@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestWindowsRuntimeProtectionRefusesWithoutMutation(t *testing.T) {
+func TestWindowsRuntimeProtectionRefusesUnsafeWithoutMutation(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		name := "absent"
 		if existing {
@@ -22,6 +22,19 @@ func TestWindowsRuntimeProtectionRefusesWithoutMutation(t *testing.T) {
 			lockPath := filepath.Join(home, "consoled.lock")
 			tokenBytes := []byte(strings.Repeat("synthetic-only-", 4))
 			lockBytes := []byte(`{"pid":123,"addr":"127.0.0.1:9477","home":"synthetic"}`)
+			if !existing {
+				paths, err := Resolve(home, "127.0.0.1:0")
+				if err != nil || paths.Home != home {
+					t.Fatalf("new private runtime refused: %+v error=%v", paths, err)
+				}
+				task43AssertPrivateACL(t, home)
+				task43AssertPrivateACL(t, paths.Logs)
+				entries, err := os.ReadDir(home)
+				if err != nil || len(entries) != 1 || entries[0].Name() != "logs" {
+					t.Fatalf("home preparation created unrequested artifacts: %v error=%v", entries, err)
+				}
+				return
+			}
 			if existing {
 				if err := os.Mkdir(home, 0700); err != nil {
 					t.Fatal(err)
@@ -33,23 +46,17 @@ func TestWindowsRuntimeProtectionRefusesWithoutMutation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if token, err := LoadOrCreateAuth(tokenPath); token != "" || !errors.Is(err, errors.ErrUnsupported) {
+			if token, err := LoadOrCreateAuth(tokenPath); token != "" || err == nil {
 				t.Fatalf("auth must refuse: token length=%d error=%v", len(token), err)
 			}
-			if lock, err := WriteLock(lockPath, LockInfo{PID: os.Getpid()}); lock != nil || !errors.Is(err, errors.ErrUnsupported) {
+			if lock, err := WriteLock(lockPath, LockInfo{PID: os.Getpid()}); lock != nil || err == nil {
 				if lock != nil {
 					lock.Close()
 				}
 				t.Fatalf("lock must refuse: %v", err)
 			}
-			if paths, err := Resolve(home, "127.0.0.1:0"); paths != (Paths{}) || !errors.Is(err, errors.ErrUnsupported) {
+			if paths, err := Resolve(home, "127.0.0.1:0"); paths != (Paths{}) || err == nil {
 				t.Fatalf("runtime must refuse: %+v %v", paths, err)
-			}
-			if !existing {
-				if _, err := os.Lstat(home); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("refusal created home: %v", err)
-				}
-				return
 			}
 			for path, want := range map[string][]byte{tokenPath: tokenBytes, lockPath: lockBytes} {
 				got, err := os.ReadFile(path)
@@ -66,7 +73,14 @@ func TestWindowsRuntimeProtectionRefusesWithoutMutation(t *testing.T) {
 }
 
 func TestWindowsReadLockPreservesIdentityAndErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lock with space.json")
+	path := filepath.Join(task43PrivateHome(t), "lock with space.json")
+	f, err := WriteLock(path, LockInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	raw := []byte(`{"pid":42,"addr":"127.0.0.1:9477","home":"C:\\synthetic ç\\console"}`)
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)

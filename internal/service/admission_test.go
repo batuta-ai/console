@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 type admissionFixture struct {
@@ -26,10 +27,10 @@ func admissionSetup(t *testing.T, cap int) admissionFixture {
 	t.Helper()
 	svc, db := persistenceSvc(t)
 	t.Setenv("BATUTA_SKILLS", installedSkillFixture(t, t.TempDir(), "batuta", "batuta-init", "batuta-plan"))
-	cli := t.TempDir()
+	cli := testfixture.PrivateHome(t)
 	launches := filepath.Join(cli, "launches")
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nprintf '%s\\n' \"$$\" >> '" + launches + "'\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-	if err := os.WriteFile(filepath.Join(cli, "codex"), []byte(script), 0755); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", cli)
@@ -315,7 +316,7 @@ func TestStartFailuresRecoverAllPaths(t *testing.T) {
 		for _, failure := range []string{"spawn", "persistence"} {
 			t.Run(mode+"/"+failure, func(t *testing.T) {
 				f := admissionSetup(t, 1)
-				cli := filepath.Join(filepath.Dir(f.launches), "codex")
+				cli := filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex"))
 				original, err := os.ReadFile(cli)
 				if err != nil {
 					t.Fatal(err)

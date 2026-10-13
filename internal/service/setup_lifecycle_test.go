@@ -12,6 +12,7 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestExplicitInitLifecycle(t *testing.T) {
@@ -251,7 +252,7 @@ func TestSetupNativeTerminationEvidence(t *testing.T) {
 			if outcome == "exit-nonzero" {
 				argv = []string{"/bin/sh", "-c", "exit 23"}
 			}
-			row := domain.Session{ID: "native-attempt", WorkspaceID: w.ID, AccountID: "selected-account", Work: "init", Process: "running", Argv: argv, CreatedAt: domain.Now()}
+			row := domain.Session{ID: "native-attempt", WorkspaceID: w.ID, AccountID: "selected-account", Work: "init", Process: "running", Argv: testfixture.Argv(t, argv), CreatedAt: domain.Now()}
 			live, err := svc.startAndPersist(row, nil, w.Root, 0, "workspace.init", map[string]any{"session": row.ID})
 			if err != nil {
 				t.Fatal(err)

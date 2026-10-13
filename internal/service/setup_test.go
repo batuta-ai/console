@@ -8,6 +8,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 const completeProfile = "# Profile — synthetic\nStack: Go\nMethodology: TDD\nTest: never-execute-test\nBuild: never-execute-build\nInstall: never-execute-install\nExecution: sequential\nWorktree: medium+\nTemplate: templates/go.md\n"
@@ -222,7 +223,7 @@ func TestSetupStartPersistenceClassifiedAsStorage(t *testing.T) {
 	done := make(chan domain.Session, 1)
 	onExit := svc.Session.OnExit
 	svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
-	row := domain.Session{ID: "init-storage", Work: "init", Argv: []string{"/bin/cat"}, CreatedAt: domain.Now()}
+	row := domain.Session{ID: "init-storage", Work: "init", Argv: testfixture.Argv(t, []string{"/bin/cat"}), CreatedAt: domain.Now()}
 	live, err := svc.startAndPersist(row, nil, t.TempDir(), 0, "workspace.init", map[string]any{"session": row.ID})
 	if live.PID == 0 {
 		t.Fatalf("native process unavailable: %v", err)

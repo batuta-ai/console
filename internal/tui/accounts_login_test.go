@@ -18,6 +18,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestAccountLoginPreflightAndInvalidReplies(t *testing.T) {
@@ -127,22 +128,6 @@ func TestAccountOfficialLoginOpensActualTerminal(t *testing.T) {
 			svc := service.New(st, manager, nil)
 			token := "disposable-account-fixture"
 			baseHandler := (&api.Server{Svc: svc, Token: token}).Handler()
-			for _, id := range []string{"unrelated", "actual-login"} {
-				work, account := "mission", "other"
-				if id == "actual-login" {
-					work, account = "login", "actual-account"
-				}
-				pending, err := manager.StartPending(domain.Session{ID: id, AccountID: account, Adapter: adapter, Work: work, Cols: 80, Rows: 24, Argv: []string{"/bin/sh", "-c", "stty raw -echo; printf LOGIN_READY; exec /bin/cat"}}, []string{"HOME=" + root}, root, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = pending.Persist(st.PutSession); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := manager.Take("actual-login", "web", "other-client"); err != nil {
-				t.Fatal(err)
-			}
 			var calls atomic.Int32
 			var received client.LoginAccountRequest
 			listener := &terminalPipeListener{incoming: make(chan net.Conn), done: make(chan struct{})}
@@ -182,6 +167,22 @@ func TestAccountOfficialLoginOpensActualTerminal(t *testing.T) {
 				<-joined
 				_ = st.Close()
 			})
+			for _, id := range []string{"unrelated", "actual-login"} {
+				work, account := "mission", "other"
+				if id == "actual-login" {
+					work, account = "login", "actual-account"
+				}
+				pending, err := manager.StartPending(domain.Session{ID: id, AccountID: account, Adapter: adapter, Work: work, Cols: 80, Rows: 24, Argv: testfixture.Argv(t, []string{"/bin/sh", "-c", "stty raw -echo; printf LOGIN_READY; exec /bin/cat"})}, testfixture.TerminalEnvironment(t, []string{"HOME=" + root}), root, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = pending.Persist(st.PutSession); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := manager.Take("actual-login", "web", "other-client"); err != nil {
+				t.Fatal(err)
+			}
 			m := accountModel(t, c)
 			m.screen = scrAccounts
 			m, _ = accountKey(m, "enter")

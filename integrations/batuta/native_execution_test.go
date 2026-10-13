@@ -3,6 +3,7 @@ package batuta
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,17 +16,22 @@ import (
 
 func approvedProjectionFixture(t *testing.T) (string, domain.MissionBinding, domain.PlanApproval) {
 	t.Helper()
+	return approvedProjectionFixtureForPlan(t, filepath.ToSlash(routing.PlanPath("alpha")), routing.PlanProposed)
+}
+
+func approvedProjectionFixtureForPlan(t *testing.T, path string, status routing.PlanStatus) (string, domain.MissionBinding, domain.PlanApproval) {
+	t.Helper()
 	root := t.TempDir()
 	canonical, err := CanonicalWorkspace(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := []byte("# Plan — alpha\n**Status:** proposed\n- [ ] 1. Keep approved bytes — backend/medium\n  Accept: verified\n")
+	content := []byte(fmt.Sprintf("# Plan — alpha\n**Status:** %s\n- [ ] 1. Keep approved bytes — backend/medium\n  Accept: verified\n", status))
 	plan, err := routing.ParsePlan("alpha", content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := domain.MissionBinding{WorkspaceID: "w", WorkspaceRoot: root, CanonicalRoot: canonical, PlanPath: filepath.ToSlash(routing.PlanPath("alpha")), PlanSlug: "alpha", PlanDigest: plan.Set.Digest}
+	b := domain.MissionBinding{WorkspaceID: "w", WorkspaceRoot: root, CanonicalRoot: canonical, PlanPath: path, PlanSlug: "alpha", PlanDigest: plan.Set.Digest}
 	a := domain.PlanApproval{ID: "receipt-one", Identity: domain.PlanIdentity{MissionID: "m", Binding: b, Version: domain.PlanVersion(content)}, Content: content, ApprovedAt: domain.Now()}
 	b.DeliveryID = ExecutionDelivery(a)
 	js, err := journal.Open(canonical)
@@ -41,7 +47,7 @@ func approvedProjectionFixture(t *testing.T) (string, domain.MissionBinding, dom
 		t.Fatal(err)
 	}
 	b.OpenedDigest = opened.Digest
-	if err := os.MkdirAll(filepath.Join(canonical, ".batuta/plans"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(canonical, b.PlanPath)), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(canonical, b.PlanPath), content, 0600); err != nil {
@@ -111,6 +117,56 @@ func TestApprovedProjectionRejectsForeignReceiptAndOpening(t *testing.T) {
 			}
 			if _, err := ProjectApprovedMission(root, b, a); !errors.Is(err, ErrArtifactInvalid) {
 				t.Fatal("accepted mismatched approval/opening", err)
+			}
+		})
+	}
+}
+
+func TestApprovedProjectionPlanDone(t *testing.T) {
+	active := filepath.ToSlash(routing.PlanPath("alpha"))
+	archived := filepath.Join(".batuta", "plans", "done", "alpha.md")
+	type planCase struct {
+		name   string
+		path   string
+		status routing.PlanStatus
+		done   bool
+	}
+	cases := []planCase{
+		{"active", active, routing.PlanProposed, false},
+		{"status-done", active, routing.PlanDone, true},
+		{"archived-native-binding", archived, routing.PlanProposed, true},
+	}
+	if slash := filepath.ToSlash(archived); slash != archived {
+		cases = append(cases, planCase{"archived-slash-binding", slash, routing.PlanProposed, true})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, b, a := approvedProjectionFixtureForPlan(t, tc.path, tc.status)
+			js, err := journal.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(js.Path(b.DeliveryID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := ProjectApprovedMission(root, b, a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !view.Available || view.Source != domain.SourceCurrent || view.Delivery != b.DeliveryID {
+				t.Fatal(view)
+			}
+			if len(view.Plans) != 1 {
+				t.Fatalf("plans = %v, want exactly one", view.Plans)
+			}
+			want := domain.PlanRef{Name: "alpha", Status: string(tc.status), Done: tc.done}
+			if view.Plans[0] != want {
+				t.Fatalf("plan = %+v, want %+v", view.Plans[0], want)
+			}
+			after, err := os.ReadFile(js.Path(b.DeliveryID))
+			if err != nil || string(before) != string(after) {
+				t.Fatal("projection mutated native journal", err)
 			}
 		})
 	}

@@ -113,7 +113,7 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 		Features:   map[string]bool{"pty": pty.Available, "watch": true, "limits": true, "batuta_inject": true, "batuta_inject_default": true, "skills_catalog": true, "account_fallback": false, "folder_picker": true},
 		Runtime:    runningRuntime(),
 		Provenance: buildinfo.Current(),
-		Matrix:     releaseMatrix{Platforms: []string{"darwin", "linux"}, Providers: []string{"codex", "claude"}, Qualification: domain.CapabilityFact{Status: "pending", Code: "release_qualification_pending"}},
+		Matrix:     releaseMatrix{Platforms: []string{"darwin", "linux", "windows"}, Providers: []string{"codex", "claude"}, Qualification: domain.CapabilityFact{Status: "pending", Code: "release_qualification_pending"}},
 		PTY:        pty, Providers: adapters.Capabilities(r.Context()),
 	})
 }

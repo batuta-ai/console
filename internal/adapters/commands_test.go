@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func commandAdapter(t *testing.T, id string) Adapter {
@@ -15,8 +17,8 @@ func commandAdapter(t *testing.T, id string) Adapter {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ad.CLI), []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
+	dir := testfixture.PrivateHome(t)
+	if err := testfixture.WriteScript(t, filepath.Join(dir, testfixture.ExecutableName(ad.CLI)), []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -27,7 +29,7 @@ func TestCommandContract(t *testing.T) {
 	for _, id := range []string{"codex", "claude"} {
 		t.Run(id, func(t *testing.T) {
 			ad := commandAdapter(t, id)
-			path := filepath.Join(os.Getenv("PATH"), id)
+			path := filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(id))
 			model := `future-model;$(literal)"quote`
 			for _, tc := range []struct {
 				name string

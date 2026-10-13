@@ -7,7 +7,7 @@ import (
 )
 
 func TestAuthRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := runtimeTestHome(t)
 	path := filepath.Join(dir, "auth.secret")
 	a, err := LoadOrCreateAuth(path)
 	if err != nil || len(a) < 32 {
@@ -21,13 +21,11 @@ func TestAuthRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", st.Mode())
-	}
+	assertRuntimeFileProtection(t, path, st)
 }
 
 func TestLoopbackListen(t *testing.T) {
-	dir := t.TempDir()
+	dir := runtimeTestHome(t)
 	if _, err := Resolve(dir, "0.0.0.0:9477"); err == nil {
 		t.Fatal("non-loopback listen must fail")
 	}
@@ -37,7 +35,7 @@ func TestLoopbackListen(t *testing.T) {
 }
 
 func TestLockExclusive(t *testing.T) {
-	dir := t.TempDir()
+	dir := runtimeTestHome(t)
 	path := filepath.Join(dir, "consoled.lock")
 	f, err := WriteLock(path, LockInfo{PID: os.Getpid(), Addr: "127.0.0.1:1", Home: dir})
 	if err != nil {

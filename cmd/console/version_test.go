@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestVersionWithoutInitialization(t *testing.T) {
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "binary")
+	binary := filepath.Join(dir, testfixture.ExecutableName("binary"))
 	build := exec.Command("go", "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, output)
@@ -42,7 +44,7 @@ func TestVersionWithoutInitialization(t *testing.T) {
 		t.Fatalf("home created: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "binary" {
+	if err != nil || len(entries) != 1 || entries[0].Name() != testfixture.ExecutableName("binary") {
 		t.Fatalf("filesystem changed: %v %v", entries, err)
 	}
 }

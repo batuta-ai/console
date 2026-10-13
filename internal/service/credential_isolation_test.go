@@ -15,6 +15,7 @@ import (
 	"errors"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 var credentialSentinels = []string{
@@ -29,10 +30,10 @@ var identityKeys = []string{"HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"
 
 var batutaMetadataKeys = []string{"BATUTA_CONSOLE", "BATUTA_WORKSPACE", "BATUTA_SKILLS", "BATUTA_JOURNAL", "BATUTA_ROLE_SKILLS", "BATUTA_MISSION", "BATUTA_INIT"}
 
-func fixtureRuntime(root, cli string) map[string]string {
+func fixtureRuntime(t *testing.T, root, cli string) map[string]string {
 	return map[string]string{
 		"PATH": cli, "LANG": "C", "LC_ALL": "C", "LC_CTYPE": "C", "LC_COLLATE": "C", "LC_MESSAGES": "C", "LC_MONETARY": "C", "LC_NUMERIC": "C", "LC_TIME": "C", "LC_ADDRESS": "C", "LC_IDENTIFICATION": "C", "LC_MEASUREMENT": "C", "LC_NAME": "C", "LC_PAPER": "C", "LC_TELEPHONE": "C",
-		"TERM": "synthetic-daemon-terminal", "COLORTERM": "truecolor", "SHELL": "/bin/sh", "DISPLAY": "synthetic-display", "WAYLAND_DISPLAY": "synthetic-wayland", "XDG_RUNTIME_DIR": filepath.Join(root, "runtime"), "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + filepath.Join(root, "synthetic-dbus"),
+		"TERM": "synthetic-daemon-terminal", "COLORTERM": "truecolor", "SHELL": credentialRuntimeShell(t), "DISPLAY": "synthetic-display", "WAYLAND_DISPLAY": "synthetic-wayland", "XDG_RUNTIME_DIR": filepath.Join(root, "runtime"), "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + filepath.Join(root, "synthetic-dbus"),
 		"SSL_CERT_FILE": filepath.Join(root, "synthetic-ca.pem"), "SSL_CERT_DIR": filepath.Join(root, "synthetic-certs"), "NODE_EXTRA_CA_CERTS": filepath.Join(root, "synthetic-node-ca.pem"), "CODEX_CA_CERTIFICATE": filepath.Join(root, "synthetic-codex-ca.pem"),
 	}
 }
@@ -66,7 +67,7 @@ func TestCredentialRecordChild(t *testing.T) {
 	output, outputErr := os.Stdout.Stat()
 	record.PTY = inputErr == nil && outputErr == nil && input.Mode()&os.ModeCharDevice != 0 && output.Mode()&os.ModeCharDevice != 0
 	keys := append(append([]string{}, credentialSentinels...), identityKeys...)
-	for key := range fixtureRuntime("", "") {
+	for key := range fixtureRuntime(t, "", "") {
 		keys = append(keys, key)
 	}
 	keys = append(keys, batutaMetadataKeys...)
@@ -118,7 +119,7 @@ func TestCredentialRecordChild(t *testing.T) {
 	if err := os.WriteFile(out, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(credentialRecordInput(t))
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -133,7 +134,7 @@ func TestCredentialRecordChild(t *testing.T) {
 
 func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace, domain.Mission, domain.Account, string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := testfixture.PrivateHome(t)
 	svc := testSvc(t)
 	svc.Home = filepath.Join(root, "console")
 	t.Cleanup(func() {
@@ -149,7 +150,7 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		t.Fatal(err)
 	}
 	cli := filepath.Join(root, "bin")
-	if err := os.Mkdir(cli, 0700); err != nil {
+	if err := testfixture.MakePrivateDirectory(cli, 0700); err != nil {
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
@@ -158,10 +159,10 @@ func isolationFixture(t *testing.T, adapter string) (*Service, domain.Workspace,
 		banner = "2.1.289 (Claude Code)"
 	}
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\nexec " + quote(executable) + " -test.run '^TestCredentialRecordChild$' -- console-credential-fixture " + quote(out) + " " + quote(root) + " " + quote(adapter) + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(cli, adapter), []byte(script), 0700); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName(adapter)), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range fixtureRuntime(root, cli) {
+	for key, value := range fixtureRuntime(t, root, cli) {
 		t.Setenv(key, value)
 	}
 	for _, key := range batutaMetadataKeys {
@@ -233,7 +234,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 				case "login":
 					sess, err = svc.StartLogin(account.ID, "web", "test")
 				case "direct":
-					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
+					sess, err = svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(adapter))}}, []string{"OPENAI_API_KEY=explicit-synthetic", "UNREVIEWED_CREDENTIAL=explicit-synthetic", "BATUTA_ROLE_SKILLS=explicit-role"}, ws.Root)
 				default:
 					sess, err = svc.StartInit(ws.ID, "synthetic init", "web", "test", confirmedFixtureInput(account.ID))
 				}
@@ -265,7 +266,7 @@ func TestServiceClosedCredentialEnvironment(t *testing.T) {
 						t.Errorf("daemon key inherited: %s", key)
 					}
 				}
-				for key, expected := range fixtureRuntime(root, os.Getenv("PATH")) {
+				for key, expected := range fixtureRuntime(t, root, os.Getenv("PATH")) {
 					if key == "TERM" {
 						expected = "xterm-256color"
 					}
@@ -346,7 +347,7 @@ func TestAccountIsolationRejectsBeforeSpawn(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}})
+			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}})
 			if err == nil {
 				readyProcess(t, svc, sess)
 				t.Error("invalid isolation allowed a child process")
@@ -373,7 +374,7 @@ func TestSessionAndLoginRejectMissingOrUnsafeAccount(t *testing.T) {
 					}
 					var err error
 					if mode == "session" {
-						_, err = svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{filepath.Join(os.Getenv("PATH"), adapter)}})
+						_, err = svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: []string{credentialRejectionExecutable(adapter)}})
 					} else {
 						_, err = svc.StartLogin(account.ID, "web", "test")
 					}
@@ -455,7 +456,7 @@ func TestSameProviderAccountIdentitiesStayIndependent(t *testing.T) {
 						t.Errorf("required private directory %s: %v", key, err)
 						continue
 					}
-					if !info.IsDir() || info.Mode().Perm() != 0700 {
+					if !credentialPrivateDirectory(record.Env[key], info) {
 						t.Errorf("account directory is not private: %s", key)
 					}
 				}
@@ -540,7 +541,7 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 	svc, ws, _, _, out, _ := isolationFixture(t, "codex")
 	previous := ""
 	for i := 0; i < 2; i++ {
-		sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+		sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -557,7 +558,7 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 				continue
 			}
 			info, err := os.Stat(path)
-			if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			if err != nil || !credentialPrivateDirectory(path, info) {
 				t.Errorf("unbound directory not private: %s", key)
 			}
 		}
@@ -579,13 +580,13 @@ func TestUnboundHomesAreFreshAndCleanedAfterStop(t *testing.T) {
 
 func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 	svc, ws, _, account, out, root := isolationFixture(t, "codex")
-	previous := os.Getenv("TMPDIR")
+	previous := os.Getenv(credentialSessionCacheKey())
 	blocked := filepath.Join(root, "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("blocked"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", blocked)
-	sess := domain.Session{ID: domain.NewID("s_"), AccountID: account.ID, Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}
+	t.Setenv(credentialSessionCacheKey(), blocked)
+	sess := domain.Session{ID: domain.NewID("s_"), AccountID: account.ID, Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}
 	p, err := svc.Session.StartPending(sess, nil, ws.Root, 1)
 	if err == nil {
 		readyProcess(t, svc, p.Snapshot())
@@ -594,7 +595,7 @@ func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Error("failed setup launched a process")
 	}
-	t.Setenv("TMPDIR", previous)
+	t.Setenv(credentialSessionCacheKey(), previous)
 	sess.ID = domain.NewID("s_")
 	next, err := svc.Session.StartPending(sess, nil, ws.Root, 1)
 	if err != nil {
@@ -605,7 +606,8 @@ func TestPrivateSessionSetupFailureReleasesAdmission(t *testing.T) {
 
 func TestAccountSetupKeepsExistingConsoleHomePermissions(t *testing.T) {
 	svc, _, _, account, _, _ := isolationFixture(t, "codex")
-	if err := os.Chmod(svc.Home, 0755); err != nil {
+	checkPermissions, err := credentialExistingConsolePermissions(t, svc.Home)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ConnectAccount(account.ID); err != nil {
@@ -615,7 +617,7 @@ func TestAccountSetupKeepsExistingConsoleHomePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0755 {
+	if !checkPermissions(info) {
 		t.Fatal("account setup changed permissions of the existing Console home")
 	}
 }
@@ -646,7 +648,7 @@ func TestPrivateHomeNaturalExitAndShutdown(t *testing.T) {
 			observed := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
 			svc.Session.OnExit = func(s domain.Session) { onExit(s); observed <- s }
-			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -709,24 +711,28 @@ func TestFailedStartRemovesCreatedPrivateHome(t *testing.T) {
 }
 
 func TestPrivateHomeCleanupFailureRemainsObservable(t *testing.T) {
+	if credentialCleanupLimitedProcess(t, t.Name()) {
+		return
+	}
 	_, ws, _, _, out, _ := isolationFixture(t, "codex")
 	m := session.New(t.TempDir())
 	svc := &Service{Session: m}
-	sess, err := m.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), "codex")}}, nil, ws.Root)
+	sess, err := m.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := readCredentialRecord(t, svc, sess, out)
 	home := record.Env["HOME"]
+	applyCleanupFault, restoreCleanupFault := credentialCleanupFault(t, home)
 	t.Cleanup(func() {
-		_ = os.Chmod(home, 0700)
+		restoreCleanupFault()
 		_ = os.RemoveAll(home)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = m.Shutdown(ctx)
 	})
-	// Native permission failure in this disposable home; QA runs unprivileged.
-	if err := os.Chmod(home, 0); err != nil {
+	// Native permission failure in this disposable home.
+	if err := applyCleanupFault(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Stop(sess.ID); !errors.Is(err, os.ErrPermission) {

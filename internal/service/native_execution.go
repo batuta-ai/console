@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
@@ -65,7 +64,7 @@ func (s *Service) executionApproval(ctx context.Context, req domain.ExecutionReq
 	if domain.PlanVersion(body) != receipt.Identity.Version {
 		return domain.PlanApproval{}, domain.ErrPlanStale
 	}
-	if strings.Contains(b.PlanPath, "/done/") || (p.Status != routing.PlanProposed && p.Status != routing.PlanApproved) {
+	if batuta.IsArchivedPlanPath(b.PlanPath, b.PlanSlug) || (p.Status != routing.PlanProposed && p.Status != routing.PlanApproved) {
 		return domain.PlanApproval{}, domain.ErrPlanTransition
 	}
 	return receipt, nil
@@ -178,6 +177,9 @@ func (s *Service) ResumeExecution(ctx context.Context, req domain.ResumeRequest)
 	}
 	if state.Target != req.Target || state.Delivery != req.Delivery || state.OpenedDigest != req.OpenedDigest {
 		return reject(domain.ErrInvalidReference)
+	}
+	if batuta.IsArchivedPlanPath(state.Target.Binding.PlanPath, state.Target.Binding.PlanSlug) {
+		return reject(domain.ErrPlanTransition)
 	}
 	receipt, err := s.PlanApproval(ctx, req.Target.MissionID, req.Target.Binding.WorkspaceID, req.ApprovalID)
 	if err != nil {
