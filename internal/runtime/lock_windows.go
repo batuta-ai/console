@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 
 	"golang.org/x/sys/windows"
 )
@@ -24,10 +25,13 @@ func windowsLockRange(f *os.File, offset uint32, exclusive, nonblocking bool) er
 	if exclusive {
 		flags |= windows.LOCKFILE_EXCLUSIVE_LOCK
 	}
-	overlap := windows.Overlapped{Offset: offset}
+	overlap := &windows.Overlapped{Offset: offset}
+	var pin goruntime.Pinner
+	pin.Pin(overlap)
+	defer pin.Unpin()
 	handle := windows.Handle(f.Fd())
 	if nonblocking {
-		return windows.LockFileEx(handle, flags|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlap)
+		return windows.LockFileEx(handle, flags|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlap)
 	}
 	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
@@ -36,14 +40,14 @@ func windowsLockRange(f *os.File, offset uint32, exclusive, nonblocking bool) er
 	defer windows.CloseHandle(event)
 	// Suppress completion-port notification for this explicitly waited request.
 	overlap.HEvent = event | 1
-	err = windows.LockFileEx(handle, flags, 0, 1, 0, &overlap)
+	err = windows.LockFileEx(handle, flags, 0, 1, 0, overlap)
 	if !errors.Is(err, windows.ERROR_IO_PENDING) {
 		return err
 	}
 	status, waitErr := windows.WaitForSingleObject(event, windowsLockWaitMillis)
 	var transferred uint32
 	if waitErr == nil && status == windows.WAIT_OBJECT_0 {
-		return windows.GetOverlappedResult(handle, &overlap, &transferred, true)
+		return windows.GetOverlappedResult(handle, overlap, &transferred, true)
 	}
 	if waitErr == nil {
 		if status == uint32(windows.WAIT_TIMEOUT) {
@@ -52,11 +56,11 @@ func windowsLockRange(f *os.File, offset uint32, exclusive, nonblocking bool) er
 			waitErr = fmt.Errorf("unexpected Windows lock wait status: %d", status)
 		}
 	}
-	cancelErr := windows.CancelIoEx(handle, &overlap)
+	cancelErr := windows.CancelIoEx(handle, overlap)
 	if errors.Is(cancelErr, windows.ERROR_NOT_FOUND) {
 		cancelErr = nil
 	}
-	drainErr := windows.GetOverlappedResult(handle, &overlap, &transferred, true)
+	drainErr := windows.GetOverlappedResult(handle, overlap, &transferred, true)
 	if drainErr == nil {
 		// A grant racing the deadline must not leave an abandoned held lock.
 		drainErr = windowsUnlockRange(f, offset)
