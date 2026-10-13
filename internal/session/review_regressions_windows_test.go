@@ -135,8 +135,8 @@ func TestWindowsGracefulObserverFailureCancelsOwnedCommand(t *testing.T) {
 	go func() { _, err := runner.Run(ctx, command); done <- err }()
 	select {
 	case err := <-done:
-		if !errors.Is(err, windows.ERROR_NO_DATA) {
-			t.Fatal("real observer pipe error was lost", err)
+		if !errors.Is(err, windows.ERROR_NO_DATA) || errors.Is(err, context.Canceled) {
+			t.Fatal("real observer pipe error was lost or misclassified as cancellation", err)
 		}
 	case <-time.After(5 * time.Second):
 		cancel()
