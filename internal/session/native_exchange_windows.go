@@ -216,6 +216,10 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 			}
 		case processErr = <-processDone:
 			processDone = nil
+			expired = nil
+			if grace != nil {
+				grace.Stop()
+			}
 			cancelCallback()
 		case stderrErr = <-stderrDone:
 			stderrDone = nil
