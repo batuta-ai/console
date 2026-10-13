@@ -711,6 +711,9 @@ func TestFailedStartRemovesCreatedPrivateHome(t *testing.T) {
 }
 
 func TestPrivateHomeCleanupFailureRemainsObservable(t *testing.T) {
+	if credentialCleanupLimitedProcess(t, t.Name()) {
+		return
+	}
 	_, ws, _, _, out, _ := isolationFixture(t, "codex")
 	m := session.New(t.TempDir())
 	svc := &Service{Session: m}
@@ -720,15 +723,16 @@ func TestPrivateHomeCleanupFailureRemainsObservable(t *testing.T) {
 	}
 	record := readCredentialRecord(t, svc, sess, out)
 	home := record.Env["HOME"]
+	applyCleanupFault, restoreCleanupFault := credentialCleanupFault(t, home)
 	t.Cleanup(func() {
-		_ = os.Chmod(home, 0700)
+		restoreCleanupFault()
 		_ = os.RemoveAll(home)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = m.Shutdown(ctx)
 	})
-	// Native permission failure in this disposable home; QA runs unprivileged.
-	if err := os.Chmod(home, 0); err != nil {
+	// Native permission failure in this disposable home.
+	if err := applyCleanupFault(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Stop(sess.ID); !errors.Is(err, os.ErrPermission) {
