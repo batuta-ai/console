@@ -50,7 +50,11 @@ func credentialCleanupRejectedChild(t *testing.T, scenario, want string) {
 		return
 	}
 	if backup == false && restore == false {
-		t.Fatal("rejection qualification requires an actual privileged parent")
+		if credentialCleanupLimitedProcess(t, t.Name()) {
+			t.Fatal("already-limited rejection fixture unexpectedly delegated a child")
+		}
+		t.Log("actual already-limited parent executes in process; enabled-privilege rejection branches are qualified separately")
+		return
 	}
 	executable, err := os.Executable()
 	if err != nil {
