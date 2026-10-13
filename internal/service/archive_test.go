@@ -1,5 +1,3 @@
-//go:build windows
-
 package service
 
 import (
@@ -17,9 +15,13 @@ import (
 	"github.com/batuta-ai/core/loop"
 )
 
-func TestTask43WindowsArchivedPlanTransitions(t *testing.T) {
+func TestTask43ArchivedPlanTransitions(t *testing.T) {
 	native := filepath.Join(".batuta", "plans", "done", "alpha.md")
-	for _, path := range []string{native, filepath.ToSlash(native)} {
+	paths := []string{native}
+	if slash := filepath.ToSlash(native); slash != native {
+		paths = append(paths, slash)
+	}
+	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			svc := setupService(t)
 			root := t.TempDir()
