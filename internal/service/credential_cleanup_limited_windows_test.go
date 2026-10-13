@@ -18,6 +18,9 @@ import (
 func credentialCleanupLimitedProcess(t *testing.T, name string) bool {
 	t.Helper()
 	before, backup, restore := credentialCleanupTokenPrivileges(t)
+	if os.Getenv("BATUTA_CLEANUP_PARENT_USER_SID") != "" && (backup || restore) {
+		t.Fatal("cleanup child marker has enabled backup/restore privileges")
+	}
 	if !backup && !restore {
 		return false
 	}
@@ -60,6 +63,7 @@ func credentialCleanupLimitedProcess(t *testing.T, name string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(name)+"$", "-test.count=1", "-test.timeout=120s", "-test.v")
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = append(os.Environ(), "BATUTA_CLEANUP_PARENT_USER_SID="+user.User.Sid.String())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(*limited)}
 	output, runErr := cmd.CombinedOutput()
@@ -73,6 +77,12 @@ func credentialCleanupLimitedProcess(t *testing.T, name string) bool {
 	t.Logf("actual limited cleanup child test=%s pid=%d exited=%t success=%t err=%v output:\n%s", name, pid, exited, success, runErr, output)
 	if runErr != nil || ctx.Err() != nil || !exited || !success {
 		t.Fatal("owned limited cleanup child failed", runErr, ctx.Err())
+	}
+	completed := regexp.MustCompile(`(?m)^--- PASS: ` + regexp.QuoteMeta(name) + ` \([0-9.]+s\)\r?$`).Match(output)
+	started := regexp.MustCompile(`(?m)^=== RUN   ` + regexp.QuoteMeta(name) + `\r?$`).Match(output)
+	skipped := regexp.MustCompile(`(?m)^\s*--- SKIP:`).Match(output)
+	if !completed || !started || skipped || bytes.Contains(output, []byte("no tests to run")) {
+		t.Fatal("owned limited cleanup child did not complete target test", name)
 	}
 	after, afterBackup, afterRestore := credentialCleanupTokenPrivileges(t)
 	afterUser, err := windows.GetCurrentProcessToken().GetTokenUser()
