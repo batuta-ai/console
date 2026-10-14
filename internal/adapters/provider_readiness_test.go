@@ -304,7 +304,7 @@ func TestReadinessHasOneOverallDeadline(t *testing.T) {
 	}))
 	checker, _, home, account, _ := authFixture(t, "claude", client)
 	script := "#!/bin/sh\n/bin/sleep 3\nprintf '%s\\n' '2.1.289 (Claude Code)'\n"
-	if err := os.WriteFile(filepath.Join(os.Getenv("PATH"), "claude"), []byte(script), 0700); err != nil {
+	if err := testfixture.RewriteScript(t, filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("claude")), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
