@@ -153,13 +153,23 @@ func (p *artifactPermissions) chmod(perm os.FileMode) error {
 	if control&windows.SE_DACL_PROTECTED != 0 {
 		security = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
 	}
-	// Only the DACL is written; its original control bits come from the snapshot.
+	input, err := descriptor.ToAbsolute()
+	if err != nil {
+		return err
+	}
+	// AUTO_INHERITED needs AUTO_INHERIT_REQ on setter input to survive the write.
+	// Keep that request bit off the immutable snapshot used for exact readback.
+	if control&windows.SE_DACL_AUTO_INHERITED != 0 {
+		if err := input.SetControl(windows.SE_DACL_AUTO_INHERIT_REQ, windows.SE_DACL_AUTO_INHERIT_REQ); err != nil {
+			return err
+		}
+	}
 	setSecurity := windows.NewLazySystemDLL("ntdll.dll").NewProc("NtSetSecurityObject")
 	if err := setSecurity.Find(); err != nil {
 		return err
 	}
-	status, _, _ := setSecurity.Call(uintptr(p.handle), uintptr(security), uintptr(unsafe.Pointer(descriptor)))
-	runtime.KeepAlive(descriptor)
+	status, _, _ := setSecurity.Call(uintptr(p.handle), uintptr(security), uintptr(unsafe.Pointer(input)))
+	runtime.KeepAlive(input)
 	if status != 0 {
 		return windows.NTStatus(status)
 	}
@@ -188,7 +198,7 @@ func (p *artifactPermissions) chmod(perm os.FileMode) error {
 	}
 	if perm == 0600 {
 		if gotControl != wantControl || current.String() != p.original.String() {
-			return fmt.Errorf("artifact security descriptor/control not restored exactly")
+			return fmt.Errorf("artifact security descriptor/control not restored exactly: want control=%#04x descriptor=%q; got control=%#04x descriptor=%q", wantControl, p.original.String(), gotControl, current.String())
 		}
 		contents, err := os.ReadFile(p.path)
 		if err != nil {
@@ -201,4 +211,187 @@ func (p *artifactPermissions) chmod(perm os.FileMode) error {
 		return fmt.Errorf("artifact denial DACL is not protected")
 	}
 	return p.unchanged()
+}
+
+func TestArtifactPermissionsRestoreState(t *testing.T) {
+	t.Log("metadata/restored-read regression only; does not qualify ReadFile denial under this actor")
+	t.Run("default_file", func(t *testing.T) {
+		testArtifactPermissionsRestoreState(t, "", "", "")
+	})
+	for _, setter := range []string{"SetSecurityInfo", "NtSetSecurityObject"} {
+		for _, protection := range []string{"", "P"} {
+			for _, inheritance := range []string{"", "AI", "AR", "AIAR"} {
+				// SetSecurityInfo accepts an ACL and protection flags, not descriptor control.
+				if setter == "SetSecurityInfo" && inheritance != "" {
+					continue
+				}
+				for _, aceFlags := range []string{"", "ID"} {
+					name := fmt.Sprintf("%s/protection=%q/control=%q/ace=%q", setter, protection, inheritance, aceFlags)
+					t.Run(name, func(t *testing.T) {
+						testArtifactPermissionsRestoreState(t, setter, protection+inheritance, aceFlags)
+					})
+				}
+			}
+		}
+	}
+}
+
+func testArtifactPermissionsRestoreState(t *testing.T, setter, controlFlags, aceFlags string) {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "artifact-restore-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := file.Name()
+	contents := []byte("artifact restoration diagnostic\r\n")
+	_, writeErr := file.Write(contents)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("create owned artifact: write=%v close=%v", writeErr, closeErr)
+	}
+	// This fixture guards ownership, file type and identity before any initialization write.
+	guard := newArtifactPermissions(t, path)
+	artifactRestoreReadback(t, guard.handle, "created")
+	if setter != "" {
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dacl := "D:" + controlFlags + "(A;;FA;;;" + user.User.Sid.String() + ")"
+		if aceFlags != "" {
+			// Keep explicit owner access even if the setter replaces inherited ACEs.
+			dacl += "(A;" + aceFlags + ";FR;;;" + user.User.Sid.String() + ")"
+		}
+		requested, err := windows.SecurityDescriptorFromString(dacl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		control, _, err := requested.Control()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("initialization request: setter=%s control=%#04x descriptor=%q", setter, control, requested.String())
+		var security windows.SECURITY_INFORMATION = windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+		if control&windows.SE_DACL_PROTECTED != 0 {
+			security = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
+		}
+		var setErr error
+		switch setter {
+		case "SetSecurityInfo":
+			acl, _, err := requested.DACL()
+			if err != nil {
+				t.Fatal(err)
+			}
+			setErr = windows.SetSecurityInfo(guard.handle, windows.SE_FILE_OBJECT, security, nil, nil, acl, nil)
+		case "NtSetSecurityObject":
+			setSecurity := windows.NewLazySystemDLL("ntdll.dll").NewProc("NtSetSecurityObject")
+			if err := setSecurity.Find(); err != nil {
+				t.Fatal(err)
+			}
+			status, _, _ := setSecurity.Call(uintptr(guard.handle), uintptr(security), uintptr(unsafe.Pointer(requested)))
+			if status != 0 {
+				setErr = windows.NTStatus(status)
+			}
+		default:
+			t.Fatalf("unknown initialization setter %q", setter)
+		}
+		runtime.KeepAlive(requested)
+		artifactRestoreReadback(t, guard.handle, "after initialization")
+		if setErr != nil {
+			t.Fatalf("initialize owned artifact with %s: %v", setter, setErr)
+		}
+		if err := guard.unchanged(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Recapture the actual on-disk state through the real constructor; never edit its snapshot.
+	fixture := newArtifactPermissions(t, path)
+	artifactRestoreReadback(t, fixture.handle, "before denial")
+	want := fixture.original
+	wantBytes := artifactRestoreDescriptorBytes(t, want)
+	wantControl, _, err := want.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("fixture captured original want: actual SD.Control=%#04x descriptor=%q bytes=%x", wantControl, want.String(), wantBytes)
+	t.Cleanup(func() {
+		err := fixture.chmod(0600)
+		artifactRestoreReadback(t, fixture.handle, "after cleanup restoration")
+		if err != nil {
+			t.Errorf("cleanup chmod(0600): %v", err)
+		}
+	})
+	denyErr := fixture.chmod(0000)
+	artifactRestoreReadback(t, fixture.handle, "after denial")
+	if denyErr != nil {
+		t.Errorf("chmod(0000): %v", denyErr)
+	}
+	restoreErr := fixture.chmod(0600)
+	got := artifactRestoreReadback(t, fixture.handle, "after restoration (actual got)")
+	if restoreErr != nil {
+		t.Errorf("chmod(0600): %v", restoreErr)
+	}
+	gotBytes := artifactRestoreDescriptorBytes(t, got)
+	gotControl, _, err := got.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotControl != wantControl || got.String() != want.String() || !bytes.Equal(gotBytes, wantBytes) {
+		t.Errorf("exact original descriptor restoration: want control=%#04x descriptor=%q bytes=%x; got control=%#04x descriptor=%q bytes=%x", wantControl, want.String(), wantBytes, gotControl, got.String(), gotBytes)
+	}
+	wantACL, err := artifactACL(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotACL, err := artifactACL(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotACL, wantACL) {
+		t.Errorf("exact original DACL restoration: want=%x got=%x", wantACL, gotACL)
+	}
+	if err := fixture.unchanged(); err != nil {
+		t.Error(err)
+	}
+	gotContents, err := os.ReadFile(path)
+	if err != nil {
+		t.Errorf("read restored artifact: %v", err)
+	}
+	if !bytes.Equal(gotContents, contents) {
+		t.Errorf("exact original contents restoration: want=%x got=%x", contents, gotContents)
+	}
+}
+
+func artifactRestoreReadback(t *testing.T, handle windows.Handle, phase string) *windows.SECURITY_DESCRIPTOR {
+	t.Helper()
+	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, artifactSecurity)
+	if err != nil {
+		t.Fatalf("%s: GetSecurityInfo: %v", phase, err)
+	}
+	control, revision, err := sd.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s: actual SD.Control=%#04x revision=%d descriptor=%q bytes=%x", phase, control, revision, sd.String(), artifactRestoreDescriptorBytes(t, sd))
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s: volume=%#x fileID=%#x:%#x attrs=%#x links=%d size=%d:%d", phase, info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow, info.FileAttributes, info.NumberOfLinks, info.FileSizeHigh, info.FileSizeLow)
+	return sd
+}
+
+func artifactRestoreDescriptorBytes(t *testing.T, sd *windows.SECURITY_DESCRIPTOR) []byte {
+	t.Helper()
+	control, _, err := sd.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// GetSecurityInfo returns self-relative descriptors, whose full bytes are contiguous.
+	if control&windows.SE_SELF_RELATIVE == 0 {
+		t.Fatal("cannot capture bytes of an absolute descriptor")
+	}
+	data := bytes.Clone(unsafe.Slice((*byte)(unsafe.Pointer(sd)), int(sd.Length())))
+	runtime.KeepAlive(sd)
+	return data
 }
