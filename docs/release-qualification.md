@@ -524,13 +524,44 @@ The original test cases, subprocess watchdog, both Snapshot/All modes,
 checks remain. Darwin/Linux still use the original `Mkfifo(0600)` and descriptor
 count implementation. No required test gains a skip or loses an assertion.
 
-On Windows, `makeImportFIFO` deliberately returns an explicit unsupported-fixture
-error. It does not substitute a directory or claim a named pipe is a filesystem
-FIFO. Thus both `fifo` and `fifo-symlink` remain failing obligations in the full
-native suite. The directory, directory-symlink and regular-symlink cases still
-exercise their original assertions, using actual process handle counts for leak
-checks. Native qualification must establish symlink privileges and handle-count
-stability without changing global permissions or weakening those checks.
+The `fifo`/`fifo-symlink` labels retain a Unix filesystem FIFO (`Mkfifo(0600)`).
+Their Windows candidate is a filesystem AF_UNIX stream socket counterpart,
+not a literal FIFO or a blocking `ReadFile` guarantee. [Microsoft documents
+the bound socket as an NTFS reparse point](https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/).
+The helper checks `ModeSocket`, `IO_REPARSE_TAG_AF_UNIX` and physical identity at
+the original requested path, using a newly owned short parent alias under
+`os.UserHomeDir()` only when needed. The listener has no acceptor or writer and
+remains open until fixture cleanup. Existing controls and assertions are unchanged.
+
+Go 1.27.2 `Stat` returns `ERROR_CANT_ACCESS_FILE` when following a file
+symlink to an AF_UNIX socket. The Windows import reader now resolves metadata
+for that error and accepts the result only when it identifies a socket. This
+classifies the nonregular import as `Unknown` and invalidates a stale
+measurement. The fallback never reads data; ordinary file reads are unchanged.
+
+This follow-up adds only the `t` argument to the original FIFO constructor
+call; reversing that call reproduces the entire prior `read_test.go` byte for
+byte. The protected manifests above describe their historical capture.
+
+Candidate source, test-first source and local command evidence are retained
+under `.batuta/runs/2026-10-14-windows-beta1/nonregular-import-all-worker-raws`
+and `native-host/` in the parent checkout. Qualify each candidate on native
+Windows with the full original nonregular family using
+`-race` plus `TestWindowsImportFilesystemEndpoint`, including short/long paths,
+file symlinks, case/Unicode spelling, removal and alias cleanup. The original
+32-read import loops retain exact descriptor-count equality. Fixture setup
+verifies `SOCK_STREAM` after `Listen`; teardown requires a successful socket
+close. A whole-process count around new test goroutines also counts Go runtime
+thread resources and is not the fixture ownership oracle. The
+Windows import counter now counts kernel File objects, including sockets and
+pipes, via a current-process handle snapshot. Its exact equality is preserved;
+a new native test requires real open-file/socket increments and return to the
+baseline after close, while an Event must not count as a file descriptor.
+The NT snapshot is test-only and fails on an unsupported query or invalid
+layout. Darwin/Linux descriptor counters are unchanged.
+macOS race results and Windows cross-compilation do not establish that
+behavior. These privileged source fixtures do not qualify ordinary-user product
+operation, the full Windows suite or beta readiness.
 
 Before enabling Windows, Task43 must provide:
 

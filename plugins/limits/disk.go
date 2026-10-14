@@ -46,7 +46,7 @@ func (d Disk) snapshotAt(account domain.Account, now time.Time) domain.LimitSnap
 		return fallback
 	}
 	path := filepath.Join(ad.IsolateDir(d.Home, account.ID), "."+account.Adapter, "rate_limit.json")
-	info, err := os.Stat(path)
+	info, err := statImportFile(path)
 	if err != nil {
 		return fallback
 	}

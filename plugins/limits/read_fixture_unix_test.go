@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func makeImportFIFO(path string) error { return syscall.Mkfifo(path, 0o600) }
+func makeImportFIFO(t *testing.T, path string) error { return syscall.Mkfifo(path, 0o600) }
 
 func openDescriptorCount(t *testing.T) int {
 	t.Helper()
