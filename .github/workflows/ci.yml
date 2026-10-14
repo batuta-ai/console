@@ -45,3 +45,144 @@ jobs:
           node scripts/check-release-config.mjs
       - name: Shared non-root source contract
         run: sh scripts/check-release.sh
+  windows-source:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
+    steps:
+      - name: Create owned evidence directory
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP ("console-windows-evidence-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          "WINDOWS_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.10.0'
+          package-manager-cache: false
+      - name: Record native environment and install pinned npm
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          & {
+            [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+            [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+            if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') { throw 'Native Windows amd64 runner required' }
+            whoami /all
+            git rev-parse HEAD
+            go version
+            if ((go version) -ne 'go version go1.27.2 windows/amd64') { throw 'Unexpected Go toolchain' }
+            node --version
+            if ((node --version) -ne 'v26.10.0') { throw 'Unexpected Node toolchain' }
+            npm install --global npm@12.2.0
+            npm --version
+            if ((npm --version) -ne '12.2.0') { throw 'Unexpected npm toolchain' }
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'environment.log')
+      - name: Native web tests, typecheck, build and embedded asset guard
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          function Assert-EmbeddedAssets {
+            $drift = git status --porcelain --untracked-files=all -- internal/webui/dist
+            if ($drift) { throw "Embedded web assets differ from HEAD: $drift" }
+          }
+          & {
+            Assert-EmbeddedAssets
+            npm --prefix web ci
+            npm --prefix web run test:run
+            & ./web/node_modules/.bin/tsc.cmd --noEmit --project web/tsconfig.json
+            npm --prefix web run build
+            Assert-EmbeddedAssets
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'web.log')
+      - name: Native Go builds, integrity, vet and complete original tests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Only this new empty fixture directory receives a protected current-user ACL.
+          $fixture = Join-Path $env:RUNNER_TEMP ("console-windows-fixture-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+          $acl.SetOwner($sid)
+          $acl.SetAccessRuleProtection($true, $false)
+          $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $sid, [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+          $acl.AddAccessRule($rule)
+          Set-Acl -LiteralPath $fixture -AclObject $acl
+          $actual = Get-Acl -LiteralPath $fixture
+          $rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+          $actual.Sddl | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'fixture-acl.log')
+          if ($actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or
+              -not $actual.AreAccessRulesProtected -or $rules.Count -ne 1 -or
+              $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].IsInherited -or
+              $rules[0].FileSystemRights -ne $rule.FileSystemRights -or
+              $rules[0].InheritanceFlags -ne $rule.InheritanceFlags -or
+              $rules[0].PropagationFlags -ne $rule.PropagationFlags -or
+              $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Fixture owner/ACL verification failed' }
+          & {
+            go mod verify
+            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'console.exe') ./cmd/console
+            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'consoled.exe') ./cmd/consoled
+            go vet ./...
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'go-checks.log')
+          $saved = @{ TEMP = $env:TEMP; TMP = $env:TMP; LOCALAPPDATA = $env:LOCALAPPDATA }
+          try {
+            $env:TEMP = $fixture
+            $env:TMP = $fixture
+            $env:LOCALAPPDATA = $fixture
+            # Keep both original streams even when Go returns a failing exit code.
+            $PSNativeCommandUseErrorActionPreference = $false
+            go test ./... -json -count=1 -timeout=20m 1> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') 2> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stderr')
+            $testExit = $LASTEXITCODE
+            $testExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.exit')
+          } finally {
+            $env:TEMP = $saved.TEMP
+            $env:TMP = $saved.TMP
+            $env:LOCALAPPDATA = $saved.LOCALAPPDATA
+          }
+          $badEvents = 0
+          $passEvents = 0
+          Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
+            $event = $_ | ConvertFrom-Json -ErrorAction Stop
+            if ($event.Action -in @('fail', 'skip')) { $badEvents++ }
+            if ($event.Action -eq 'pass' -and $event.Test) { $passEvents++ }
+          }
+          "exit=$testExit pass=$passEvents fail-or-skip=$badEvents" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test-summary.log')
+          if ($testExit -ne 0 -or $badEvents -ne 0 -or $passEvents -eq 0) { throw 'Complete native Go suite failed or skipped tests; see retained evidence' }
+      - name: Retain native Windows evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.WINDOWS_EVIDENCE }}/*.log
+            ${{ env.WINDOWS_EVIDENCE }}/*.json
+            ${{ env.WINDOWS_EVIDENCE }}/*.stderr
+            ${{ env.WINDOWS_EVIDENCE }}/*.exit
+          if-no-files-found: error

@@ -5,6 +5,43 @@ unsupported until Task43 qualifies effective protection, process ownership and
 ConPTY. Cross-compilation and WSL2 do not qualify native Windows behavior. Real
 Codex/Claude provider qualification belongs to Task44.
 
+## Blocking native Windows source gate
+
+The reusable Console checks workflow now includes a blocking `windows-source`
+job on native `windows-2025` amd64. It selects the same exact
+`inputs.ref || github.sha` as the unchanged macOS/Linux source job, with pinned
+Go 1.27.2, Node 26.10.0 and npm 12.2.0. It runs web tests, TypeScript checking
+and the embedded web build, rejecting tracked and untracked embedded asset
+drift. Checkout uses command-scoped LF settings, without global Git changes.
+The native Go path verifies modules, builds both commands, runs vet and requires
+`go test ./... -json -count=1 -timeout=20m` without selections or suppressions.
+A nonzero process exit or any JSON failure/skip event blocks the job.
+
+Before Go checks, the job creates a new empty disposable fixture directory and
+verifies its protected ACL: current-user SID owner and only that SID's full
+control rule with object/container inheritance. Only the test process environment
+receives this directory as TEMP, TMP and LOCALAPPDATA. Existing objects and the
+runner's global temporary directory ACL are never changed. This avoids inherited
+BUILTIN\Administrators ownership interfering before the original test contracts;
+it does not make the runner a standard user.
+
+An `always()` upload retains complete Go JSON stdout, stderr and process exit,
+plus runner OS/version, identity/privileges, toolchain, source revision, fixture
+ACL and stage diagnostics from a separate owned runner.temp evidence directory.
+No personal credentials or configuration are collected. The upload action is
+pinned to v7.0.2 commit `cf430e030ddbb5b0abf93d22962f4752f3646cd9`.
+Local lint/source review does not establish runtime success; a reviewed/pushed
+candidate still needs a live Windows CI run and inspection of its artifacts.
+
+[GitHub documents Windows hosted runners as administrators with UAC disabled](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+This elevated source gate cannot close standard-user Windows qualification.
+The last full native candidate `0747deb` recorded 3,250 passes, 107 failures
+and zero skips; those failures remain pending until fresh native evidence.
+Full race/scanner, secure source/authentication, real provider and standard-user
+qualification remain outside this bounded gate. Windows remains pending until
+Task43/Task44 gates pass; SelectedPlatform and Windows packages remain disabled.
+This change neither qualifies a full Windows release nor closes beta1.
+
 ## Fixture command and scope — 2026-10-13
 
 ```sh
