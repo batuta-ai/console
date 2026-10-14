@@ -26,6 +26,7 @@ func TestNativeSkillLinksAreDirectoryReparsePoints(t *testing.T) {
 				}
 				attrs, attrErr := windows.GetFileAttributes(encoded)
 				target, targetErr := os.Readlink(link)
+				expectedTarget := filepath.Join(collection, name)
 				resolved, resolveErr := filepath.EvalSymlinks(link)
 				want, wantErr := filepath.EvalSymlinks(filepath.Join(collection, name))
 				got, readErr := os.ReadFile(filepath.Join(link, "SKILL.md"))
@@ -34,8 +35,8 @@ func TestNativeSkillLinksAreDirectoryReparsePoints(t *testing.T) {
 				if attrErr != nil || attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 || attrs&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
 					t.Errorf("selected skill must be a directory reparse point: attrs=%#x err=%v", attrs, attrErr)
 				}
-				if targetErr != nil || resolveErr != nil || wantErr != nil || resolved != want {
-					t.Errorf("selected skill target differs: target=%s resolved=%s want=%s errors=%v/%v/%v", target, resolved, want, targetErr, resolveErr, wantErr)
+				if targetErr != nil || target != expectedTarget || resolveErr != nil || wantErr != nil || resolved != want {
+					t.Errorf("selected skill target differs: target=%s expected=%s resolved=%s want=%s errors=%v/%v/%v", target, expectedTarget, resolved, want, targetErr, resolveErr, wantErr)
 				}
 				if readErr != nil || sourceErr != nil || !bytes.Equal(got, expected) {
 					t.Errorf("native selected skill bytes unavailable or changed: read=%v source=%v", readErr, sourceErr)
