@@ -282,6 +282,9 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				}
 				configPath := filepath.Join(accountHome, config)
 				settingsPath := filepath.Join(configPath, settings)
+				if err := testfixture.PreparePrivateFile(settingsPath); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.WriteFile(settingsPath, []byte("synthetic-caller-settings"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -290,6 +293,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				checkCallerFiles := snapshotCallerFiles(t, credentialPath, settingsPath)
 				inject := mode != "off"
 				var sess domain.Session
 				switch mode {
@@ -339,12 +343,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				if err != nil || string(data) != "synthetic-caller-settings" {
 					t.Fatal("settings changed")
 				}
-				for _, path := range []string{credentialPath, settingsPath} {
-					info, err := os.Stat(path)
-					if err != nil || info.Mode().Perm() != 0600 {
-						t.Fatal("caller file mode changed")
-					}
-				}
+				checkCallerFiles()
 				persisted, err := svc.Store.GetSession(sess.ID)
 				if err != nil || persisted.AccountID != account.ID || persisted.BatutaInjected != sess.BatutaInjected || !slices.Equal(persisted.Argv, sess.Argv) {
 					t.Fatalf("catalog drift: %+v %v", persisted, err)
