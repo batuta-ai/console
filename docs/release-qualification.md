@@ -571,8 +571,10 @@ the atomic commit (`2e09283`).
 ## Disposable ordinary-user skills gate
 
 The independent blocking `windows-ordinary-skills` job selects the same exact
-`inputs.ref || github.sha` and Go 1.27.2. It compiles the current service tests
-with `-tags console_ordinary_user` and requires exactly
+`inputs.ref || github.sha` and Go 1.27.2. Before compiling the current service
+tests, the parent runs full `go vet -tags console_ordinary_user ./internal/service`,
+retains `vet.stdout`, `vet.stderr` and `vet.exit`, and fails on any nonzero exit.
+It then compiles with `-tags console_ordinary_user` and requires exactly
 `TestOrdinaryWindowsUserDiscoversSelectedSkills` and its Codex and Claude child
 passes. The new ordinary-user test requires both `windows` and
 `console_ordinary_user`; its complete body and assertions remain unchanged.
@@ -618,12 +620,12 @@ unselected role remained absent. Source/tool/binary hashes stayed unchanged,
 and the owned account was removed only after process-tree drain. Native
 PowerShell parsing and independent Opus 5.5 source/criterion reviews also passed.
 That run qualifies the existing native actor gate on the recorded source; it
-does not prove the candidate after the build-selection header change. Fresh
-caller-owned native proof of the frozen candidate must still confirm the exact
-parent and two child passes, and default Windows inventory must retain all
-preexisting names while omitting only this new ordinary-user test. GitHub's
-elevated default runner cannot
-establish ordinary-user operation. The complete elevated Windows suite still
-has unrelated failures; this selected actor proof does not establish full
-Windows readiness, provider authentication or beta release readiness. All other
-Task43 full-Windows obligations remain open.
+does not prove the candidate after the build-selection header and tagged full-vet
+driver changes. Fresh caller-owned native proof of the frozen candidate must
+still confirm the exact parent and two child passes, and default Windows
+inventory must retain all preexisting names while omitting only this new
+ordinary-user test. GitHub's
+elevated default runner cannot establish ordinary-user operation. The complete
+elevated Windows suite still has unrelated failures; this selected actor proof
+does not establish full Windows readiness, provider authentication or beta
+release readiness. All other Task43 full-Windows obligations remain open.
