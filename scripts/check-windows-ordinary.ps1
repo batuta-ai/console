@@ -8,7 +8,7 @@ $PSNativeCommandUseErrorActionPreference = $false
    imageVersion = $env:ImageVersion; runID = $env:GITHUB_RUN_ID; workspace = $env:GITHUB_WORKSPACE } |
     ConvertTo-Json | Set-Content (Join-Path $Evidence 'bootstrap-host.json')
 if (-not $IsWindows -or $env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
-    $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:ImageOS -cne 'win25' -or
+    $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:ImageOS -cnotin @('win25', 'win25-vs2026') -or
     -not $env:GITHUB_RUN_ID -or -not $env:GITHUB_WORKSPACE) { throw 'GitHub-hosted Windows 2025 only; refusing account bootstrap' }
 $parentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($parentIdentity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Hosted bootstrap administrator required' }
