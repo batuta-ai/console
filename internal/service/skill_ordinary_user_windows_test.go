@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && console_ordinary_user
 
 package service
 
