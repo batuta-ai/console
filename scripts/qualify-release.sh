@@ -74,6 +74,10 @@ const run = async (label, command, args, timeout = 180000, env = environment, cw
 };
 const fixtures = [
   ["./internal/tui", [
+    "TestOuterConsolePTYCatalogApprovalAndRestart",
+    "TestJourneyKeyboardPrioritizesBackgroundRefresh",
+    "TestJourneyBackgroundRefreshPreservesMutationFailure",
+    "TestJourneyBackgroundRefreshPreservesUncertainFailure",
     "TestJourneyPublicCoreQuestionResumeAndRestart",
     "TestJourneyRealDaemonPlanningBindingApprovalTwoMissions",
     "TestAccountOfficialLoginOpensActualTerminal",

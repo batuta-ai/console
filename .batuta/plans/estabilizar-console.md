@@ -1,5 +1,5 @@
 # Plan — Corrigir bloqueadores e completar o fluxo funcional
-<!-- inputs: profile.md@sha256:007e2ce0c8b9 routing.md@sha256:c3d5dd7cafa7 -->
+<!-- inputs: profile.md@sha256:4541669f7097 routing.md@sha256:c3d5dd7cafa7 -->
 
 **Goal:** Tornar o Batuta Console funcional e verificável para a publicação coordenada com o Batuta estável. Corrigir os problemas de execução, isolamento, persistência, inicialização e identidade das missões; completar o ciclo de plano, aprovação, execução, perguntas e recuperação; preparar a distribuição reproduzível antes da revisão visual do web e da TUI.
 **Created:** 2026-10-03 · **Status:** in progress
@@ -155,7 +155,7 @@
       Accept: Pipeline reproduz install/typecheck/web build/Go tests/vet/race/scan e verifica assets sem drift → sh scripts/check-release.sh; Pacote local inclui console, consoled, web embarcado, licenças e checksums para cada alvo suportado → sh scripts/package-release.sh
 - [ ] 38. Automatizar a jornada completa com contas e CLIs descartáveis — testing/high
       Depends on: 8, 9, 11, 15, 17, 21, 22, 24, 25, 33, 37
-      Scope: web/tests/**, internal/tui/*_test.go, scripts/qualify-release.sh, scripts/qualify-release.ps1, docs/release-qualification.md
+      Scope: web/tests/**, internal/tui/*_test.go, scripts/qualify-release.sh, scripts/qualify-release.ps1, docs/release-qualification.md, internal/tui/tui.go, internal/tui/mission_journey.go, internal/tui/mission_journey_view.go (somente prioridade de input sobre leituras automáticas e origem/persistência dos avisos, após regressões controladas de2026-10-13)
       Accept: Jornada web cobre duas missões, pergunta, stop e restart com daemon/contas/CLIs temporários → npm --prefix web run test:e2e; Jornada TUI cobre os mesmos contratos desde instalação vazia e o bundle local encontra seu consoled → sh scripts/qualify-release.sh --fixtures
 - [ ] 39. Qualificar Codex e Claude em macOS real — testing/critical
       Depends on: 38

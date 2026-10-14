@@ -86,6 +86,7 @@ func (m model) updateJourney(msg tea.KeyPressMsg) (model, tea.Cmd, bool) {
 					r.question, r.answer, r.mode, r.focus = r.nextQuestion, "", "answer", 0
 				} else {
 					r.problem = "journey_question_changed"
+					r.problemErr, r.problemKind, r.mutationFailure = nil, "", nil
 					r.fresh = false
 				}
 				r.nextQuestion = nil
@@ -172,6 +173,7 @@ func (m model) updateJourney(msg tea.KeyPressMsg) (model, tea.Cmd, bool) {
 			_, err := planningMember(r.mission)
 			if err != nil {
 				r.problem = "journey_identity"
+				r.problemErr, r.problemKind, r.mutationFailure = nil, "", nil
 			} else {
 				r.confirm = "planning"
 			}

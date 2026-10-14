@@ -357,6 +357,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.journeyVisible() {
+			if pending := m.journey.pending; pending != nil && pending.kind == "refresh" {
+				pending.cancel()
+				m.journey.pending = nil
+			}
 			if next, cmd, handled := m.updateJourney(msg); handled {
 				return next, cmd
 			}

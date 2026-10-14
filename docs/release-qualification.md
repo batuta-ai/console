@@ -116,6 +116,119 @@ standard-user Windows, real providers, stable/beta publication and whole
 Task38 completion remain outside this command. Task43's 107 native failures
 remain open. Historical evidence below is unchanged.
 
+### Additional outer Console PTY selector
+
+The inventory now additionally requires
+`TestOuterConsolePTYCatalogApprovalAndRestart` on Darwin/Linux. The previous
+20 required names and their historical 40 passing events above are unchanged;
+those receipts do not include this new test. The existing inventory/pass-event
+checks reject an absent name, a skipped test or a selection with zero tests.
+All other qualifier stages, assertions and deadlines remain unchanged. Its
+conservative final status line still leaves the full outer Console journey
+unqualified.
+
+```sh
+go test ./internal/tui -run '^TestOuterConsolePTYCatalogApprovalAndRestart$' -count=1 -timeout=5m
+```
+
+This additional test builds current-source `console` and `consoled` into owned
+temporary output and launches the actual Console with an 80-row, 240-column
+outer PTY against its owned authenticated HTTP daemon. Disposable catalog
+setup uses public HTTP; binding, source inspection, approval and the execution
+attempt use real Console key bytes. The terminal engine decodes the visible
+screen, reconstructing every displayed metadata/source byte before approval.
+Independent HTTP reads assert the exact selected mission, binding and immutable
+receipt while the other mission stays unchanged.
+
+Both disposable provider CLIs only report their qualified version banners;
+any other invocation leaves a failure marker. Empty isolated account vaults
+must yield visible `credential_missing`, no sessions, no native opening or
+delivery journal, and no model invocation. This is authentication refusal,
+not successful official login or execution. No provider transport override,
+readiness substitution or external provider request is used.
+
+The test keeps Console alive while terminating the retained daemon process
+with SIGTERM, requiring exit zero within eight seconds, then restarts the same
+binary/catalog. The test sends public refresh/selection keys and verifies both
+recovered mission identities on screen and through independent HTTP reads;
+Rendered recovery and HTTP rereads preserve the exact binding/receipt and activity log without
+repeated mutations. Console must exit zero through its public quit key. Output
+readers and owned processes are joined before temporary-directory cleanup;
+forced cleanup is a test failure, and unresolved cleanup retains its artifacts.
+State/screen waits are bounded at ten seconds, and the overall work context at
+240 seconds, within the five-minute test limit.
+
+This covers only the outer-process catalog/approval/authentication-refusal and
+actual daemon restart leg when run successfully. The existing
+`TestJourneyPublicCoreQuestionResumeAndRestart` remains a separate model-driven
+public Core question/resume test with local TLS/readiness injection and a
+service/store restart. Neither substitutes for outer-process execution,
+answer/resume or active-delivery stop. Rendered browser, clean-install bundle
+auto-discovery, real official login/providers, native Windows (Task43's 107
+failures), stable/beta publication and whole Task38 remain open. A sandbox
+loopback/PTY/cache failure leaves this new runtime proof unverified.
+
+The worker observed the required missing-name red (qualifier exit 1) before
+adding the test. Its first targeted run compiled and freshly built both
+binaries, then exited 1 on sandbox `listen tcp 127.0.0.1:0: bind: operation not
+permitted`, before daemon/PTY startup. This is an environmental failure, not
+behavioral TDD red or a runtime pass. The new journey and the final full
+qualifier remain worker sandbox-unverified; no new native passing receipt is
+claimed here.
+
+The conductor subsequently ran candidate `9935e29` outside that sandbox:
+the targeted outer PTY journey passed on native Darwin/arm64 in 17.77 seconds,
+its harness race check passed in 19.59 seconds, and the full qualifier passed
+on Darwin/arm64 in 99.82 seconds and Linux/amd64 (Docker Desktop, UID 1000)
+in 54.07 seconds. Each full run had 41 passing test events without failures
+or skips. These receipts are retained as `outer-mac-retry1.*`,
+`outer-mac-race.*`, `outer-qualifier-mac.*` and `outer-qualifier-linux.*` under
+`.batuta/runs/2026-10-13-console-public-flows/` in the parent checkout.
+
+Independent Opus review then identified a background-refresh race. Controlled
+model regressions showed that an automatic read could swallow an edited key
+and erase a mutation refusal before rendering. Keyboard input now cancels only
+an owned automatic journey read; foreground reads and mutations remain guarded.
+Successful automatic reads preserve an active mutation failure notice until
+an explicit successful inspection clears it. Canceled replies cannot replace
+the edited draft. The qualifier also requires these two regressions.
+Catalog/assertion calls use a ten-second client budget, while startup probes
+retain one second. Binding checks use persistent rendered workspace authority
+and exact HTTP rereads; authentication checks still require the visible error
+and all no-execution assertions. No mutation retry or authentication bypass
+was added. The 41-event receipts precede this fix and do not qualify it.
+
+Candidate `7922a32` passed the updated full qualifier on native Darwin/arm64
+in 67.59 seconds and Linux/amd64 in the same UID-1000 container in 54.09
+seconds: each had 48 passing events, zero failures and zero skips. The owned
+regressions reproduce both failures on the prior production source; the exact
+same test bytes pass with the correction. The initial conductor test-authoring
+compile error is retained separately and is not a behavioral red.
+Receipts are `background-refresh-behavior-red.*`, `background-refresh-green.*`,
+`background-refresh-frozen-red.*` and `critical-qualifier-{mac,linux}.*` in the
+parent checkout's evidence directory above. The frozen comparison is a
+supplemental rerun after the original red/green, not a new chronology claim.
+
+A follow-up review found that the current notice's origin must be tracked
+separately from mutation history. A rejected action followed by successful
+inspection, a failed automatic read and a successful read must not restore
+the acknowledged rejection. That sequence failed before the origin correction;
+the same added regression is retained in `notice-origin-red.*`. Read failures
+now carry their own error detail. Recovery restores an uninspected action
+refusal; successful explicit inspection acknowledges it. The first read-failure
+sequence failed in `notice-separated-red.*`; the green receipt covers both
+sequences. A separate required regression covers uncertain action failure,
+failed read and recovery without losing the uncertainty notice or original
+error.
+Its production source is unchanged from `a80f87f`: the controlled mutant red
+is retained in `uncertain-notice-mutant-red.*`, and the race green in
+`uncertain-notice-green.*`. Final candidate `c9b46ed` passed the qualifier on
+Darwin/arm64 (84.38 seconds) and Linux/amd64 in the UID-1000 container
+(53.78 seconds), each with 49 passing test events, no failures and no skips.
+The corresponding receipts are `accepted-qualifier-{mac,linux}.*`.
+The 48-event receipts
+above precede this follow-up; they are not a final-head qualification claim.
+
 ## Evidence and current limits
 
 The implementation starts from `f55edba0e0fd94ac408fba485d1531c3915ab848`.
