@@ -3,6 +3,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference = $false
 # This bootstrap is exclusively for GitHub's disposable hosted Windows VM.
+@{ isWindows = $IsWindows; githubActions = $env:GITHUB_ACTIONS; runnerEnvironment = $env:RUNNER_ENVIRONMENT;
+   runnerOS = $env:RUNNER_OS; runnerArchitecture = $env:RUNNER_ARCH; imageOS = $env:ImageOS;
+   imageVersion = $env:ImageVersion; runID = $env:GITHUB_RUN_ID; workspace = $env:GITHUB_WORKSPACE } |
+    ConvertTo-Json | Set-Content (Join-Path $Evidence 'bootstrap-host.json')
 if (-not $IsWindows -or $env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
     $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:ImageOS -cne 'win25' -or
     -not $env:GITHUB_RUN_ID -or -not $env:GITHUB_WORKSPACE) { throw 'GitHub-hosted Windows 2025 only; refusing account bootstrap' }
