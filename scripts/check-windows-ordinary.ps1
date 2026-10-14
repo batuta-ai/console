@@ -24,7 +24,7 @@ $cleanup = @{ created = $false; drained = $false; removed = $false }
 function Record-Source([string]$Name) {
     $status = & git -C $source status --porcelain --untracked-files=all
     if ($LASTEXITCODE -ne 0) { throw 'Source status failed' }
-    $status | Set-Content (Join-Path $Evidence $Name)
+    [IO.File]::WriteAllText((Join-Path $Evidence $Name), ($status -join [Environment]::NewLine))
     if ($status) { throw 'Source checkout is dirty' }
 }
 try {
