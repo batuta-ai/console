@@ -26,7 +26,8 @@ for (const archive of expected) {
     for (const doc of ['LICENSE', 'README.md', 'THIRD_PARTY_NOTICES']) assert.deepEqual(readFileSync(join(extracted, doc)), readFileSync(doc));
     for (const binary of ['console', 'consoled']) {
       const metadata = execFileSync('go', ['version', '-m', join(extracted, binary)], { encoding: 'utf8' });
-      assert.match(metadata, /go1\.27\.1/);
+      const buildInfo = JSON.parse(execFileSync('go', ['version', '-m', '-json', join(extracted, binary)], { encoding: 'utf8' }));
+      assert.equal(buildInfo.GoVersion, 'go1.27.2');
       // The TUI may not link Core; never invent a dependency for diagnostics.
       if (binary === 'consoled' || metadata.includes('github.com/batuta-ai/core')) {
         assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.49\s/);
