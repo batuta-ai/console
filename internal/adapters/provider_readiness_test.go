@@ -266,7 +266,7 @@ func TestCredentialFilesMustBePrivateAndNotLinked(t *testing.T) {
 			path := filepath.Join(home, "accounts", account.ID, ".claude", ".credentials.json")
 			switch mode {
 			case "open-permissions":
-				if err := os.Chmod(path, 0644); err != nil {
+				if err := testfixture.MakeCredentialWorldReadable(path); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink":
