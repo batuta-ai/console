@@ -68,8 +68,9 @@ func TestNativeSkillPreparation(t *testing.T) {
 				if err != nil || !p.Enabled {
 					t.Fatalf("prepare=%+v %v", p, err)
 				}
-				cmd := exec.Command("/bin/sh", "-c", `unset BATUTA_SKILLS; for name in batuta batuta-init batuta-plan batuta-review custom-selected; do test -f "$1/$name/SKILL.md" || exit 41; done; test -d "$1/batuta/adapters" || exit 42; test ! -e "$1/custom-unrelated" || exit 43`, "native-discovery", native)
-				cmd.Env = append(slices.Clone(env), "PATH=/usr/bin:/bin")
+				argv := testfixture.Argv(t, []string{"/bin/sh", "-c", `unset BATUTA_SKILLS; for name in batuta batuta-init batuta-plan batuta-review custom-selected; do test -f "$1/$name/SKILL.md" || exit 41; done; test -d "$1/batuta/adapters" || exit 42; test ! -e "$1/custom-unrelated" || exit 43`, "native-discovery", native})
+				cmd := exec.Command(argv[0], argv[1:]...)
+				cmd.Env = testfixture.TerminalEnvironment(t, append(slices.Clone(env), "PATH=/usr/bin:/bin"))
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("native subprocess discovery: %v %s", err, out)
 				}
