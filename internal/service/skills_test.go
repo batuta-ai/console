@@ -216,12 +216,12 @@ func TestServiceSkillsRejectBeforeSpawn(t *testing.T) {
 					t.Setenv("BATUTA_SKILLS", filepath.Join(collection, "missing"))
 				}
 				if kind == "conflict" {
-					if err := os.MkdirAll(filepath.Join(native, "batuta"), 0700); err != nil {
+					if err := testfixture.MakePrivateDirectoryAll(filepath.Join(native, "batuta"), 0700); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if kind == "symlink-parent" {
-					if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
+					if err := testfixture.MakePrivateDirectoryAll(filepath.Dir(native), 0700); err != nil {
 						t.Fatal(err)
 					}
 					if err := os.Symlink(t.TempDir(), native); err != nil {
@@ -386,7 +386,7 @@ func TestServiceNativeSkillsCustomLaunch(t *testing.T) {
 			if err := os.WriteFile(credential, sentinel, 0600); err != nil {
 				t.Fatal(err)
 			}
-			argv := []string{filepath.Join(os.Getenv("PATH"), adapter), "literal; $(no-exec)"}
+			argv := []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(adapter)), "literal; $(no-exec)"}
 			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: argv})
 			if err != nil {
 				t.Fatal(err)
