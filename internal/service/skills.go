@@ -53,6 +53,9 @@ func installNativeSkills(adapter string, env []string, selected map[string]strin
 	if !filepath.IsAbs(home) || values[configKey] != filepath.Join(home, configDir) {
 		return fmt.Errorf("explicit isolated HOME and %s required", configKey)
 	}
+	if err := validateSkillDirectoryTargets(selected); err != nil {
+		return err
+	}
 	nativeSkillsMu.Lock()
 	defer nativeSkillsMu.Unlock()
 	info, err := os.Lstat(home)
@@ -107,7 +110,7 @@ func installNativeSkills(adapter string, env []string, selected map[string]strin
 	sort.Strings(names)
 	for _, name := range names {
 		target := selected[name]
-		if err := destination.Symlink(target, name); err != nil {
+		if err := createSkillDirectoryLink(destination, target, name); err != nil {
 			if !os.IsExist(err) {
 				return err
 			}
