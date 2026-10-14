@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -206,8 +205,8 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			svc, db := persistenceSvc(t)
 			root := t.TempDir()
 			t.Setenv("BATUTA_SKILLS", installedSkillFixture(t, t.TempDir(), "batuta", "batuta-init", "batuta-plan"))
-			cli := t.TempDir()
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
+			cli := testfixture.PrivateHome(t)
+			if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
