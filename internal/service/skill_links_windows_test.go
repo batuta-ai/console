@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/batuta-ai/console/internal/testfixture"
 	"golang.org/x/sys/windows"
 )
 
@@ -27,8 +28,8 @@ func TestNativeSkillLinksAreDirectoryReparsePoints(t *testing.T) {
 				attrs, attrErr := windows.GetFileAttributes(encoded)
 				target, targetErr := os.Readlink(link)
 				expectedTarget := filepath.Join(collection, name)
-				resolved, resolveErr := filepath.EvalSymlinks(link)
-				want, wantErr := filepath.EvalSymlinks(filepath.Join(collection, name))
+				resolved, resolveErr := testfixture.ResolvePath(link)
+				want, wantErr := testfixture.ResolvePath(filepath.Join(collection, name))
 				got, readErr := os.ReadFile(filepath.Join(link, "SKILL.md"))
 				expected, sourceErr := os.ReadFile(filepath.Join(collection, name, "SKILL.md"))
 				t.Logf("native link=%s attrs=%#x attrErr=%v target=%s targetErr=%v resolved=%s resolveErr=%v want=%s wantErr=%v readErr=%v", link, attrs, attrErr, target, targetErr, resolved, resolveErr, want, wantErr, readErr)

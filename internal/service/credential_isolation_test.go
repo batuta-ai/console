@@ -89,7 +89,7 @@ func TestCredentialRecordChild(t *testing.T) {
 	entries, _ := os.ReadDir(native)
 	for _, entry := range entries {
 		if info, err := os.Stat(filepath.Join(native, entry.Name(), "SKILL.md")); err == nil && info.Mode().IsRegular() {
-			target, err := filepath.EvalSymlinks(filepath.Join(native, entry.Name()))
+			target, err := testfixture.ResolvePath(filepath.Join(native, entry.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}

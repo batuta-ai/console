@@ -125,7 +125,7 @@ func TestWindowsSkillLinkDisabledPrivilegeRestoresCaller(t *testing.T) {
 	}
 }
 
-func TestWindowsSkillLinkMissingPrivilegeDoesNotBorrowProcessAuthority(t *testing.T) {
+func TestWindowsSkillLinkMissingPrivilegeKeepsCallerAuthority(t *testing.T) {
 	collection := t.TempDir()
 	installedSkillFixture(t, collection, "selected")
 	path := t.TempDir()
@@ -201,9 +201,10 @@ func TestWindowsSkillLinkMissingPrivilegeDoesNotBorrowProcessAuthority(t *testin
 		}
 	}()
 	err = createSkillDirectoryLink(destination, filepath.Join(collection, "selected"), "selected")
-	if !errors.Is(err, windows.ERROR_NOT_ALL_ASSIGNED) {
-		t.Fatalf("missing caller privilege must fail without process fallback: %v", err)
+	if err != nil {
+		t.Fatalf("directory links must work without the caller's missing symlink privilege: %v", err)
 	}
+	requireWindowsSkillDirectoryLink(t, filepath.Join(path, "selected"), filepath.Join(collection, "selected"))
 	var afterToken windows.Token
 	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &afterToken); err != nil {
 		t.Fatal("caller impersonation lost", err)
@@ -217,12 +218,12 @@ func TestWindowsSkillLinkMissingPrivilegeDoesNotBorrowProcessAuthority(t *testin
 		t.Fatal("missing privilege changed caller or process token")
 	}
 	entries, err := os.ReadDir(path)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "foreign" {
-		t.Fatalf("missing privilege wrote or removed an entry: %v %v", entries, err)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "foreign" || entries[1].Name() != "selected" {
+		t.Fatalf("directory link creation changed an unrelated entry: %v %v", entries, err)
 	}
 	data, err := os.ReadFile(filepath.Join(path, "foreign"))
 	if err != nil || string(data) != "keep" {
 		t.Fatal("foreign bytes changed", err)
 	}
-	t.Log("actual missing caller privilege refused; caller/process privileges and foreign bytes unchanged")
+	t.Log("actual directory link without symlink privilege; caller/process privileges and foreign bytes unchanged")
 }

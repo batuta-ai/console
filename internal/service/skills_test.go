@@ -75,8 +75,8 @@ func TestNativeSkillPreparation(t *testing.T) {
 					t.Fatalf("native subprocess discovery: %v %s", err, out)
 				}
 				for _, name := range []string{"batuta", "batuta-init", "batuta-plan", "batuta-review", "custom-selected"} {
-					target, err := filepath.EvalSymlinks(filepath.Join(native, name))
-					want, _ := filepath.EvalSymlinks(filepath.Join(collection, name))
+					target, err := testfixture.ResolvePath(filepath.Join(native, name))
+					want, _ := testfixture.ResolvePath(filepath.Join(collection, name))
 					if err != nil || target != want {
 						t.Errorf("%s -> %s want %s: %v", name, target, want, err)
 					}
@@ -323,7 +323,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 					t.Fatalf("native set=%v want=%v", record.NativeSkills, want)
 				}
 				for _, name := range want {
-					target, _ := filepath.EvalSymlinks(filepath.Join(root, "skills", name))
+					target, _ := testfixture.ResolvePath(filepath.Join(root, "skills", name))
 					if record.NativeSkills[name] != target {
 						t.Errorf("native skill %s=%q want %q", name, record.NativeSkills[name], target)
 					}
@@ -399,7 +399,10 @@ func TestServiceNativeSkillsCustomLaunch(t *testing.T) {
 				t.Fatalf("native skill set: %+v", record.NativeSkills)
 			}
 			for _, name := range []string{"batuta", "batuta-init", "batuta-plan", "custom-selected"} {
-				want, _ := filepath.EvalSymlinks(filepath.Join(root, "skills", name))
+				want, resolveErr := testfixture.ResolvePath(filepath.Join(root, "skills", name))
+				if resolveErr != nil {
+					t.Fatal("resolve selected custom skill source", resolveErr)
+				}
 				if record.NativeSkills[name] != want {
 					t.Errorf("%s source mismatch", name)
 				}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/batuta-ai/console/internal/testfixture"
 	"golang.org/x/sys/windows"
 )
 
@@ -233,8 +234,8 @@ func requireWindowsSkillDirectoryLink(t *testing.T, link, target string) {
 	if err != nil || got != target {
 		t.Fatalf("raw target=%q want=%q err=%v", got, target, err)
 	}
-	resolved, err := filepath.EvalSymlinks(link)
-	want, wantErr := filepath.EvalSymlinks(target)
+	resolved, err := testfixture.ResolvePath(link)
+	want, wantErr := testfixture.ResolvePath(target)
 	if err != nil || wantErr != nil || resolved != want {
 		t.Fatalf("resolved=%q want=%q errors=%v/%v", resolved, want, err, wantErr)
 	}
