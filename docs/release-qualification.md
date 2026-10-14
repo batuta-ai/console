@@ -23,20 +23,26 @@ package reporting `[no test files]`; unexplained package skips block the job.
 Allowed empty packages are recorded separately in the summary diagnostics and
 are not skipped tests. No actual test skips are allowed.
 
-Before Go checks, the job creates a new empty disposable fixture directory and
-verifies its protected ACL: current-user SID owner and only that SID's full
-control rule with object/container inheritance. Only the test process environment
-receives this directory as TEMP, TMP and LOCALAPPDATA. Existing objects and the
-runner's global temporary directory ACL are never changed. This fixture environment
-matches the prior native harness, but some original fixtures still create objects
-owned by BUILTIN\Administrators and remain pending. The fixture ACL does not
-change the token's default owner or make the runner a standard user. An explicit
-owned GOCACHE under runner.temp is shared by Go builds and tests, so changing
-LOCALAPPDATA for tests does not introduce a separate cold build cache.
+Before Go checks, the job records the actual current-user SID and reads the owner
+SID and DACL of each existing directory from RUNNER_TEMP and the current user's
+resolved UserProfile through their roots, deduplicating shared ancestors. It then
+creates a new empty disposable directory with a short name directly under that
+UserProfile, matching the prior native harness's fixture location. It verifies
+the new directory's protected ACL: current-user SID owner and only that SID's
+full control rule with object/container inheritance. Only the test process
+environment receives this directory as TEMP, TMP and LOCALAPPDATA. No existing
+directory ACL, profile, token, global temporary environment or runner security
+setting is changed. The fixture ACL does not change the token's default owner
+or make the runner a standard user. A dedicated GOCACHE under runner.temp is
+shared by Go builds and tests, so changing LOCALAPPDATA for tests does not
+introduce a separate cold build cache. The cache and evidence directories under
+runner.temp are ordinary job artifacts; no current-user SID ownership claim is
+made for them or their ancestors.
 
 An `always()` upload retains complete Go JSON stdout, stderr and process exit,
-plus runner OS/version, identity/privileges, toolchain, source revision, fixture
-ACL and stage diagnostics from a separate owned runner.temp evidence directory.
+plus runner OS/version, identity/privileges, toolchain, source revision, ancestor
+owner/DACL records, fixture ACL and stage diagnostics from a separate runner.temp
+evidence directory.
 No personal credentials or configuration are collected. The upload action is
 pinned to v7.0.2 commit `cf430e030ddbb5b0abf93d22962f4752f3646cd9`.
 Local lint/source review does not establish runtime success; a reviewed/pushed
@@ -44,8 +50,16 @@ candidate still needs a live Windows CI run and inspection of its artifacts.
 
 [GitHub documents Windows hosted runners as administrators with UAC disabled](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 This elevated source gate cannot close standard-user Windows qualification.
-The last full native candidate `0747deb` recorded 3,250 passes, 107 failures
-and zero skips; those failures remain pending until fresh native evidence.
+The earlier full native candidate `0747deb` recorded 3,250 passes, 107 failures
+and zero skips. The conductor reported public Windows run `38551760992` at
+`4612227`: builds, vet and web checks passed, while the complete Go suite recorded
+2,334 passes, 987 failures and zero test skips. Raw evidence remains at
+`.batuta/runs/2026-10-14-windows-beta1/native-ci-461-push`. Many PrivateHome
+constructors failed on a foreign Windows owner in the runtime parent before
+reaching their intended contracts. That run placed the fixture under RUNNER_TEMP
+on drive D, unlike the prior harness's UserProfile root; the offending ancestor's
+SID was not captured. The revised fixture location and ancestor diagnostics still
+require a fresh native CI run; no failure is claimed fixed by local source review.
 Full race/scanner, secure source/authentication, real provider and standard-user
 qualification remain outside this bounded gate. Windows remains pending until
 Task43/Task44 gates pass. Windows remains selected by SelectedPlatform, which

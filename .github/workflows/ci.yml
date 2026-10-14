@@ -121,12 +121,30 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          $userProfilePath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+          if (-not $userProfilePath -or -not (Test-Path -LiteralPath $userProfilePath -PathType Container)) { throw 'Current-user profile directory required' }
+          $ancestorLog = Join-Path $env:WINDOWS_EVIDENCE 'ancestor-acls.log'
+          @("current-user-sid=$($sid.Value)", "user-profile=$userProfilePath", "runner-temp=$env:RUNNER_TEMP") | Set-Content $ancestorLog
+          $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          foreach ($rootPath in @($env:RUNNER_TEMP, $userProfilePath)) {
+            $ancestor = [System.IO.DirectoryInfo]::new($rootPath)
+            while ($null -ne $ancestor) {
+              if ($seenPaths.Add($ancestor.FullName)) {
+                $ancestorAcl = Get-Acl -LiteralPath $ancestor.FullName
+                @("path=$($ancestor.FullName)",
+                  "owner-sid=$($ancestorAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)",
+                  "dacl=$($ancestorAcl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access))") | Add-Content $ancestorLog
+              }
+              $ancestor = $ancestor.Parent
+            }
+          }
           $env:GOCACHE = Join-Path $env:RUNNER_TEMP ("console-windows-go-cache-" + [guid]::NewGuid())
           New-Item -ItemType Directory -Path $env:GOCACHE | Out-Null
           # Only this new empty fixture directory receives a protected current-user ACL.
-          $fixture = Join-Path $env:RUNNER_TEMP ("console-windows-fixture-" + [guid]::NewGuid())
+          $fixture = Join-Path $userProfilePath ("cw-" + [guid]::NewGuid().ToString('N').Substring(0, 12))
           New-Item -ItemType Directory -Path $fixture | Out-Null
-          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          @("fixture=$fixture", "go-cache=$env:GOCACHE", "evidence=$env:WINDOWS_EVIDENCE") | Add-Content $ancestorLog
           $acl = [System.Security.AccessControl.DirectorySecurity]::new()
           $acl.SetOwner($sid)
           $acl.SetAccessRuleProtection($true, $false)
