@@ -38,6 +38,10 @@ try {
     $stage = Join-Path $env:SystemDrive ('co-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     $binary = Join-Path $stage 'service.test.exe'
+    & go vet -tags console_ordinary_user ./internal/service 1> (Join-Path $Evidence 'vet.stdout') 2> (Join-Path $Evidence 'vet.stderr')
+    $vetExit = $LASTEXITCODE
+    $vetExit | Set-Content (Join-Path $Evidence 'vet.exit')
+    if ($vetExit -ne 0) { throw 'Service tagged full vet failed' }
     & go test -tags console_ordinary_user -c -o $binary ./internal/service 1> (Join-Path $Evidence 'compile.stdout') 2> (Join-Path $Evidence 'compile.stderr')
     $compileExit = $LASTEXITCODE
     $compileExit | Set-Content (Join-Path $Evidence 'compile.exit')
