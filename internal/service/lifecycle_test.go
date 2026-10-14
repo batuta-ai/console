@@ -3,13 +3,13 @@ package service
 import (
 	"bytes"
 	"log"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
@@ -17,8 +17,8 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := admissionSetup(t, 1)
 			// The shell exits only on an explicit PTY message.
-			cli := filepath.Join(filepath.Dir(f.launches), "codex")
-			if err := os.WriteFile(cli, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nread line\n"), 0755); err != nil {
+			cli := filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex"))
+			if err := testfixture.RewriteScript(t, cli, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nread line\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
@@ -119,7 +119,7 @@ func TestImmediateExitStartPaths(t *testing.T) {
 	for _, mode := range []string{"session", "login", "init"} {
 		t.Run(mode, func(t *testing.T) {
 			f := admissionSetup(t, 1)
-			if err := os.WriteFile(filepath.Join(filepath.Dir(f.launches), "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; fi\nexit 0\n"), 0755); err != nil {
+			if err := testfixture.RewriteScript(t, filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex")), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; fi\nexit 0\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			done := make(chan domain.Session, 1)
