@@ -14,7 +14,7 @@ var nativeFixtureGit, nativeFixtureGitErr = exec.LookPath("git")
 
 func Argv(t testing.TB, original []string) []string {
 	t.Helper()
-	if len(original) == 0 || (original[0] != "/bin/sh" && original[0] != "/bin/cat") {
+	if len(original) == 0 || (original[0] != "/bin/sh" && original[0] != "/bin/cat" && original[0] != "/usr/bin/true" && original[0] != "/bin/sleep") {
 		return original
 	}
 	if nativeFixtureGitErr != nil {
@@ -25,6 +25,12 @@ func Argv(t testing.TB, original []string) []string {
 	if original[0] == "/bin/cat" {
 		shell = filepath.Join(filepath.Dir(shell), "cat.exe")
 		kind = "cat"
+	} else if original[0] == "/usr/bin/true" {
+		shell = filepath.Join(filepath.Dir(shell), "true.exe")
+		kind = "true"
+	} else if original[0] == "/bin/sleep" {
+		shell = filepath.Join(filepath.Dir(shell), "sleep.exe")
+		kind = "sleep"
 	}
 	data, err := os.ReadFile(shell)
 	if err != nil {
