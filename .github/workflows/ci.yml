@@ -121,6 +121,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $env:GOCACHE = Join-Path $env:RUNNER_TEMP ("console-windows-go-cache-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $env:GOCACHE | Out-Null
           # Only this new empty fixture directory receives a protected current-user ACL.
           $fixture = Join-Path $env:RUNNER_TEMP ("console-windows-fixture-" + [guid]::NewGuid())
           New-Item -ItemType Directory -Path $fixture | Out-Null
@@ -146,6 +148,7 @@ jobs:
               $rules[0].PropagationFlags -ne $rule.PropagationFlags -or
               $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Fixture owner/ACL verification failed' }
           & {
+            go mod download
             go mod verify
             go build -o (Join-Path $env:WINDOWS_EVIDENCE 'console.exe') ./cmd/console
             go build -o (Join-Path $env:WINDOWS_EVIDENCE 'consoled.exe') ./cmd/consoled
@@ -171,14 +174,14 @@ jobs:
           $emptyPackageOutput = @{}
           $skippedPackages = @()
           Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
-            $event = $_ | ConvertFrom-Json -ErrorAction Stop
-            if ($event.Action -eq 'output' -and -not $event.Test -and $event.Package -and
-                $event.Output -cmatch ('^\?\s+' + [regex]::Escape($event.Package) + '\s+\[no test files\]\r?\n?$')) {
-              $emptyPackageOutput[$event.Package] = $true
+            $testEvent = $_ | ConvertFrom-Json -ErrorAction Stop
+            if ($testEvent.Action -eq 'output' -and -not $testEvent.Test -and $testEvent.Package -and
+                $testEvent.Output -cmatch ('^\?\s+' + [regex]::Escape($testEvent.Package) + '\s+\[no test files\]\r?\n?$')) {
+              $emptyPackageOutput[$testEvent.Package] = $true
             }
-            if ($event.Action -eq 'fail' -or ($event.Action -eq 'skip' -and $event.Test)) { $badEvents++ }
-            if ($event.Action -eq 'skip' -and -not $event.Test) { $skippedPackages += $event.Package }
-            if ($event.Action -eq 'pass' -and $event.Test) { $passEvents++ }
+            if ($testEvent.Action -eq 'fail' -or ($testEvent.Action -eq 'skip' -and $testEvent.Test)) { $badEvents++ }
+            if ($testEvent.Action -eq 'skip' -and -not $testEvent.Test) { $skippedPackages += $testEvent.Package }
+            if ($testEvent.Action -eq 'pass' -and $testEvent.Test) { $passEvents++ }
           }
           $emptyPackages = @()
           foreach ($package in $skippedPackages) {

@@ -14,7 +14,8 @@ Go 1.27.2, Node 26.10.0 and npm 12.2.0. It runs web tests, TypeScript checking
 and the embedded web build, rejecting tracked and untracked embedded asset
 drift. Checkout disables automatic CRLF conversion, and the asset guard uses
 command-scoped `core.autocrlf=false` and `core.eol=lf`, without global Git changes.
-The native Go path verifies modules, builds both commands, runs vet and requires
+The native Go path downloads the selected modules before verifying their cached
+integrity, builds both commands, runs vet and requires
 `go test ./... -json -count=1 -timeout=20m` without selections or suppressions.
 A nonzero process exit, any JSON failure event or any test-level skip blocks the
 job. A package-level skip is allowed only with matching output for that same
@@ -26,9 +27,12 @@ Before Go checks, the job creates a new empty disposable fixture directory and
 verifies its protected ACL: current-user SID owner and only that SID's full
 control rule with object/container inheritance. Only the test process environment
 receives this directory as TEMP, TMP and LOCALAPPDATA. Existing objects and the
-runner's global temporary directory ACL are never changed. This avoids inherited
-BUILTIN\Administrators ownership interfering before the original test contracts;
-it does not make the runner a standard user.
+runner's global temporary directory ACL are never changed. This fixture environment
+matches the prior native harness, but some original fixtures still create objects
+owned by BUILTIN\Administrators and remain pending. The fixture ACL does not
+change the token's default owner or make the runner a standard user. An explicit
+owned GOCACHE under runner.temp is shared by Go builds and tests, so changing
+LOCALAPPDATA for tests does not introduce a separate cold build cache.
 
 An `always()` upload retains complete Go JSON stdout, stderr and process exit,
 plus runner OS/version, identity/privileges, toolchain, source revision, fixture
@@ -44,7 +48,8 @@ The last full native candidate `0747deb` recorded 3,250 passes, 107 failures
 and zero skips; those failures remain pending until fresh native evidence.
 Full race/scanner, secure source/authentication, real provider and standard-user
 qualification remain outside this bounded gate. Windows remains pending until
-Task43/Task44 gates pass; SelectedPlatform and Windows packages remain disabled.
+Task43/Task44 gates pass. Windows remains selected by SelectedPlatform, which
+represents selection rather than qualification; packages remain macOS/Linux only.
 This change neither qualifies a full Windows release nor closes beta1.
 
 ## Fixture command and scope — 2026-10-13
