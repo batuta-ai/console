@@ -567,3 +567,40 @@ makes no provider calls and cannot close native security, provider, stable
 release or publication gates. The parent conductor froze the candidate,
 obtained the independent Sonnet review, updated canonical state and made
 the atomic commit (`2e09283`).
+
+## Disposable ordinary-user skills gate
+
+The independent blocking `windows-ordinary-skills` job selects the same exact
+`inputs.ref || github.sha` and Go 1.27.2. It compiles the current service tests
+with `-tags console_ordinary_user` (currently a no-op tag) and requires exactly
+`TestOrdinaryWindowsUserDiscoversSelectedSkills` and its Codex and Claude child
+passes. The original Windows-only test file and complete elevated source job
+remain unchanged; no original test is excluded or weakened.
+
+Only on GitHub's fresh hosted Windows 2025 VM, the parent creates a uniquely
+named disposable local account with a cryptographically random in-memory
+password. The [New-LocalUser contract](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.localaccounts/new-localuser)
+accepts a SecureString; the [Start-Process credential/profile contract](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process)
+launches a genuine primary account process with its profile loaded. No linked,
+restricted or synthetic actor is substituted. The child verifies its created
+SID, native token type/elevation, groups and privileges, then runs the actual
+compiled tests under an owned profile fixture with a protected user-only DACL.
+TEMP, TMP and LOCALAPPDATA point there. No SDK, provider login or model call is
+needed in that account. Only the new staging directory grants the actor read
+and execute access; existing ACLs, privileges and UAC settings are untouched.
+
+Always-uploaded evidence includes source/tool/binary SHA256 inventories, raw
+child and test streams, exits, exact test inventory and JSON events, native
+identity/authority and fixture metadata, source guards and SID-matched cleanup.
+The parent waits for the credentialed process tree to drain before removing
+only its created account. Profile, staging and fixture files are left to the
+hosted VM's disposal; no broad cleanup or arbitrary process killing occurs.
+Missing metadata, failed/skipped tests, missing results or any nonzero test
+exit block the gate. This bootstrap refuses developer and self-hosted machines.
+
+This is an additional qualification gate, not an observed native success yet.
+Conductor-owned live GitHub candidate evidence, Windows AST parsing and
+independent review remain required. GitHub's elevated default runner cannot
+establish ordinary-user operation. The complete elevated Windows suite still
+has unrelated failures; this selected actor proof does not establish full
+Windows readiness, provider authentication or beta release readiness.
