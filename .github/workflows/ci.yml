@@ -106,7 +106,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           function Assert-EmbeddedAssets {
-            $drift = git status --porcelain --untracked-files=all -- internal/webui/dist
+            $drift = git -c core.autocrlf=false -c core.eol=lf status --porcelain --untracked-files=all -- internal/webui/dist
             if ($drift) { throw "Embedded web assets differ from HEAD: $drift" }
           }
           & {
@@ -168,12 +168,26 @@ jobs:
           }
           $badEvents = 0
           $passEvents = 0
+          $emptyPackageOutput = @{}
+          $skippedPackages = @()
           Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
             $event = $_ | ConvertFrom-Json -ErrorAction Stop
-            if ($event.Action -in @('fail', 'skip')) { $badEvents++ }
+            if ($event.Action -eq 'output' -and -not $event.Test -and $event.Package -and
+                $event.Output -cmatch ('^\?\s+' + [regex]::Escape($event.Package) + '\s+\[no test files\]\r?\n?$')) {
+              $emptyPackageOutput[$event.Package] = $true
+            }
+            if ($event.Action -eq 'fail' -or ($event.Action -eq 'skip' -and $event.Test)) { $badEvents++ }
+            if ($event.Action -eq 'skip' -and -not $event.Test) { $skippedPackages += $event.Package }
             if ($event.Action -eq 'pass' -and $event.Test) { $passEvents++ }
           }
-          "exit=$testExit pass=$passEvents fail-or-skip=$badEvents" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test-summary.log')
+          $emptyPackages = @()
+          foreach ($package in $skippedPackages) {
+            if ($package -and $emptyPackageOutput.ContainsKey($package)) { $emptyPackages += $package }
+            else { $badEvents++ }
+          }
+          @("exit=$testExit pass=$passEvents fail-or-test-skip-or-unexplained-package-skip=$badEvents",
+            "empty-package-count=$($emptyPackages.Count)",
+            "empty-packages=$($emptyPackages -join ',')") | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test-summary.log')
           if ($testExit -ne 0 -or $badEvents -ne 0 -or $passEvents -eq 0) { throw 'Complete native Go suite failed or skipped tests; see retained evidence' }
       - name: Retain native Windows evidence on success or failure
         if: always()

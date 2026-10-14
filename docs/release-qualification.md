@@ -12,10 +12,15 @@ job on native `windows-2025` amd64. It selects the same exact
 `inputs.ref || github.sha` as the unchanged macOS/Linux source job, with pinned
 Go 1.27.2, Node 26.10.0 and npm 12.2.0. It runs web tests, TypeScript checking
 and the embedded web build, rejecting tracked and untracked embedded asset
-drift. Checkout uses command-scoped LF settings, without global Git changes.
+drift. Checkout disables automatic CRLF conversion, and the asset guard uses
+command-scoped `core.autocrlf=false` and `core.eol=lf`, without global Git changes.
 The native Go path verifies modules, builds both commands, runs vet and requires
 `go test ./... -json -count=1 -timeout=20m` without selections or suppressions.
-A nonzero process exit or any JSON failure/skip event blocks the job.
+A nonzero process exit, any JSON failure event or any test-level skip blocks the
+job. A package-level skip is allowed only with matching output for that same
+package reporting `[no test files]`; unexplained package skips block the job.
+Allowed empty packages are recorded separately in the summary diagnostics and
+are not skipped tests. No actual test skips are allowed.
 
 Before Go checks, the job creates a new empty disposable fixture directory and
 verifies its protected ACL: current-user SID owner and only that SID's full
