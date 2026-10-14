@@ -16,13 +16,14 @@ import (
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestCatalogRealDaemonSaveReadinessAndCanonicalSnapshots(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	for _, provider := range []string{"codex", "claude"} {
 		t.Run(provider, func(t *testing.T) {
-			root := t.TempDir()
+			root := testfixture.PrivateHome(t)
 			st, err := store.Open(filepath.Join(root, "catalog.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -35,7 +36,7 @@ func TestCatalogRealDaemonSaveReadinessAndCanonicalSnapshots(t *testing.T) {
 			if err := os.Mkdir(bin, 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(bin, provider), nil, 0700); err != nil {
+			if err := os.WriteFile(filepath.Join(bin, testfixture.ExecutableName(provider)), nil, 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin)

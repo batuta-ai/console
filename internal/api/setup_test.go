@@ -16,6 +16,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func setupBody(account string) map[string]any {
@@ -99,7 +100,7 @@ func TestSetupHTTPSelectedReferencesAndReadiness(t *testing.T) {
 			}
 			defer st.Close()
 			svc := service.New(st, session.New(t.TempDir()), nil)
-			svc.Home = t.TempDir()
+			svc.Home = testfixture.PrivateHome(t)
 			h := (&Server{Svc: svc, Token: "test-token"}).Handler()
 			w, err := svc.CreateWorkspace("synthetic", t.TempDir())
 			if err != nil {
@@ -109,9 +110,9 @@ func TestSetupHTTPSelectedReferencesAndReadiness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli := t.TempDir()
+			cli := testfixture.PrivateHome(t)
 			marker := filepath.Join(cli, "marker")
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\necho unexpected > '"+marker+"'\n"), 0700); err != nil {
+			if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\necho unexpected > '"+marker+"'\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
@@ -136,7 +137,7 @@ func TestSetupHTTPSelectedReferencesAndReadiness(t *testing.T) {
 					code = "cli_incompatible"
 				}
 				script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '" + banner + "'; exit 0; fi\necho unexpected > '" + marker + "'\n"
-				if err := os.WriteFile(filepath.Join(cli, "codex"), []byte(script), 0700); err != nil {
+				if err := testfixture.RewriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}
 			case "cancelled":
