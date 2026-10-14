@@ -39,21 +39,8 @@ func nativeAccountRootStateAt(t *testing.T, handle windows.Handle, path string) 
 	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
 		t.Fatal(err)
 	}
-	name, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lookup, err := windows.CreateFile(name, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
-	if err != nil {
+	if err := nativeAccountRootPathMetadata(handle, path, info); err != nil {
 		t.Fatal("actual root path metadata", err)
-	}
-	var current windows.ByHandleFileInformation
-	infoErr := windows.GetFileInformationByHandle(lookup, &current)
-	if err := errors.Join(infoErr, windows.CloseHandle(lookup)); err != nil {
-		t.Fatal(err)
-	}
-	if current.VolumeSerialNumber != info.VolumeSerialNumber || current.FileIndexHigh != info.FileIndexHigh || current.FileIndexLow != info.FileIndexLow || current.FileAttributes != info.FileAttributes {
-		t.Fatal("actual root path no longer names held fixture")
 	}
 	sd, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
