@@ -10,6 +10,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func installedSkillFixture(t *testing.T, collection string, names ...string) string {
@@ -40,7 +41,7 @@ func nativeSkillFixture(t *testing.T, adapter string) (string, []string, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := ad.IsolateEnv(t.TempDir(), domain.Account{ID: "selected", Adapter: adapter})
+	env, err := ad.IsolateEnv(testfixture.PrivateHome(t), domain.Account{ID: "selected", Adapter: adapter})
 	if err != nil {
 		t.Fatal(err)
 	}
