@@ -77,7 +77,7 @@ func TestTerminatedPendingInitialPersistence(t *testing.T) {
 				if exitFailure {
 					sqlExec(t, f.db, `CREATE TRIGGER reject_exit BEFORE INSERT ON events WHEN NEW.kind='session.exited' BEGIN SELECT RAISE(ABORT,'exit rejected'); END`)
 				}
-				pending, err := f.svc.Session.StartPending(domain.Session{ID: "late", AccountID: f.account.ID, Argv: []string{"/usr/bin/true"}}, nil, "", 1)
+				pending, err := f.svc.Session.StartPending(domain.Session{ID: "late", AccountID: f.account.ID, Argv: testfixture.Argv(t, []string{"/usr/bin/true"})}, nil, "", 1)
 				if err != nil {
 					t.Fatal(err)
 				}

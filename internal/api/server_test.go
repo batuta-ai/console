@@ -128,7 +128,7 @@ func TestSessionReconnect(t *testing.T) {
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	sess := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": []string{"/bin/sleep", "10"}, "owner": "tui", "client": "c1"}, 200)
+	sess := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "10"}), "owner": "tui", "client": "c1"}, 200)
 	id := sess["id"].(string)
 	if sess["process"] != "running" {
 		t.Fatalf("%v", sess)
@@ -215,10 +215,10 @@ func TestAccountSessionCap(t *testing.T) {
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
 	var ids []string
 	for i := 0; i < 3; i++ {
-		s := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": []string{"/bin/sleep", "8"}, "owner": "tui", "client": "c"}, 200)
+		s := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "8"}), "owner": "tui", "client": "c"}, 200)
 		ids = append(ids, s["id"].(string))
 	}
-	req, rec := postRaw(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": []string{"/bin/sleep", "1"}, "owner": "tui", "client": "c"})
+	req, rec := postRaw(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "1"}), "owner": "tui", "client": "c"})
 	if rec != 400 {
 		t.Fatalf("4th session on cap-3 account must fail, got %d %s", rec, req)
 	}
@@ -358,7 +358,7 @@ func TestNaturalExitIsExited(t *testing.T) {
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": []string{"/usr/bin/true"}, "owner": "tui", "client": "c1"}, 200)
+	post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": testfixture.Argv(t, []string{"/usr/bin/true"}), "owner": "tui", "client": "c1"}, 200)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		list := get(t, h, "/v0/sessions").([]any)
@@ -476,6 +476,7 @@ func TestSessionPersistenceBoundaries(t *testing.T) {
 			h := (&Server{Svc: svc, Token: "test-token"}).Handler()
 			sess := domain.Session{ID: "s", Process: "running", Owner: "old", Argv: []string{"/bin/cat"}}
 			if mode != "list-write" {
+				sess.Argv = testfixture.Argv(t, sess.Argv)
 				done := make(chan struct{})
 				onExit := svc.Session.OnExit
 				svc.Session.OnExit = func(s domain.Session) { onExit(s); close(done) }

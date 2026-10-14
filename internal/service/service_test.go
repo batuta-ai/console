@@ -106,7 +106,7 @@ func TestStartSessionDefaultInject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	on, err := svc.StartSession(StartSessionIn{MissionID: msn.ID, Argv: []string{"/bin/sleep", "8"}, Owner: "tui", Client: "c1"})
+	on, err := svc.StartSession(StartSessionIn{MissionID: msn.ID, Argv: testfixture.Argv(t, []string{"/bin/sleep", "8"}), Owner: "tui", Client: "c1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestStartSessionDefaultInject(t *testing.T) {
 		t.Fatalf("default inject should enable when skills exist: %+v", on)
 	}
 	off := false
-	generic, err := svc.StartSession(StartSessionIn{MissionID: msn.ID, Argv: []string{"/bin/sleep", "8"}, Owner: "web", Client: "c2", Inject: &off})
+	generic, err := svc.StartSession(StartSessionIn{MissionID: msn.ID, Argv: testfixture.Argv(t, []string{"/bin/sleep", "8"}), Owner: "web", Client: "c2", Inject: &off})
 	if err != nil {
 		t.Fatal(err)
 	}
