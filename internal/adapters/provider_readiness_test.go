@@ -327,14 +327,9 @@ func TestReadinessPreservesConsoleHomeAndRejectsUnsafePrivateHome(t *testing.T) 
 			if mode == "private-writable" {
 				path, perm = filepath.Join(home, "accounts", account.ID), 0777
 			}
-			if err := os.Chmod(path, perm); err != nil {
-				t.Fatal(err)
-			}
+			unchanged := prepareReadinessPermissions(t, path, perm)
 			got := checker.Check(context.Background(), home, account)
-			info, err := os.Stat(path)
-			if err != nil || info.Mode().Perm() != perm {
-				t.Fatalf("readiness changed existing permissions: %v %v", info, err)
-			}
+			unchanged()
 			if mode == "console-readable" {
 				if !got.Ready || requests.Load() != 1 {
 					t.Fatalf("safe Console root rejected: %+v requests=%d", got, requests.Load())
