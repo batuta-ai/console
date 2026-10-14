@@ -33,4 +33,5 @@ else
     goreleaser release --snapshot --clean --parallelism 1
 fi
 node scripts/verify-packages.mjs dist "$CONSOLE_VERSION" "$CONSOLE_REVISION"
+CONSOLE_PACKAGE_DIST=dist node --test scripts/package-contract.test.mjs
 echo "Local $mode packages verified in dist/; nothing uploaded."

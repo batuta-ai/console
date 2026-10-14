@@ -91,3 +91,127 @@ test('upload entry point rejects a stable tag before any network request', () =>
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Release requires/);
 });
+
+const packageCheck = resolve('scripts/verify-packages.mjs');
+const packageVersion = '0.1.0-beta.1-snapshot.contract';
+const packageArchives = [
+  'darwin_amd64.tar.gz', 'darwin_arm64.tar.gz',
+  'linux_amd64.tar.gz', 'linux_arm64.tar.gz', 'windows_amd64.zip',
+].map(target => `console_${packageVersion}_${target}`);
+function invalidPackageInventory(mutate) {
+  const root = mkdtempSync(join(tmpdir(), 'console-package-inventory-test-'));
+  try {
+    for (const name of packageArchives) writeFileSync(join(root, name), '');
+    const lines = packageArchives.map(name => `${'0'.repeat(64)}  ${name}`);
+    mutate(root, lines);
+    writeFileSync(join(root, 'checksums.txt'), `${lines.join('\n')}\n`);
+    return spawnSync(process.execPath, [packageCheck, root, packageVersion, 'a'.repeat(40)], { encoding: 'utf8' });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+test('package inventory rejects missing targets and extra archives before reading their contents', () => {
+  for (const missing of packageArchives) {
+    const result = invalidPackageInventory(root => rmSync(join(root, missing)));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Archive inventory must match the five release targets/);
+  }
+  for (const extra of ['console_extra.tar.gz', 'console_extra.zip', `console_${packageVersion}_windows_arm64.zip`]) {
+    const result = invalidPackageInventory(root => writeFileSync(join(root, extra), ''));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Archive inventory must match the five release targets/);
+  }
+});
+test('checksum inventory rejects missing, duplicate, extra and malformed records before extraction', () => {
+  for (const mutate of [
+    (_root, lines) => lines.pop(),
+    (_root, lines) => lines.push(lines[0]),
+    (_root, lines) => lines.push(`${'0'.repeat(64)}  extra.zip`),
+    (_root, lines) => { lines[4] = `${'0'.repeat(64)}  wrong.zip`; },
+    (_root, lines) => { lines[4] = `not-sha256  ${packageArchives[4]}`; },
+    (_root, lines) => { lines[4] += ' extra-field'; },
+  ]) {
+    const result = invalidPackageInventory(mutate);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Checksum (inventory|record)/);
+  }
+});
+
+// Upload wiring is tested offline; real archive validation has its own package contract.
+function uploadFixture(extra) {
+  const root = mkdtempSync(join(tmpdir(), 'console-upload-test-'));
+  const source = join(root, 'source');
+  const requests = join(root, 'requests.jsonl');
+  const validated = join(root, 'validated.json');
+  const tag = 'v0.1.0-beta.1';
+  const names = [
+    'checksums.txt',
+    `console_${tag}_darwin_amd64.tar.gz`, `console_${tag}_darwin_arm64.tar.gz`,
+    `console_${tag}_linux_amd64.tar.gz`, `console_${tag}_linux_arm64.tar.gz`,
+    `console_${tag}_windows_amd64.zip`,
+  ];
+  try {
+    mkdirSync(join(source, 'scripts'), { recursive: true });
+    mkdirSync(join(source, 'dist'));
+    for (const name of ['upload-release.mjs', 'verify-beta.mjs']) {
+      writeFileSync(join(source, 'scripts', name), readFileSync(resolve('scripts', name)));
+    }
+    writeFileSync(join(source, '.release-please-manifest.json'), JSON.stringify({ '.': '0.1.0-beta.1' }));
+    for (const name of [...names, ...(extra ? [extra] : [])]) writeFileSync(join(source, 'dist', name), `fixture:${name}`);
+    writeFileSync(join(source, 'scripts/verify-packages.mjs'), `
+      import { writeFileSync } from 'node:fs';
+      writeFileSync(${JSON.stringify(validated)}, JSON.stringify(process.argv.slice(2)));
+    `);
+    const preload = join(root, 'offline-fetch.mjs');
+    writeFileSync(preload, `
+      import assert from 'node:assert/strict';
+      import { appendFileSync } from 'node:fs';
+      globalThis.fetch = async (url, options) => {
+        assert.equal(options.redirect, 'error');
+        assert.ok(options.signal instanceof AbortSignal);
+        assert.equal(options.headers.Authorization, 'Bearer contract-token');
+        let result;
+        if (options.method === 'POST') {
+          const target = new URL(url);
+          assert.equal(target.origin + target.pathname, 'https://uploads.github.com/repos/contract/console/releases/17/assets');
+          const name = target.searchParams.get('name');
+          appendFileSync(${JSON.stringify(requests)}, JSON.stringify({ name, type: options.headers['Content-Type'], body: options.body.toString() }) + '\\n');
+          result = { name, size: options.body.length };
+        } else {
+          assert.equal(url, 'https://api.github.com/repos/contract/console/releases/tags/${tag}');
+          appendFileSync(${JSON.stringify(requests)}, JSON.stringify({ release: true }) + '\\n');
+          result = { tag_name: '${tag}', prerelease: true, draft: false, id: 17 };
+        }
+        return { ok: true, status: 200, json: async () => result };
+      };
+    `);
+    git(source, 'init', '-q');
+    git(source, 'add', '.');
+    git(source, '-c', 'user.name=Contract Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture');
+    git(source, '-c', 'tag.gpgsign=false', 'tag', tag);
+    const revision = git(source, 'rev-parse', 'HEAD').stdout.trim();
+    const result = spawnSync(process.execPath, ['--import', preload, 'scripts/upload-release.mjs', tag], {
+      cwd: source, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL',
+      env: { ...process.env, GITHUB_REPOSITORY: 'contract/console', GITHUB_TOKEN: 'contract-token' },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(validated, 'utf8')), ['dist', tag, revision]);
+    const calls = readFileSync(requests, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    return { result, calls, names };
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('upload wires six verified assets with platform media types and exact bodies offline', () => {
+  const { result, calls, names } = uploadFixture();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(calls, [
+    { release: true },
+    ...names.map(name => ({ name, type: name === 'checksums.txt' ? 'text/plain' : name.endsWith('.zip') ? 'application/zip' : 'application/gzip', body: `fixture:${name}` })),
+  ]);
+});
+
+test('upload rejects a seventh archive before sending any asset offline', () => {
+  const { result, calls } = uploadFixture('stray.zip');
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /AssertionError \[ERR_ASSERTION\]/);
+  assert.deepEqual(calls, [{ release: true }]);
+});
