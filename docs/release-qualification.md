@@ -585,6 +585,10 @@ launches a genuine primary account process with its profile loaded. No linked,
 restricted or synthetic actor is substituted. The child verifies its created
 SID, native token type/elevation, groups and privileges, then runs the actual
 compiled tests under an owned profile fixture with a protected user-only DACL.
+The profile path must match the registry entry for the created SID; its owner
+and DACL are recorded. A user, SYSTEM or Administrators owner is accepted for
+this Windows-managed parent, without changing it. The new fixture still requires
+that exact user as owner and its sole full-control ACL entry.
 TEMP, TMP and LOCALAPPDATA point there. No SDK, provider login or model call is
 needed in that account. Only the new staging directory grants the actor read
 and execute access; existing ACLs, privileges and UAC settings are untouched.

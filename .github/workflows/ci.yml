@@ -232,6 +232,9 @@ jobs:
       GOENV: 'off'
       GOWORK: 'off'
       GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
     steps:
       - name: Create owned ordinary-user evidence directory
         run: |

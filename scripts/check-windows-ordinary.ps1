@@ -80,12 +80,17 @@ try {
     $arguments = '-NoLogo -NoProfile -NonInteractive -File "' + (Join-Path $stage 'check-windows-ordinary-child.ps1') + '" -ExpectedSid ' + $sid.Value + ' -BinaryHash ' + $binaryHash
     # -Wait waits for descendants as well as the credentialed primary process.
     $launchAttempted = $true
-    $process = Start-Process -FilePath $shell -ArgumentList $arguments -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $stage -PassThru -Wait -RedirectStandardOutput (Join-Path $Evidence 'child.stdout') -RedirectStandardError (Join-Path $Evidence 'child.stderr')
+    try {
+        $process = Start-Process -FilePath $shell -ArgumentList $arguments -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $stage -PassThru -Wait -RedirectStandardOutput (Join-Path $Evidence 'child.stdout') -RedirectStandardError (Join-Path $Evidence 'child.stderr')
+    } catch {
+        $_.ToString() | Set-Content (Join-Path $Evidence 'launch-error.log')
+        throw
+    }
     $process.WaitForExit()
     $drained = $true
     $cleanup.pid = $process.Id
     $process.ExitCode | Set-Content (Join-Path $Evidence 'child.exit')
-    $allowed = @('groups.log', 'privileges.log', 'actor.json', 'inventory.exit', 'inventory.stdout', 'inventory.stderr', 'test.exit', 'test.stdout', 'test.stderr', 'privileges-after.log', 'actor-complete.log')
+    $allowed = @('groups.log', 'privileges.log', 'profile.json', 'actor.json', 'inventory.exit', 'inventory.stdout', 'inventory.stderr', 'test.exit', 'test.stdout', 'test.stderr', 'privileges-after.log', 'actor-complete.log')
     $seen = @{}
     foreach ($line in Get-Content -LiteralPath (Join-Path $Evidence 'child.stdout')) {
         $record = $line | ConvertFrom-Json
@@ -97,7 +102,7 @@ try {
     if ($process.ExitCode -ne 0 -or [int](Get-Content (Join-Path $Evidence 'test.exit')) -ne 0 -or [int](Get-Content (Join-Path $Evidence 'inventory.exit')) -ne 0) { throw 'Ordinary process failed' }
     $actor = Get-Content (Join-Path $Evidence 'actor.json') -Raw | ConvertFrom-Json
     if ($actor.sid -cne $sid.Value -or $actor.pid -ne $process.Id -or $actor.tokenType -ne 1 -or $actor.elevated -ne 0 -or $actor.binarySHA256 -cne $binaryHash) { throw 'Actor metadata differs' }
-    $convert = [Diagnostics.ProcessStartInfo]::new($test2json, '-t -p console/internal/service')
+    $convert = [Diagnostics.ProcessStartInfo]::new($test2json, '-t -p github.com/batuta-ai/console/internal/service')
     $convert.UseShellExecute = $false
     $convert.RedirectStandardInput = $true
     $convert.RedirectStandardOutput = $true

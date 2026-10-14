@@ -34,7 +34,12 @@ try {
     $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     $registered = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$ExpectedSid").ProfileImagePath
     if (-not $profilePath -or $profilePath -ine [Environment]::ExpandEnvironmentVariables($registered)) { throw 'Loaded created-account profile required' }
-    if ((Get-Acl -LiteralPath $profilePath).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ExpectedSid) { throw 'Created account must own its profile' }
+    $profileAcl = Get-Acl -LiteralPath $profilePath
+    $profileOwner = $profileAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    Publish-Text 'profile.json' (@{ path = $profilePath; registered = $registered; accountSid = $ExpectedSid;
+        ownerSid = $profileOwner; acl = $profileAcl.Sddl } | ConvertTo-Json)
+    # The profile service can own a registered profile; only the new fixture is claimed private.
+    if ($profileOwner -cnotin @($ExpectedSid, 'S-1-5-18', 'S-1-5-32-544')) { throw 'Registered profile has a foreign owner' }
     $fixture = Join-Path $profilePath ('co-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $fixture | Out-Null
     $acl = [Security.AccessControl.DirectorySecurity]::new()
