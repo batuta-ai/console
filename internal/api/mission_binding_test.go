@@ -603,12 +603,13 @@ func TestMissionBindingArtifactIOHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	absolute := filepath.Join(root, path)
+	permissions := newArtifactPermissions(t, absolute)
 	t.Cleanup(func() {
-		if err := os.Chmod(absolute, 0600); err != nil {
+		if err := permissions.chmod(0600); err != nil {
 			t.Error(err)
 		}
 	})
-	if err := os.Chmod(absolute, 0000); err != nil {
+	if err := permissions.chmod(0000); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.ReadFile(absolute); !errors.Is(err, os.ErrPermission) {
@@ -624,11 +625,11 @@ func TestMissionBindingArtifactIOHTTP(t *testing.T) {
 	if err != nil || len(events) != 0 {
 		t.Fatalf("IO failure event %v %v", events, err)
 	}
-	if err := os.Chmod(absolute, 0600); err != nil {
+	if err := permissions.chmod(0600); err != nil {
 		t.Fatal(err)
 	}
 	bindingRequest(t, h, "m", req, 200)
-	if err := os.Chmod(absolute, 0000); err != nil {
+	if err := permissions.chmod(0000); err != nil {
 		t.Fatal(err)
 	}
 	bindingGetStatus(t, h, "/v0/missions/m/watch", 503)
