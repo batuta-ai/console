@@ -14,7 +14,7 @@ func SelectedPlatform(goos string) bool {
 func compatibleBanners(id string) []string {
 	switch id {
 	case "codex":
-		return []string{"codex-cli 0.160.0"}
+		return []string{"codex-cli 0.160.0", "codex-cli 0.161.0"}
 	case "claude":
 		return []string{"2.1.286 (Claude Code)", "2.1.289 (Claude Code)"}
 	default:

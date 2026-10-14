@@ -268,7 +268,7 @@ Source installation or component cross-compilation does not qualify a release.
   platform/provider pairs, otherwise `unsupported` with `adapter_unsupported`
   or `platform_unsupported`. `compatible_banners` shares the existing per-account
   readiness policy:
-  Codex `codex-cli 0.160.0`; Claude `2.1.286 (Claude Code)` and
+  Codex `codex-cli 0.160.0` and `codex-cli 0.161.0`; Claude `2.1.286 (Claude Code)` and
   `2.1.289 (Claude Code)`. Banners describe the policy, not an observed version.
   `account_readiness` is always `not_checked`/`account_readiness_required`;
   `qualification` is `pending`/`native_operation_qualification_pending` for

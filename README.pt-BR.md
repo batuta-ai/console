@@ -284,7 +284,7 @@ de strings `adapters` e as chaves existentes de `features`. Novos objetos tipado
   nos pares plataforma/provedor selecionados; nos demais é `unsupported` com
   `adapter_unsupported` ou `platform_unsupported`. `compatible_banners`
   compartilha a política existente de prontidão por conta: Codex
-  `codex-cli 0.160.0`; Claude `2.1.286 (Claude Code)` e `2.1.289 (Claude Code)`.
+  `codex-cli 0.160.0` e `codex-cli 0.161.0`; Claude `2.1.286 (Claude Code)` e `2.1.289 (Claude Code)`.
   Os banners descrevem a política, não uma versão observada.
   `account_readiness` é sempre `not_checked`/`account_readiness_required`;
   `qualification` é `pending`/`native_operation_qualification_pending` para

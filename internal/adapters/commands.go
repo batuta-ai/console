@@ -42,6 +42,8 @@ type CommandSetting struct {
 // Command supports interactive PTY syntax qualified against Codex 0.160.0 and
 // Claude 2.1.286/2.1.289. Effort validation is syntactic; model compatibility is the CLI's
 // responsibility. Model names deliberately do not use registry catalog metadata.
+// Codex 0.161.0 additionally has captured CLI help, exec JSON and isolated auth
+// checks; its full interactive provider journey remains pending.
 func (a Adapter) Command(in CommandRequest) (Command, error) {
 	if a.ID != "codex" && a.ID != "claude" {
 		return Command{}, fmt.Errorf("%w: %s %s", ErrUnsupportedCommand, a.ID, in.Mode)
