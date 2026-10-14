@@ -180,10 +180,10 @@ func TestTwoCodexAccountsIndependent(t *testing.T) {
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": a1["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
 	dir := t.TempDir()
-	f1 := filepath.Join(dir, "home1")
-	f2 := filepath.Join(dir, "home2")
-	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f1 + "; sleep 4"}, "owner": "tui", "client": "c1"}, 200)
-	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f2 + "; sleep 4"}, "owner": "web", "client": "c2"}, 200)
+	f1 := filepath.ToSlash(filepath.Join(dir, "home1"))
+	f2 := filepath.ToSlash(filepath.Join(dir, "home2"))
+	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f1 + "; sleep 4"}), "owner": "tui", "client": "c1"}, 200)
+	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f2 + "; sleep 4"}), "owner": "web", "client": "c2"}, 200)
 	if s1["process"] != "running" || s2["process"] != "running" {
 		t.Fatalf("both accounts must run: %v %v", s1, s2)
 	}

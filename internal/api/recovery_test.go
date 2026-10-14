@@ -13,6 +13,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestSessionGETCommitsRecoveryEvent(t *testing.T) {
@@ -58,7 +59,7 @@ func TestRecoveryEventFailureReturnsHTTPErrorAndRetries(t *testing.T) {
 
 func testRecoveryEventFailureReturnsHTTPErrorAndRetries(t *testing.T, process string) {
 	t.Helper()
-	cmd := exec.Command("/bin/cat")
+	cmd := exec.Command(testfixture.Argv(t, []string{"/bin/cat"})[0])
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
