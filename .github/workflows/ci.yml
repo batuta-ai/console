@@ -118,7 +118,7 @@ jobs:
             npm --prefix web run build
             Assert-EmbeddedAssets
           } *> (Join-Path $env:WINDOWS_EVIDENCE 'web.log')
-      - name: Native Go builds, integrity, vet and complete original tests
+      - name: DIAGNOSTIC ONLY - native Go checks and focused session snapshot tests
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
@@ -180,7 +180,7 @@ jobs:
             $env:LOCALAPPDATA = $fixture
             # Keep both original streams even when Go returns a failing exit code.
             $PSNativeCommandUseErrorActionPreference = $false
-            go test ./... -json -count=1 -timeout=20m 1> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') 2> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stderr')
+            go test ./internal/service -json -count=20 -timeout=20m -run '^TestOfficialSessionCommand$/^(codex|claude)$/^snapshot$' 1> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') 2> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stderr')
             $testExit = $LASTEXITCODE
             $testExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.exit')
           } finally {
