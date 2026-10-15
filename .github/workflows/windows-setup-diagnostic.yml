@@ -28,6 +28,7 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP ('setup-stop-' + [guid]::NewGuid())
           New-Item -ItemType Directory -Path $evidence | Out-Null
           'Diagnostic only; source-runner actor, not ordinary-user qualification.' | Set-Content (Join-Path $evidence 'purpose.log')
+          'Isolated single-package direct PWSH invocation with inherited stdin and no MSYS keeper; unlike the original full ./... Invoke-Owned controlled pipes, keeper, and parallel packages. Green means non-reproduction only; source cause UNKNOWN; no ordinary-user or release qualification.' | Add-Content (Join-Path $evidence 'purpose.log')
           "WINDOWS_EVIDENCE=$evidence" >> $env:GITHUB_ENV
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         env:
@@ -63,26 +64,29 @@ jobs:
             $manifest | Set-Content (Join-Path $env:WINDOWS_EVIDENCE $name)
             git diff --exit-code HEAD --
           }
+          $primaryFailure = $null
           try {
-            [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
-            [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-            [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
-            "logical-cpu=$([Environment]::ProcessorCount)"
-            Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
-            whoami /all
-            git rev-parse HEAD 'HEAD^{tree}'
-            if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Checkout does not match event SHA' }
-            git diff --exit-code $base HEAD -- . ":(exclude)$workflow"
-            git ls-tree -r --full-tree HEAD | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'checkout-tree.log')
-            git --version
-            $PSVersionTable | Out-String
-            foreach ($tool in @('go', 'git', 'sh', 'pwsh')) {
-              Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object Name, Source, Version
-            }
-            if (Get-Command sh -CommandType Application -ErrorAction SilentlyContinue) { sh --version }
-            go version
-            if ((go version) -cne 'go version go1.27.2 windows/amd64') { throw 'Unexpected Go toolchain' }
-            if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Native Windows amd64 required' }
+            & {
+              [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+              [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+              [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+              "dotnet-logical-cpu=$([Environment]::ProcessorCount)"
+              Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
+              whoami /all
+              git rev-parse HEAD 'HEAD^{tree}'
+              if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Checkout does not match event SHA' }
+              git diff --exit-code $base HEAD -- . ":(exclude)$workflow"
+              git ls-tree -r --full-tree HEAD | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'checkout-tree.log')
+              git --version
+              $PSVersionTable | Out-String
+              foreach ($tool in @('go', 'git', 'sh', 'pwsh')) {
+                Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object Name, Source, Version
+              }
+              if (Get-Command sh -CommandType Application -ErrorAction SilentlyContinue) { sh --version }
+              go version
+              if ((go version) -cne 'go version go1.27.2 windows/amd64') { throw 'Unexpected Go toolchain' }
+              if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Native Windows amd64 required' }
+            } *> (Join-Path $env:WINDOWS_EVIDENCE 'environment.log')
             Save-SourceManifest 'source-before.log'
             $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
             $userProfilePath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
@@ -132,7 +136,7 @@ jobs:
             $env:TMP = $fixture
             $env:LOCALAPPDATA = $fixture
             go env -json | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-env.json')
-            "GOMAXPROCS=$env:GOMAXPROCS; effective default when unset=logical CPU count" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'cpu.log')
+            "GOMAXPROCS env=$(if ($env:GOMAXPROCS) { $env:GOMAXPROCS } else { 'unset' }); effective Go runtime value not recorded/unknown" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'cpu.log')
             go mod download
             go mod verify
             '' | Set-Content -NoNewline (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stdout')
@@ -154,12 +158,37 @@ jobs:
             }
             "exit=$testExit runs=$runs named-passes=$passes failures=$failures skips=$skips package-passes=$packagePasses" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'summary.log')
             if ($testExit -ne 0 -or $runs -ne 20 -or $passes -ne 20 -or $failures -ne 0 -or $skips -ne 0 -or $packagePasses -ne 1) { throw 'Diagnostic test failed, skipped, or had incorrect counts; inspect evidence' }
+          } catch {
+            $primaryFailure = $_
+            try { $primaryFailure | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'failure.log') }
+            catch { Write-Warning "Could not retain primary failure: $_" }
+            throw $primaryFailure
           } finally {
             $PSNativeCommandUseErrorActionPreference = $true
             try {
-              Save-SourceManifest 'source-after.log'
-              if (Compare-Object (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-before.log')) (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-after.log'))) { throw 'Tracked source digests changed' }
-            } finally { Stop-Transcript }
+              try {
+                Save-SourceManifest 'source-after.log'
+                if (Test-Path -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE 'source-before.log') -PathType Leaf) {
+                  if (Compare-Object (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-before.log')) (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-after.log'))) { throw 'Tracked source digests changed' }
+                } else {
+                  if ($null -eq $primaryFailure) { throw 'Required source-before.log unavailable; source comparison cannot be verified' }
+                  'source-before.log unavailable; comparison unavailable; prior failure remains fatal.' | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-comparison.log')
+                }
+              } catch {
+                if ($null -eq $primaryFailure) {
+                  $primaryFailure = $_
+                  try { $primaryFailure | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'failure.log') }
+                  catch { Write-Warning "Could not retain source audit failure: $_" }
+                }
+                throw
+              } finally { Stop-Transcript }
+            } catch {
+              if ($null -ne $primaryFailure) {
+                Write-Warning "Source audit or transcript cleanup also failed: $_"
+                throw $primaryFailure
+              }
+              throw
+            }
           }
       - name: Retain diagnostic evidence on success or failure
         if: always() && env.WINDOWS_EVIDENCE != ''
