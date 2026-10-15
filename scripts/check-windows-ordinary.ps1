@@ -20,12 +20,82 @@ $drained = $false
 $launchAttempted = $false
 $secret = $null
 $stage = $null
+$files = @()
+$hashesBefore = $null
+$proofPassed = $false
 $cleanup = @{ created = $false; drained = $false; removed = $false }
 function Record-Source([string]$Name) {
     $status = & git -C $source status --porcelain --untracked-files=all
     if ($LASTEXITCODE -ne 0) { throw 'Source status failed' }
     [IO.File]::WriteAllText((Join-Path $Evidence $Name), ($status -join [Environment]::NewLine))
     if ($status) { throw 'Source checkout is dirty' }
+}
+function Convert-TestOutput([string]$Prefix, [string]$Package) {
+    $stdout = Join-Path $Evidence "$Prefix.stdout"
+    if (-not (Test-Path -LiteralPath $stdout)) { return }
+    $start = [Diagnostics.ProcessStartInfo]::new($test2json)
+    $start.ArgumentList.Add('-t')
+    $start.ArgumentList.Add('-p')
+    $start.ArgumentList.Add($Package)
+    $start.UseShellExecute = $false
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $converter = [Diagnostics.Process]::Start($start)
+    try {
+        $outTask = $converter.StandardOutput.ReadToEndAsync()
+        $errTask = $converter.StandardError.ReadToEndAsync()
+        $converter.StandardInput.Write([IO.File]::ReadAllText($stdout))
+        $converter.StandardInput.Close()
+        $converter.WaitForExit()
+        [IO.File]::WriteAllText((Join-Path $Evidence "$Prefix.json"), $outTask.Result)
+        $conversion = "$Prefix-test2json"
+        if ($Prefix -ceq 'test') { $conversion = 'test2json' }
+        [IO.File]::WriteAllText((Join-Path $Evidence "$conversion.stderr"), $errTask.Result)
+        $converter.ExitCode | Set-Content (Join-Path $Evidence "$conversion.exit")
+        if ($converter.ExitCode -ne 0 -or $errTask.Result) { throw "Test event conversion failed: $Prefix" }
+    } finally { $converter.Dispose() }
+}
+function Assert-TempResult([string]$Variant, [string]$ExpectedSid) {
+    $prefix = "temp-$Variant"
+    $expected = @('TestTerminalEnvironmentPreservesOrdinaryUserTEMP', 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP/select_environment')
+    $action = 'pass'
+    $exitCode = 0
+    $failed = 'false'
+    if ($Variant -ceq 'baseline') { $action = 'fail'; $exitCode = 1; $failed = 'true' }
+    if ([int](Get-Content (Join-Path $Evidence "$prefix.exit")) -ne $exitCode -or
+        (Get-Content (Join-Path $Evidence "$prefix.timeout") -Raw).Trim() -cne 'False' -or
+        [IO.File]::ReadAllText((Join-Path $Evidence "$prefix.stderr"))) { throw "Unexpected native exit, timeout or stderr: $prefix" }
+    $events = @(Get-Content (Join-Path $Evidence "$prefix.json") | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $runs = @($events | Where-Object { $_.Action -ceq 'run' -and $_.PSObject.Properties['Test'] } | ForEach-Object { $_.Test } | Sort-Object)
+    $results = @($events | Where-Object { $_.Action -ceq $action -and $_.PSObject.Properties['Test'] } | ForEach-Object { $_.Test } | Sort-Object)
+    $terminal = @($events | Where-Object { $_.Action -in @('pass', 'fail', 'skip') -and -not $_.PSObject.Properties['Test'] })
+    if (($runs -join "`n") -cne ($expected -join "`n") -or ($results -join "`n") -cne ($expected -join "`n") -or
+        @($events | Where-Object { $_.Action -in @('pass', 'fail', 'skip') -and $_.Action -cne $action }).Count -ne 0 -or
+        $terminal.Count -ne 1 -or $terminal[0].Action -cne $action) { throw "Exact TEMP semantic event set required: $prefix" }
+    $output = [IO.File]::ReadAllText((Join-Path $Evidence "$prefix.stdout"))
+    $cause = @($events | Where-Object { $_.Action -ceq 'output' -and $_.PSObject.Properties['Test'] -and
+        $_.Test -ceq $expected[1] -and $_.Output -cmatch '^\s+ambient_temp_windows_test\.go:124: owned protected harness temporary root private Windows DACL must prevent inherited access\r?\n$' })
+    $wantCause = 0
+    if ($Variant -ceq 'baseline') { $wantCause = 1 }
+    if ($cause.Count -ne $wantCause -or
+        [regex]::Matches($output, 'ordinary TEMP rejected by private-directory policy: private Windows DACL must prevent inherited access').Count -ne 1) { throw "TEMP selection cause differs: $prefix" }
+    # A second cleanup error can share the already-failed parent's FAIL event.
+    $testNames = ($expected | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    foreach ($event in $events) {
+        if ($event.Action -cne 'output') { continue }
+        if ($event.Output -cmatch ('^\s*(=== (RUN|NAME)\s+(' + $testNames + ')|--- (PASS|FAIL): (' + $testNames + ') \([0-9.]+s\)|PASS|FAIL)\r?\n$')) { continue }
+        if ($event.Output -cmatch '^\s+ambient_temp_windows_test\.go:(88|92): ordinary TEMP ACE \d+: SID=\S+ flags=0x[0-9a-f]+ mask=0x[0-9a-f]+\r?\n$' -or
+            $event.Output -cmatch '^\s+ambient_temp_windows_test\.go:89: before selection: identity=[^\r\n]+\r?\n$' -or
+            $event.Output -cmatch '^\s+ambient_temp_windows_test\.go:93: after selection \(failed=(true|false)\): identity=[^\r\n]+\r?\n$' -or
+            $event.Output -cmatch '^\s+ambient_temp_windows_test\.go:106: ordinary TEMP rejected by private-directory policy: private Windows DACL must prevent inherited access\r?\n$' -or
+            ($Variant -ceq 'baseline' -and $event.Output -cmatch '^\s+ambient_temp_windows_test\.go:124: owned protected harness temporary root private Windows DACL must prevent inherited access\r?\n$')) { continue }
+        throw "Unrelated TEMP diagnostic: $prefix"
+    }
+    $before = [regex]::Matches($output, 'before selection: (identity=[^\r\n]+)')
+    $after = [regex]::Matches($output, ('after selection \(failed=' + $failed + '\): (identity=[^\r\n]+)'))
+    if ($before.Count -ne 1 -or $after.Count -ne 1 -or $before[0].Groups[1].Value -cne $after[0].Groups[1].Value -or
+        $before[0].Groups[1].Value -cnotmatch (' owner=' + [regex]::Escape($ExpectedSid) + ' control=')) { throw "TEMP identity/owner/DACL cleanup proof differs: $prefix" }
 }
 try {
     Record-Source 'source-before.log'
@@ -35,6 +105,15 @@ try {
     $version = & go version
     if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.2 windows/amd64') { throw 'Pinned Go toolchain required' }
     $version | Set-Content (Join-Path $Evidence 'go-version.log')
+    $helper = Join-Path $source 'internal/testfixture/command_windows.go'
+    $frozen = Join-Path $source 'internal/testfixture/ambient_temp_windows_test.go'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash -ine '50231d30408b7c65192522f274162d6825ad9c60c54813e8f4dc9b46f5be1116' -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $frozen).Hash -ine 'd7db825ef12dd35e2770002fcbbff6bc005661585c18dd8f8dc0c60f1790187f') { throw 'Frozen helper/regression source differs' }
+    $tracked = & git -C $source ls-files
+    if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
+    $sourceFiles = @($tracked | ForEach-Object { Join-Path $source $_ })
+    $sourceHashes = @($sourceFiles | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash)
+    $sourceHashes | ConvertTo-Json | Set-Content (Join-Path $Evidence 'source-manifest.json')
     $stage = Join-Path $env:SystemDrive ('co-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     $binary = Join-Path $stage 'service.test.exe'
@@ -46,17 +125,79 @@ try {
     $compileExit = $LASTEXITCODE
     $compileExit | Set-Content (Join-Path $Evidence 'compile.exit')
     if ($compileExit -ne 0) { throw 'Service test compilation failed' }
+    # Both TEMP binaries use this checkout; only the baseline helper is overlaid.
+    $env:GOENV = 'off'
+    $env:GOTOOLCHAIN = 'local'
+    $env:GOFLAGS = '-mod=readonly'
+    $env:GOWORK = 'off'
+    $env:GOPROXY = 'off'
+    $baselineRef = 'e506fe1b358eeabc9db3142a0caee2859c115735:internal/testfixture/command_windows.go'
+    $baselineHelper = Join-Path $Evidence 'baseline-command_windows.go'
+    $extract = [Diagnostics.ProcessStartInfo]::new((Get-Command git -CommandType Application).Source)
+    foreach ($arg in @('-C', $source, 'cat-file', 'blob', $baselineRef)) { $extract.ArgumentList.Add($arg) }
+    $extract.UseShellExecute = $false
+    $extract.RedirectStandardOutput = $true
+    $extract.RedirectStandardError = $true
+    $reader = [Diagnostics.Process]::Start($extract)
+    $destination = [IO.File]::Create($baselineHelper)
+    try {
+        $errorTask = $reader.StandardError.ReadToEndAsync()
+        $reader.StandardOutput.BaseStream.CopyTo($destination)
+        $reader.WaitForExit()
+        $reader.ExitCode | Set-Content (Join-Path $Evidence 'baseline-blob.exit')
+        $errorTask.Result | Set-Content (Join-Path $Evidence 'baseline-blob.stderr')
+        if ($reader.ExitCode -ne 0) { throw 'Exact baseline blob unavailable locally' }
+    } finally { $destination.Dispose(); $reader.Dispose() }
+    $baselineHelperHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $baselineHelper).Hash
+    if ($baselineHelperHash -ine '33d48802bff54c7e4d8525781ccc69ca4d7222348def2f5342f0db62ec7c1110') { throw 'Original baseline helper bytes differ' }
+    $overlay = Join-Path $Evidence 'baseline-overlay.json'
+    @{ Replace = @{ $helper = $baselineHelper } } | ConvertTo-Json | Set-Content $overlay
+    $pairHashes = @{}
+    foreach ($variant in @('baseline', 'candidate')) {
+        $prefix = "temp-$variant"
+        $pairBinary = Join-Path $stage "$prefix.test.exe"
+        $flags = @('-tags', 'console_ordinary_user')
+        if ($variant -ceq 'baseline') { $flags += "-overlay=$overlay" }
+        $graph = '{{.ImportPath}}|{{.Dir}}|{{join .GoFiles ","}}|{{join .CgoFiles ","}}|{{join .TestGoFiles ","}}|{{join .XTestGoFiles ","}}|{{join .TestImports ","}}|{{join .XTestImports ","}}|{{join .EmbedFiles ","}}|{{.Module}}'
+        & go list @flags -deps -test -f $graph ./internal/testfixture 1> (Join-Path $Evidence "$prefix-graph.stdout") 2> (Join-Path $Evidence "$prefix-graph.stderr")
+        $graphExit = $LASTEXITCODE
+        $graphExit | Set-Content (Join-Path $Evidence "$prefix-graph.exit")
+        if ($graphExit -ne 0) { throw "TEMP dependency/test graph failed: $variant" }
+        & go vet @flags ./internal/testfixture 1> (Join-Path $Evidence "$prefix-vet.stdout") 2> (Join-Path $Evidence "$prefix-vet.stderr")
+        $pairVetExit = $LASTEXITCODE
+        $pairVetExit | Set-Content (Join-Path $Evidence "$prefix-vet.exit")
+        if ($pairVetExit -ne 0) { throw "TEMP full vet failed: $variant" }
+        & go test @flags -c -o $pairBinary ./internal/testfixture 1> (Join-Path $Evidence "$prefix-compile.stdout") 2> (Join-Path $Evidence "$prefix-compile.stderr")
+        $pairCompileExit = $LASTEXITCODE
+        $pairCompileExit | Set-Content (Join-Path $Evidence "$prefix-compile.exit")
+        if ($pairCompileExit -ne 0) { throw "TEMP compilation failed: $variant" }
+        $pairHashes[$variant] = (Get-FileHash -Algorithm SHA256 -LiteralPath $pairBinary).Hash
+        Copy-Item -LiteralPath $pairBinary -Destination $Evidence
+        $effectiveSources = @($sourceHashes | ForEach-Object {
+            $hash = $_.Hash
+            if ($variant -ceq 'baseline' -and $_.Path -ceq $helper) { $hash = $baselineHelperHash }
+            [pscustomobject]@{ Path = $_.Path; Hash = $hash }
+        })
+        @{ revision = $revision; variant = $variant; go = $version; flags = $flags; package = './internal/testfixture';
+            baselineBlob = $baselineRef; baselineHelperSHA256 = $baselineHelperHash; binarySHA256 = $pairHashes[$variant];
+            source = $effectiveSources; goenv = $env:GOENV; gotoolchain = $env:GOTOOLCHAIN; goflags = $env:GOFLAGS;
+            gowork = $env:GOWORK; goproxy = $env:GOPROXY; gosumdb = $env:GOSUMDB } |
+            ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Evidence "$prefix-manifest.json")
+    }
+    # The original helper's runtime import can change traversal order, not test sources.
+    if (((Get-Content (Join-Path $Evidence 'temp-baseline-graph.stdout') | Sort-Object) -join "`n") -cne
+        ((Get-Content (Join-Path $Evidence 'temp-candidate-graph.stdout') | Sort-Object) -join "`n")) { throw 'TEMP test/dependency graphs differ' }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-windows-ordinary-child.ps1') -Destination $stage
     $binaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash
     $tool = (Get-Command go -CommandType Application).Source
     $shell = Join-Path $PSHOME 'pwsh.exe'
     $test2json = (& go tool -n test2json)
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $test2json -PathType Leaf)) { throw 'test2json tool missing' }
-    $files = @($binary, $tool, $shell, $test2json, (Join-Path $stage 'check-windows-ordinary-child.ps1'))
-    $tracked = & git -C $source ls-files
-    if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
-    $files += @($tracked | ForEach-Object { Join-Path $source $_ })
-    $files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-before.json')
+    $files = @($binary, $tool, $shell, $test2json, (Join-Path $stage 'check-windows-ordinary-child.ps1'),
+        (Join-Path $stage 'temp-baseline.test.exe'), (Join-Path $stage 'temp-candidate.test.exe'), $baselineHelper, $overlay)
+    $hashesBefore = @($files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash) + $sourceHashes
+    $files += $sourceFiles
+    $hashesBefore | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-before.json')
     $name = 'co' + [guid]::NewGuid().ToString('N').Substring(0, 16)
     if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { throw 'Account name collision' }
     $secret = [Security.SecureString]::new()
@@ -82,6 +223,7 @@ try {
     (Get-Acl -LiteralPath $stage).Sddl | Set-Content (Join-Path $Evidence 'stage-acl.log')
     $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$name", $secret)
     $arguments = '-NoLogo -NoProfile -NonInteractive -File "' + (Join-Path $stage 'check-windows-ordinary-child.ps1') + '" -ExpectedSid ' + $sid.Value + ' -BinaryHash ' + $binaryHash
+    $arguments += ' -BaselineHash ' + $pairHashes.baseline + ' -CandidateHash ' + $pairHashes.candidate
     # -Wait waits for descendants as well as the credentialed primary process.
     $launchAttempted = $true
     try {
@@ -95,6 +237,12 @@ try {
     $cleanup.pid = $process.Id
     $process.ExitCode | Set-Content (Join-Path $Evidence 'child.exit')
     $allowed = @('groups.log', 'privileges.log', 'profile.json', 'actor.json', 'inventory.exit', 'inventory.stdout', 'inventory.stderr', 'test.exit', 'test.stdout', 'test.stderr', 'privileges-after.log', 'actor-complete.log')
+    $allowed += 'temp-binaries.json', 'temp-binaries-after.json'
+    foreach ($variant in @('baseline', 'candidate')) {
+        foreach ($suffix in @('inventory.exit', 'inventory.stdout', 'inventory.stderr', 'inventory.timeout', 'exit', 'stdout', 'stderr', 'timeout')) {
+            $allowed += "temp-$variant.$suffix"
+        }
+    }
     $seen = @{}
     foreach ($line in Get-Content -LiteralPath (Join-Path $Evidence 'child.stdout')) {
         $record = $line | ConvertFrom-Json
@@ -102,26 +250,13 @@ try {
         $seen[$record.name] = $true
         [IO.File]::WriteAllBytes((Join-Path $Evidence $record.name), [Convert]::FromBase64String($record.base64))
     }
+    Convert-TestOutput 'test' 'github.com/batuta-ai/console/internal/service'
+    foreach ($variant in @('baseline', 'candidate')) { Convert-TestOutput "temp-$variant" 'github.com/batuta-ai/console/internal/testfixture' }
     foreach ($required in $allowed) { if (-not $seen.ContainsKey($required)) { throw "Missing evidence: $required" } }
     if ($process.ExitCode -ne 0 -or [int](Get-Content (Join-Path $Evidence 'test.exit')) -ne 0 -or [int](Get-Content (Join-Path $Evidence 'inventory.exit')) -ne 0) { throw 'Ordinary process failed' }
     $actor = Get-Content (Join-Path $Evidence 'actor.json') -Raw | ConvertFrom-Json
-    if ($actor.sid -cne $sid.Value -or $actor.pid -ne $process.Id -or $actor.tokenType -ne 1 -or $actor.elevated -ne 0 -or $actor.binarySHA256 -cne $binaryHash) { throw 'Actor metadata differs' }
-    $convert = [Diagnostics.ProcessStartInfo]::new($test2json, '-t -p github.com/batuta-ai/console/internal/service')
-    $convert.UseShellExecute = $false
-    $convert.RedirectStandardInput = $true
-    $convert.RedirectStandardOutput = $true
-    $convert.RedirectStandardError = $true
-    $converter = [Diagnostics.Process]::Start($convert)
-    $outTask = $converter.StandardOutput.ReadToEndAsync()
-    $errTask = $converter.StandardError.ReadToEndAsync()
-    $converter.StandardInput.Write([IO.File]::ReadAllText((Join-Path $Evidence 'test.stdout')))
-    $converter.StandardInput.Close()
-    $converter.WaitForExit()
-    $outTask.Result | Set-Content (Join-Path $Evidence 'test.json')
-    $errTask.Result | Set-Content (Join-Path $Evidence 'test2json.stderr')
-    $converter.ExitCode | Set-Content (Join-Path $Evidence 'test2json.exit')
-    if ($converter.ExitCode -ne 0) { throw 'Test event conversion failed' }
-    $events = @($outTask.Result -split "`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    if ($actor.sid -cne $sid.Value -or $actor.pid -ne $process.Id -or $actor.tokenType -ne 1 -or $actor.elevated -ne 0 -or $actor.elevationType -ne 1 -or $actor.binarySHA256 -cne $binaryHash) { throw 'Actor metadata differs' }
+    $events = @(Get-Content (Join-Path $Evidence 'test.json') | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
     $passes = @($events | Where-Object { $_.Action -eq 'pass' -and $_.PSObject.Properties['Test'] } | ForEach-Object { $_.Test } | Sort-Object)
     $expected = @('TestOrdinaryWindowsUserDiscoversSelectedSkills', 'TestOrdinaryWindowsUserDiscoversSelectedSkills/claude', 'TestOrdinaryWindowsUserDiscoversSelectedSkills/codex')
     if (($passes -join "`n") -cne ($expected -join "`n") -or @($events | Where-Object { $_.Action -in @('fail', 'skip') }).Count -ne 0) { throw 'Exact parent and two provider passes required, without failures/skips' }
@@ -132,25 +267,48 @@ try {
     $output = [IO.File]::ReadAllText((Join-Path $Evidence 'test.stdout'))
     if ([regex]::Matches($output, 'actual ordinary actor from current process elevation=1; source read only').Count -ne 2 -or
         [regex]::Matches($output, 'actual caller nonadmin=true privileges=\d+, no special symlink privilege').Count -ne 2) { throw 'Missing native current-process authority assertions' }
-    Record-Source 'source-after.log'
-    $files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-after.json')
-    if ((Get-Content (Join-Path $Evidence 'hashes-before.json') -Raw) -cne (Get-Content (Join-Path $Evidence 'hashes-after.json') -Raw)) { throw 'Source/tool/binary hashes changed' }
-    'Exact three native pass events; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log')
+    $inventory = $null
+    foreach ($variant in @('baseline', 'candidate')) {
+        $prefix = "temp-$variant"
+        if ([int](Get-Content (Join-Path $Evidence "$prefix.inventory.exit")) -ne 0 -or
+            (Get-Content (Join-Path $Evidence "$prefix.inventory.timeout") -Raw).Trim() -cne 'False' -or
+            [IO.File]::ReadAllText((Join-Path $Evidence "$prefix.inventory.stderr"))) { throw "TEMP inventory failed: $variant" }
+        $currentInventory = [IO.File]::ReadAllText((Join-Path $Evidence "$prefix.inventory.stdout"))
+        if (@($currentInventory -split "\r?\n" | Where-Object { $_ -ceq 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP' }).Count -ne 1 -or
+            ($null -ne $inventory -and $currentInventory -cne $inventory)) { throw 'Exact paired TEMP inventory differs' }
+        $inventory = $currentInventory
+        Assert-TempResult $variant $sid.Value
+    }
+    foreach ($name in @('temp-binaries.json', 'temp-binaries-after.json')) {
+        $pairActor = Get-Content (Join-Path $Evidence $name) -Raw | ConvertFrom-Json
+        if ($pairActor.sid -cne $sid.Value -or $pairActor.pid -ne $process.Id -or
+            $pairActor.baseline -cne $pairHashes.baseline -or $pairActor.candidate -cne $pairHashes.candidate) { throw 'TEMP actor/binary hash binding differs' }
+    }
+    $proofPassed = $true
 } finally {
-    $cleanup.drained = $drained
-    $cleanup.stage = $stage
-    $cleanup.launchAttempted = $launchAttempted
     try {
-        if ($account) {
-            if (-not $drained -and $launchAttempted) { throw 'Owned process not drained; refusing account removal' }
-            $current = Get-LocalUser -Name $account.Name
-            if ($current.SID.Value -cne $account.SID.Value) { throw 'Cleanup SID mismatch; refusing account removal' }
-            Remove-LocalUser -SID $account.SID
-            if (Get-LocalUser -SID $account.SID -ErrorAction SilentlyContinue) { throw 'Owned account removal failed' }
-            $cleanup.removed = $true
+        Record-Source 'source-after.log'
+        if ($null -ne $hashesBefore) {
+            $files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-after.json')
+            if ((Get-Content (Join-Path $Evidence 'hashes-before.json') -Raw) -cne (Get-Content (Join-Path $Evidence 'hashes-after.json') -Raw)) { throw 'Source/tool/binary hashes changed' }
         }
+        if ($proofPassed) { 'Exact three skills PASS; TEMP baseline exact causal FAIL and candidate exact PASS; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log') }
     } finally {
-        $cleanup | ConvertTo-Json | Set-Content (Join-Path $Evidence 'cleanup.json')
-        if ($secret) { $secret.Dispose() }
+        $cleanup.drained = $drained
+        $cleanup.stage = $stage
+        $cleanup.launchAttempted = $launchAttempted
+        try {
+            if ($account) {
+                if (-not $drained -and $launchAttempted) { throw 'Owned process not drained; refusing account removal' }
+                $current = Get-LocalUser -Name $account.Name
+                if ($current.SID.Value -cne $account.SID.Value) { throw 'Cleanup SID mismatch; refusing account removal' }
+                Remove-LocalUser -SID $account.SID
+                if (Get-LocalUser -SID $account.SID -ErrorAction SilentlyContinue) { throw 'Owned account removal failed' }
+                $cleanup.removed = $true
+            }
+        } finally {
+            $cleanup | ConvertTo-Json | Set-Content (Join-Path $Evidence 'cleanup.json')
+            if ($secret) { $secret.Dispose() }
+        }
     }
 }

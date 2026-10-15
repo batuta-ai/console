@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$ExpectedSid,
-    [Parameter(Mandatory)][string]$BinaryHash
+    [Parameter(Mandatory)][string]$BinaryHash,
+    [Parameter(Mandatory)][string]$BaselineHash,
+    [Parameter(Mandatory)][string]$CandidateHash
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -11,6 +13,40 @@ function Publish-Evidence([string]$Name, [byte[]]$Bytes) {
 }
 function Publish-Text([string]$Name, [string]$Value) {
     Publish-Evidence $Name ([Text.Encoding]::UTF8.GetBytes($Value))
+}
+function Invoke-TempBinary([string]$Binary, [string[]]$Arguments, [string]$Prefix, [int]$TimeoutMilliseconds) {
+    $start = [Diagnostics.ProcessStartInfo]::new($Binary)
+    foreach ($arg in $Arguments) { $start.ArgumentList.Add($arg) }
+    $start.UseShellExecute = $false
+    $start.WorkingDirectory = $fixture
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # No credentials or token substitution: inherit the verified ordinary primary actor.
+    $native = [Diagnostics.Process]::Start($start)
+    $stdout = [IO.File]::Create((Join-Path $fixture "$Prefix.stdout"))
+    $stderr = [IO.File]::Create((Join-Path $fixture "$Prefix.stderr"))
+    try {
+        $outTask = $native.StandardOutput.BaseStream.CopyToAsync($stdout)
+        $errTask = $native.StandardError.BaseStream.CopyToAsync($stderr)
+        $timedOut = -not $native.WaitForExit($TimeoutMilliseconds)
+        if ($timedOut) { $native.Kill($true) }
+        $native.WaitForExit()
+        $outTask.GetAwaiter().GetResult()
+        $errTask.GetAwaiter().GetResult()
+        $stdout.Dispose()
+        $stderr.Dispose()
+        Publish-Text "$Prefix.exit" ([string]$native.ExitCode)
+        Publish-Text "$Prefix.timeout" ([string]$timedOut)
+        foreach ($stream in @('stdout', 'stderr')) { Publish-Evidence "$Prefix.$stream" ([IO.File]::ReadAllBytes((Join-Path $fixture "$Prefix.$stream"))) }
+        if ($timedOut) { throw "TEMP native process timed out: $Prefix" }
+    } finally { $stdout.Dispose(); $stderr.Dispose(); $native.Dispose() }
+}
+function Publish-TempHashes([string]$Name) {
+    $baseline = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'temp-baseline.test.exe')).Hash
+    $candidate = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'temp-candidate.test.exe')).Hash
+    Publish-Text $Name (@{ sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; pid = $PID;
+        baseline = $baseline; candidate = $candidate } | ConvertTo-Json)
+    if ($baseline -cne $BaselineHash -or $candidate -cne $CandidateHash) { throw 'Staged TEMP binary hashes differ' }
 }
 
 $fixture = $null
@@ -97,9 +133,21 @@ public static class OrdinaryToken {
     $testExit = $LASTEXITCODE
     Publish-Text 'test.exit' ([string]$testExit)
     foreach ($name in @('test.stdout', 'test.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
-    $after = & $whoami /priv /fo csv /nh
-    if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
-    Publish-Text 'privileges-after.log' ($after -join "`n")
+    Publish-TempHashes 'temp-binaries.json'
+    try {
+        foreach ($variant in @('baseline', 'candidate')) {
+            $pairBinary = Join-Path $PSScriptRoot "temp-$variant.test.exe"
+            Invoke-TempBinary $pairBinary @('-test.list=.') "temp-$variant.inventory" 15000
+            if ((Get-Content (Join-Path $fixture "temp-$variant.inventory.stdout") -Raw) -cnotmatch '(?m)^TestTerminalEnvironmentPreservesOrdinaryUserTEMP\r?$') { throw "Frozen TEMP test missing: $variant" }
+            Invoke-TempBinary $pairBinary @('-test.run=^TestTerminalEnvironmentPreservesOrdinaryUserTEMP$', '-test.v=test2json', '-test.count=1', '-test.timeout=1m') "temp-$variant" 90000
+        }
+    } finally {
+        try { Publish-TempHashes 'temp-binaries-after.json' } finally {
+            $after = & $whoami /priv /fo csv /nh
+            if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
+            Publish-Text 'privileges-after.log' ($after -join "`n")
+        }
+    }
     if ($testExit -ne 0) { throw 'Selected native test failed' }
     Publish-Text 'actor-complete.log' 'Native test process returned; streams drained'
 } catch {
