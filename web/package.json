@@ -7,7 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:run": "vitest run",
-    "test:journey": "node tests/daemon-journey.mjs"
+    "test:journey": "node tests/daemon-journey.mjs",
+    "test:e2e": "playwright test --config tests/playwright.config.mjs"
   },
   "dependencies": {
     "@lyra-ds/react": "1.1.0",
@@ -19,6 +20,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",

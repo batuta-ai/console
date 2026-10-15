@@ -67,3 +67,78 @@ the repository root; see [release qualification](../../docs/release-qualificatio
 Testing dependencies are pinned to the latest verified releases for this foundation:
 Vitest 5.0.3, Testing Library React 16.3.3, DOM 10.4.2, user-event 14.6.7,
 jest-dom 7.0.1, jsdom 30.1.1, and @types/node 26.6.4.
+
+## Rendered Chromium catalog journey (partial Task38)
+
+Requires Node 26.10.0, npm 12.2.0, Go 1.27.2 and the exact Playwright SDK
+`@playwright/test@1.64.1` (including playwright/playwright-core 1.64.1).
+From the repository root, use an owned browser cache, never an installed browser
+or personal profile. Initial browser acquisition requires access to Playwright's
+Chromium distribution; the test itself only contacts the owned loopback daemon.
+
+```sh
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.batuta/runs/rendered-browser/chromium"
+export npm_config_cache="$PWD/.batuta/runs/rendered-browser/npm-cache"
+npm --prefix web ci --offline --ignore-scripts --no-audit --no-fund
+npm --prefix web exec -- playwright install chromium
+npm --prefix web run test:e2e -- --list
+
+# Select the prepared Go 1.27.2 SDK and populated, read-only module cache.
+export GOROOT="/absolute/path/to/private/go"
+export GOMODCACHE="/absolute/path/to/prepared/module-cache"
+export GOCACHE="$PWD/.batuta/runs/rendered-browser/go-cache"
+export GOENV=off GOTOOLCHAIN=local GOWORK=off
+export GOFLAGS=-mod=readonly GOPROXY=off GOSUMDB=off
+# macOS: canonical temporary directory outside every Git checkout.
+export TMPDIR=/private/tmp
+npm --prefix web run test:e2e
+
+# Existing gates remain unchanged and need loopback permission where applicable.
+npm --prefix web run test:run
+npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json
+PATH="$GOROOT/bin:$PATH" npm --prefix web run test:journey
+PATH="$GOROOT/bin:$PATH" go test ./...
+```
+
+The single spec builds real consoled with its committed embedded production
+assets; it does not run Vite or regenerate assets. Public APIs seed a disposable
+workspace, two clearly labeled fixture accounts (no login, `cli_missing`), a
+custom squad and its revision, and two missions with immutable snapshots.
+The real UI opens the workspace card, selects each mission from Missions, and
+checks its exact ID, title, objective, snapshot name and member models in Room.
+Squad versions and complete mission identities are also checked through the
+public catalog. No provider execution, route interception or substituted App
+is involved. A missing workspace profile is intentional; this slice navigates
+existing missions and does not qualify workspace initialization.
+
+The owned daemon must close and join with exit 0 before another process opens
+the same home and catalog. The new process announces its actual loopback port;
+authentication is read again and both unauthenticated rejection and authenticated
+readiness are checked. A new private browser context selects both identities
+again, eliminating retained DOM/storage as persistence evidence. Complete catalog
+records are compared, excluding only account readiness `checked_at` timestamps.
+Successful selections emit only nonsecret identity/version records.
+
+Daemon and browser child environments are allowlisted with disposable HOME/TMP
+and empty PATH. The daemon secret stays in the owned private runtime and browser
+context memory: never use a token URL, storage-state export, request-header
+recording, traces, screenshots, videos, HAR, debug protocol logging or uploaded
+runtime directories. The config disables artifact capture and uses one worker,
+Chromium only and zero retries. Build/start/read/action/drain deadlines are
+bounded; readiness and exit events replace sleeps. Test-scoped teardown runs
+also on failure; Playwright retains test and teardown failures separately.
+Forced daemon cleanup is a failure. If joining or cleanup cannot be established,
+the private runtime is retained instead of being deleted under a live process.
+
+Native rendered proof is **PENDING until Root runs the actual browser command**.
+The worker sandbox denies loopback and browser acquisition was still pending at
+candidate preparation. Listing or syntax checks are not rendered proof. The
+existing unit command locally passed 159 tests and failed six redirect tests
+with `listen EPERM`; Root must rerun the unchanged gate outside that sandbox.
+Behavioral RED/GREEN for this new journey is also pending there; assertions were
+written before the fixture, without claiming missing tooling as a behavioral RED.
+
+This is bounded catalog/navigation/restart coverage, not full Task38, native
+execution, question/answer, resume, execution stop, provider qualification or a
+beta release gate. The known SDK journal defect still blocks qualification of
+the full execution flow even if this catalog journey passes.
