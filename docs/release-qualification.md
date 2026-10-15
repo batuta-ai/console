@@ -840,3 +840,102 @@ red/sourceguard green do not establish parsing or behavioral TDD success. All
 native negative/positive controls remain pending; no PowerShell was installed or
 Windows bootstrap executed locally. This is only a Task38 artifact-consumer slice,
 not interactive TUI, provider/council, Task43, full Task38 or release completion.
+
+### Same-run snapshot CI bridge (native result PENDING)
+
+`ci.yml` now adds `package-snapshot` on Ubuntu with the existing pinned Go,
+Node, npm and GoReleaser versions. It checks the requested ref against HEAD and
+requires a clean checkout before and after `sh scripts/package-release.sh`.
+That unchanged producer builds all five snapshot archives, verifies their real
+contents/build records and runs `package-contract.test.mjs`. No tag, release
+publication or write permission is involved. `dist/metadata.json` must agree
+with the manifest-derived snapshot version and full source revision.
+
+The producer uploads the five public archives, checksums, GoReleaser metadata,
+artifact inventory and `labels.json`. Labels bind the Windows ZIP/checksum
+SHA256, qualifier/test source SHA256, revision, version, run ID and run attempt.
+Its output binds the label SHA256 and upload artifact ID. The ordinary Windows
+job requires successful producer outputs, downloads that exact same-run ID with
+`digest-mismatch: error`, and checks labels against its own checked-out revision.
+A failed producer fails the ordinary job explicitly; it cannot silently select
+another artifact or yield a successful qualification through a skipped job.
+
+The existing disposable hosted-Windows account bootstrap stages these inputs
+alongside the original source test binaries. Its before/after source and staged
+hash inventory now includes the package inputs. The original ordinary skills,
+TEMP baseline/candidate, literal and MSYS operations remain in place. After those
+operations return, the existing ordinary actor copies only the bound inputs into
+its own private fixture and verifies copy hashes and ownership. It invokes:
+
+```powershell
+& (Join-Path $bundleRoot 'qualify-release.test.ps1') `
+  -Inputs (Join-Path $bundleRoot 'bundle-inputs.json') `
+  -Evidence (Join-Path $bundleRoot 'public')
+```
+
+This is an internal invocation inside the existing actor, not a second account
+bootstrap. Never run `check-windows-ordinary.ps1` locally. Each qualifier child
+inherits that primary token without credentials, elevation or privilege changes;
+self-reported SID, PID, creation time, primary/elevation fields, groups and
+privileges are checked against the retained launching process object. The
+consumer remains byte-identical (SHA256
+`98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c4643937b3`).
+
+The native case order is counterfactual, checksum, missing, duplicate, extra,
+renamed, traversal, relative path, ADS, dot-dot path, wrong PE machine, wrong
+expected version, wrong expected revision, reported Go, reported Core, positive.
+The duplicate replaces README with a second LICENSE, keeping five entries;
+renamed/traversal also retain five entries. Modified archives get fresh checksums
+so they reach the member/PE/provenance guard. Rejections require the intended
+stage and exact frozen guard line, empty cleanup errors and the exact number of
+version-only process launches; path cases must reject before evidence creation.
+Go/Core cases replace equal-length data strings in copied actual PE images and
+record image/ZIP hashes and replacement counts. They are **NOT different SDK
+build qualification**. No fabricated executable or HTTP service is used.
+
+The counterfactual changes exactly one checksum guard in an owned consumer copy
+and supplies a wrong expected version to prevent runtime discovery. The unchanged
+checksum assertion must become RED (the mutant reaches provenance with one
+version launch); the following original checksum control must pass that same
+assertion. The committed consumer and assertions are never relaxed. No retry,
+skip or missing-script sourceguard counts as behavioral RED/GREEN. The final
+positive uses byte-exact original ZIP/checksums and requires complete provenance,
+two bound daemon generations, reuse, direct crash, eight HTTP 401 observations,
+closed logs and joined daemon cleanup. Each qualifier is limited to 220 seconds,
+with bounded join/drain waits and 64 KiB captured streams. The existing 20-minute
+ordinary job timeout remains unchanged.
+
+Additional public evidence names are an explicit finite whitelist:
+`bundle-sourcebridge.json`, `bundle-copy-before.json`, `bundle-copy-after.json`,
+`bundle-summary.json`, and `bundle-<case>-{actor,mutation,result}.json` for the
+16 named cases. All except the three early path cases also require
+`bundle-<case>-{receipt,observations}.json`. The parent retains every original
+required record and rejects missing, duplicate or unknown transport records.
+Raw qualifier stdout/stderr remain private; public result records carry their
+hashes, arguments and exit codes. Only the public files are transported, never
+recursive contents of the owned fixture, extracted package or runtime home.
+The existing account drain/removal receipt remains mandatory.
+
+Root must run and inspect CI on the exact candidate commit before approval.
+Use the existing push/PR or reusable-workflow trigger; this worker does not push
+or dispatch CI. After the authorized trigger, these read-only commands locate
+and retrieve proof (replace the explicit placeholders):
+
+```sh
+gh run list --workflow ci.yml --commit <candidate-sha> --json databaseId,headSha,status,conclusion
+gh run watch <run-id> --exit-status
+gh run download <run-id> --name console-snapshot-<run-id>-<attempt> --dir <owned-public-evidence>/producer
+gh run download <run-id> --name windows-ordinary-skills-<run-id>-<attempt> --dir <owned-public-evidence>/ordinary
+```
+
+Check all original source jobs and assertions, producer five-archive contract
+logs/metadata, download digest outcome, source bridge and before/after hashes,
+all 16 cases including original negative receipts, counterfactual RED, positive
+observations, original CU token evidence and account drain/removal. Then obtain
+an independent Opus review of the exact candidate and native evidence. Local
+actionlint/schema/diff checks establish source consistency only. PowerShell
+parsing, behavioral RED/GREEN, actual producer/native CI and independent review
+are **PENDING** until Root verifies their real outputs. Task37/38/43 remain bounded
+slices; native TUI/ConPTY, providers, full Task38/43, Task44 and release remain
+open. Go 1.27.2 and Core beta.49 remain unchanged; there is no Core publication
+or adoption in this work.

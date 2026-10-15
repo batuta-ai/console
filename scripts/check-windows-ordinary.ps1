@@ -1,4 +1,5 @@
-param([Parameter(Mandatory)][string]$Evidence)
+param([Parameter(Mandatory)][string]$Evidence, [Parameter(Mandatory)][string]$Bundle,
+    [Parameter(Mandatory)][string]$LabelsHash, [Parameter(Mandatory)][string]$ProducerRevision)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference = $false
@@ -224,6 +225,30 @@ try {
     $gitTool = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     $goroot = & $tool env GOROOT
     if ($LASTEXITCODE -ne 0) { throw 'Pinned compiler root unavailable' }
+    $labelsPath = Join-Path $Bundle 'labels.json'
+    if ($LabelsHash -cnotmatch '^[a-f0-9]{64}$' -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $labelsPath).Hash.ToLowerInvariant() -cne $LabelsHash) { throw 'Producer labels digest differs' }
+    $labels = Get-Content -LiteralPath $labelsPath -Raw | ConvertFrom-Json
+    if ($labels.revision -cne $revision -or $ProducerRevision -cne $revision -or
+        $labels.runID -cne $env:GITHUB_RUN_ID -or $labels.runAttempt -cne $env:GITHUB_RUN_ATTEMPT -or
+        $labels.version -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$' -or
+        $labels.archive -cne "console_$($labels.version)_windows_amd64.zip") { throw 'Same-run exact-source package labels required' }
+    $bundleFiles = @($labelsPath, (Join-Path $Bundle $labels.archive), (Join-Path $Bundle 'checksums.txt'),
+        (Join-Path $PSScriptRoot 'qualify-release.ps1'), (Join-Path $PSScriptRoot 'qualify-release.test.ps1'))
+    $bundleDigests = @{}
+    foreach ($file in $bundleFiles) {
+        $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+        Copy-Item -LiteralPath $file -Destination $stage
+        $copy = Join-Path $stage ([IO.Path]::GetFileName($file))
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $copy).Hash.ToLowerInvariant() -cne $digest) { throw 'Package staging changed bytes' }
+        $bundleDigests[[IO.Path]::GetFileName($file)] = $digest
+    }
+    if ($bundleDigests[$labels.archive] -cne $labels.archiveSHA256 -or $bundleDigests['checksums.txt'] -cne $labels.checksumsSHA256 -or
+        $bundleDigests['qualify-release.ps1'] -cne $labels.qualifierSHA256 -or $bundleDigests['qualify-release.test.ps1'] -cne $labels.testsSHA256) { throw 'Producer/source input binding differs' }
+    $bundleInputs = Join-Path $stage 'bundle-inputs.json'
+    @{ revision=$revision; labelsSHA256=$LabelsHash; files=$bundleDigests } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $bundleInputs
+    $bundleInputsHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleInputs).Hash
+    Copy-Item -LiteralPath $bundleInputs -Destination (Join-Path $Evidence 'bundle-sourcebridge.json')
     $runtimeInputs = Join-Path $stage 'msys-inputs.json'
     @{ source = $source; sources = $sourceHashes; go = $tool; git = $gitTool; goroot = $goroot;
         controllerSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage 'check-windows-msys-owner.ps1')).Hash } |
@@ -233,6 +258,7 @@ try {
         (Join-Path $goroot 'pkg/tool/windows_amd64/compile.exe'), (Join-Path $goroot 'pkg/tool/windows_amd64/link.exe'),
         (Join-Path $stage 'check-windows-msys-owner.ps1'), (Join-Path $stage 'check-windows-ordinary-child.ps1'),
         (Join-Path $stage 'temp-baseline.test.exe'), (Join-Path $stage 'temp-candidate.test.exe'), $baselineHelper, $overlay)
+    $files += $bundleFiles + @($bundleInputs) + @($bundleDigests.Keys | ForEach-Object { Join-Path $stage $_ })
     $hashesBefore = @($files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash) + $sourceHashes
     $files += $sourceFiles
     $hashesBefore | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-before.json')
@@ -261,7 +287,7 @@ try {
     (Get-Acl -LiteralPath $stage).Sddl | Set-Content (Join-Path $Evidence 'stage-acl.log')
     $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$name", $secret)
     $arguments = '-NoLogo -NoProfile -NonInteractive -File "' + (Join-Path $stage 'check-windows-ordinary-child.ps1') + '" -ExpectedSid ' + $sid.Value + ' -BinaryHash ' + $binaryHash
-    $arguments += ' -BaselineHash ' + $pairHashes.baseline + ' -CandidateHash ' + $pairHashes.candidate + ' -RuntimeInputsHash ' + $runtimeInputsHash
+    $arguments += ' -BaselineHash ' + $pairHashes.baseline + ' -CandidateHash ' + $pairHashes.candidate + ' -RuntimeInputsHash ' + $runtimeInputsHash + ' -BundleInputsHash ' + $bundleInputsHash
     # -Wait waits for descendants as well as the credentialed primary process.
     $launchAttempted = $true
     try {
@@ -288,6 +314,14 @@ try {
         foreach ($suffix in @('stdout', 'stderr', 'exit')) { $allowed += "$prefix.$suffix" }
     }
     $allowed += 'msys-negative-literal.json', 'msys-positive-literal.json', 'msys-ordinary-fixtures.json'
+    $bundleAllowed = @('bundle-summary.json', 'bundle-copy-before.json', 'bundle-copy-after.json')
+    foreach ($case in @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')) {
+        foreach ($suffix in @('actor','mutation','result')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        if ($case -notin @('relative','ads','dotdot')) {
+            foreach ($suffix in @('receipt','observations')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        }
+    }
+    $allowed += $bundleAllowed
     $seen = @{}
     foreach ($line in Get-Content -LiteralPath (Join-Path $Evidence 'child.stdout')) {
         $record = $line | ConvertFrom-Json
@@ -337,6 +371,11 @@ try {
         $ownerActor.stableAcl -cne $actor.acl) { throw 'Ordinary MSYS run owner authority/result differs' }
     if ((Get-Content (Join-Path $Evidence 'msys-hashes-before.json') -Raw) -cne
         (Get-Content (Join-Path $Evidence 'msys-hashes-after.json') -Raw)) { throw 'Ordinary MSYS source/tools/binary changed' }
+    $bundleSummary = Get-Content (Join-Path $Evidence 'bundle-summary.json') -Raw | ConvertFrom-Json
+    if (-not $bundleSummary.complete -or @($bundleSummary.cases).Count -ne 16 -or
+        @($bundleSummary.cases | Where-Object { -not $_.passed }).Count -ne 0 -or
+        $bundleSummary.archiveSHA256 -cne $labels.archiveSHA256 -or $bundleSummary.qualifierSHA256 -cne $labels.qualifierSHA256 -or
+        (Get-Content (Join-Path $Evidence 'bundle-copy-before.json') -Raw) -cne (Get-Content (Join-Path $Evidence 'bundle-copy-after.json') -Raw)) { throw 'Actual ZIP case suite incomplete or inputs changed' }
     $proofPassed = $true
 } catch { $executionError = $_ } finally {
     try {

@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][string]$BinaryHash,
     [Parameter(Mandatory)][string]$BaselineHash,
     [Parameter(Mandatory)][string]$CandidateHash,
-    [Parameter(Mandatory)][string]$RuntimeInputsHash
+    [Parameter(Mandatory)][string]$RuntimeInputsHash,
+    [Parameter(Mandatory)][string]$BundleInputsHash
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -233,6 +234,58 @@ public static class OrdinaryToken {
         $after = & $whoami /priv /fo csv /nh
         if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
         if ((Get-Acl -LiteralPath $fixture).Sddl -cne $actual.Sddl -or (Get-Acl -LiteralPath $profilePath).Sddl -cne $profileAcl.Sddl) { throw 'Actor fixture/profile ACL changed' }
+    }
+    $bundleInputPath = Join-Path $PSScriptRoot 'bundle-inputs.json'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $bundleInputPath).Hash -cne $BundleInputsHash) { throw 'Actor package input digest differs' }
+    $bundleInputs = Get-Content -LiteralPath $bundleInputPath -Raw | ConvertFrom-Json
+    $bundleRoot = Join-Path $fixture 'bundle'
+    $null = New-Item -ItemType Directory -Path $bundleRoot
+    $copyBefore = [ordered]@{}
+    foreach ($entry in ($bundleInputs.files.PSObject.Properties | Sort-Object Name)) {
+        if ($entry.Name -cnotmatch '^[A-Za-z0-9_.+-]+$') { throw 'Unsafe staged input name' }
+        $from = Join-Path $PSScriptRoot $entry.Name
+        $to = Join-Path $bundleRoot $entry.Name
+        $before = (Get-FileHash -Algorithm SHA256 -LiteralPath $from).Hash.ToLowerInvariant()
+        Copy-Item -LiteralPath $from -Destination $to
+        $copied = (Get-FileHash -Algorithm SHA256 -LiteralPath $to).Hash.ToLowerInvariant()
+        if ($before -cne $entry.Value -or $copied -cne $entry.Value -or
+            (Get-Acl -LiteralPath $to).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ExpectedSid) { throw 'Owned package copy binding failed' }
+        $copyBefore[$entry.Name] = $copied
+    }
+    Copy-Item -LiteralPath $bundleInputPath -Destination $bundleRoot
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $bundleRoot 'bundle-inputs.json')).Hash -cne $BundleInputsHash) { throw 'Owned input manifest copy differs' }
+    $bundleEvidence = Join-Path $bundleRoot 'public'
+    $bundleAllowed = @('bundle-summary.json')
+    foreach ($case in @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')) {
+        foreach ($suffix in @('actor','mutation','result')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        if ($case -notin @('relative','ads','dotdot')) {
+            foreach ($suffix in @('receipt','observations')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        }
+    }
+    $copyRecord = ($copyBefore | ConvertTo-Json -Compress)
+    Publish-Text 'bundle-copy-before.json' $copyRecord
+    try {
+        & (Join-Path $bundleRoot 'qualify-release.test.ps1') -Inputs (Join-Path $bundleRoot 'bundle-inputs.json') -Evidence $bundleEvidence
+    } finally {
+        foreach ($name in $bundleAllowed) {
+            $path = Join-Path $bundleEvidence $name
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Publish-Evidence $name ([IO.File]::ReadAllBytes($path)) }
+        }
+        $copyAfter = [ordered]@{}
+        foreach ($entry in ($bundleInputs.files.PSObject.Properties | Sort-Object Name)) {
+            foreach ($directory in @($PSScriptRoot,$bundleRoot)) {
+                $afterHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $directory $entry.Name)).Hash.ToLowerInvariant()
+                if ($afterHash -cne $entry.Value) { throw 'Actor package inputs changed' }
+            }
+            $copyAfter[$entry.Name] = $afterHash
+        }
+        foreach ($directory in @($PSScriptRoot,$bundleRoot)) {
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $directory 'bundle-inputs.json')).Hash -cne $BundleInputsHash) { throw 'Actor package manifest changed' }
+        }
+        Publish-Text 'bundle-copy-after.json' ($copyAfter | ConvertTo-Json -Compress)
+        $after = & $whoami /priv /fo csv /nh
+        if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Bundle actor privileges changed' }
+        if ((Get-Acl -LiteralPath $fixture).Sddl -cne $actual.Sddl -or (Get-Acl -LiteralPath $profilePath).Sddl -cne $profileAcl.Sddl) { throw 'Bundle actor fixture/profile ACL changed' }
     }
     Publish-Text 'actor-complete.log' 'Native test process returned; streams drained'
 } catch {
