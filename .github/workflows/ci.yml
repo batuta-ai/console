@@ -180,9 +180,16 @@ jobs:
             $env:LOCALAPPDATA = $fixture
             # Keep both original streams even when Go returns a failing exit code.
             $PSNativeCommandUseErrorActionPreference = $false
-            go test ./... -json -count=1 -timeout=20m 1> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') 2> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stderr')
-            $testExit = $LASTEXITCODE
-            $testExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.exit')
+            $tokens = $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/check-windows-msys-owner.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+            $parseErrors | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-parser.log')
+            if ($parseErrors.Count) { throw 'MSYS controller parse failed' }
+            $fixtureBinary = Join-Path $env:WINDOWS_EVIDENCE 'msys-original.test.exe'
+            go test -c -o $fixtureBinary ./internal/testfixture 1> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stdout') 2> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stderr')
+            $compileExit = $LASTEXITCODE
+            $compileExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.exit')
+            if ($compileExit -ne 0) { throw 'Original testfixture compilation failed' }
+            $testExit = & ./scripts/check-windows-msys-owner.ps1 -Evidence $env:WINDOWS_EVIDENCE -FixtureBinary $fixtureBinary -Source $PWD.Path -Go (Get-Command go -CommandType Application | Select-Object -First 1).Source -Git (Get-Command git -CommandType Application | Select-Object -First 1).Source -FullSuite
           } finally {
             $env:TEMP = $saved.TEMP
             $env:TMP = $saved.TMP
@@ -190,6 +197,11 @@ jobs:
           }
           $badEvents = 0
           $passEvents = 0
+          $requiredPasses = @('TestTerminalEnvironmentPreservesOrdinaryUserTEMP', 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP/select_environment',
+            'TestTerminalEnvironmentMSYSTempLifetime', 'TestTerminalEnvironmentMSYSTempLifetime/first_scope',
+            'TestTerminalEnvironmentMSYSTempLifetime/later_original_literal', 'TestNativeScriptLiteralArgumentsAndExit')
+          $requiredPasses += @(Select-String -Path internal/testfixture/script_inplace_windows_test.go -Pattern '^func (TestNativeScriptInPlace\w+)\(t \*testing.T\)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+          $observedPasses = @{}
           $emptyPackageOutput = @{}
           $skippedPackages = @()
           Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
@@ -198,9 +210,17 @@ jobs:
                 $testEvent.Output -cmatch ('^\?\s+' + [regex]::Escape($testEvent.Package) + '\s+\[no test files\]\r?\n?$')) {
               $emptyPackageOutput[$testEvent.Package] = $true
             }
+            if ($testEvent.Action -eq 'output' -and $testEvent.Output -cmatch 'could not find /tmp|warning:.* /tmp') { $badEvents++ }
+            if ($testEvent.Action -eq 'pass' -and $testEvent.Package -ceq 'github.com/batuta-ai/console/internal/testfixture' -and $testEvent.Test -cin $requiredPasses) {
+              if (-not $observedPasses.ContainsKey($testEvent.Test)) { $observedPasses[$testEvent.Test] = 0 }
+              $observedPasses[$testEvent.Test]++
+            }
             if ($testEvent.Action -eq 'fail' -or ($testEvent.Action -eq 'skip' -and $testEvent.Test)) { $badEvents++ }
             if ($testEvent.Action -eq 'skip' -and -not $testEvent.Test) { $skippedPackages += $testEvent.Package }
             if ($testEvent.Action -eq 'pass' -and $testEvent.Test) { $passEvents++ }
+          }
+          foreach ($required in $requiredPasses) {
+            if (-not $observedPasses.ContainsKey($required) -or $observedPasses[$required] -ne 1) { $badEvents++ }
           }
           $emptyPackages = @()
           foreach ($package in $skippedPackages) {
@@ -219,6 +239,7 @@ jobs:
           path: |
             ${{ env.WINDOWS_EVIDENCE }}/*.log
             ${{ env.WINDOWS_EVIDENCE }}/*.json
+            ${{ env.WINDOWS_EVIDENCE }}/*.stdout
             ${{ env.WINDOWS_EVIDENCE }}/*.stderr
             ${{ env.WINDOWS_EVIDENCE }}/*.exit
           if-no-files-found: error
@@ -256,9 +277,9 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Parse both PowerShell scripts without executing the bootstrap
+      - name: Parse Windows harness scripts without executing the bootstrap
         run: |
-          foreach ($path in @('scripts/check-windows-ordinary.ps1', 'scripts/check-windows-ordinary-child.ps1')) {
+          foreach ($path in @('scripts/check-windows-ordinary.ps1', 'scripts/check-windows-ordinary-child.ps1', 'scripts/check-windows-msys-owner.ps1')) {
             $tokens = $null
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$parseErrors) | Out-Null

@@ -215,12 +215,23 @@ try {
     if (((Get-Content (Join-Path $Evidence 'temp-baseline-graph.stdout') | Sort-Object) -join "`n") -cne
         ((Get-Content (Join-Path $Evidence 'temp-candidate-graph.stdout') | Sort-Object) -join "`n")) { throw 'TEMP test/dependency graphs differ' }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-windows-ordinary-child.ps1') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-windows-msys-owner.ps1') -Destination $stage
     $binaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash
-    $tool = (Get-Command go -CommandType Application).Source
+    $tool = (Get-Command go -CommandType Application | Select-Object -First 1).Source
     $shell = Join-Path $PSHOME 'pwsh.exe'
     $test2json = (& go tool -n test2json)
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $test2json -PathType Leaf)) { throw 'test2json tool missing' }
-    $files = @($binary, $tool, $shell, $test2json, (Join-Path $stage 'check-windows-ordinary-child.ps1'),
+    $gitTool = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+    $goroot = & $tool env GOROOT
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned compiler root unavailable' }
+    $runtimeInputs = Join-Path $stage 'msys-inputs.json'
+    @{ source = $source; sources = $sourceHashes; go = $tool; git = $gitTool; goroot = $goroot;
+        controllerSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage 'check-windows-msys-owner.ps1')).Hash } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $runtimeInputs
+    $runtimeInputsHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeInputs).Hash
+    $files = @($binary, $tool, $shell, $test2json, $gitTool, $runtimeInputs,
+        (Join-Path $goroot 'pkg/tool/windows_amd64/compile.exe'), (Join-Path $goroot 'pkg/tool/windows_amd64/link.exe'),
+        (Join-Path $stage 'check-windows-msys-owner.ps1'), (Join-Path $stage 'check-windows-ordinary-child.ps1'),
         (Join-Path $stage 'temp-baseline.test.exe'), (Join-Path $stage 'temp-candidate.test.exe'), $baselineHelper, $overlay)
     $hashesBefore = @($files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash) + $sourceHashes
     $files += $sourceFiles
@@ -250,7 +261,7 @@ try {
     (Get-Acl -LiteralPath $stage).Sddl | Set-Content (Join-Path $Evidence 'stage-acl.log')
     $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$name", $secret)
     $arguments = '-NoLogo -NoProfile -NonInteractive -File "' + (Join-Path $stage 'check-windows-ordinary-child.ps1') + '" -ExpectedSid ' + $sid.Value + ' -BinaryHash ' + $binaryHash
-    $arguments += ' -BaselineHash ' + $pairHashes.baseline + ' -CandidateHash ' + $pairHashes.candidate
+    $arguments += ' -BaselineHash ' + $pairHashes.baseline + ' -CandidateHash ' + $pairHashes.candidate + ' -RuntimeInputsHash ' + $runtimeInputsHash
     # -Wait waits for descendants as well as the credentialed primary process.
     $launchAttempted = $true
     try {
@@ -264,16 +275,23 @@ try {
     $cleanup.pid = $process.Id
     $process.ExitCode | Set-Content (Join-Path $Evidence 'child.exit')
     $allowed = @('groups.log', 'privileges.log', 'profile.json', 'actor.json', 'inventory.exit', 'inventory.stdout', 'inventory.stderr', 'test.exit', 'test.stdout', 'test.stderr', 'privileges-after.log', 'actor-complete.log')
-    $allowed += 'temp-binaries.json', 'temp-binaries-after.json'
+    $allowed += 'temp-binaries.json', 'temp-binaries-after.json', 'user.log'
     foreach ($variant in @('baseline', 'candidate')) {
         foreach ($suffix in @('inventory.exit', 'inventory.stdout', 'inventory.stderr', 'inventory.timeout', 'exit', 'stdout', 'stderr', 'timeout')) {
             $allowed += "temp-$variant.$suffix"
         }
     }
+    $allowed += 'msys-inputs.json', 'msys-caller.json', 'msys-hashes-before.json', 'msys-hashes-after.json', 'msys-observations.json', 'msys-result.json'
+    foreach ($prefix in @('msys-negative-a', 'msys-negative-b', 'msys-positive-keeper', 'msys-positive-a', 'msys-positive-b',
+        'msys-negative-literal', 'msys-negative-literal-convert', 'msys-positive-literal', 'msys-positive-literal-convert',
+        'msys-ordinary-fixtures', 'msys-ordinary-fixtures-convert')) {
+        foreach ($suffix in @('stdout', 'stderr', 'exit')) { $allowed += "$prefix.$suffix" }
+    }
+    $allowed += 'msys-negative-literal.json', 'msys-positive-literal.json', 'msys-ordinary-fixtures.json'
     $seen = @{}
     foreach ($line in Get-Content -LiteralPath (Join-Path $Evidence 'child.stdout')) {
         $record = $line | ConvertFrom-Json
-        if ($record.name -cnotin $allowed -or $seen.ContainsKey($record.name)) { throw 'Unexpected or duplicate evidence' }
+        if ((@($record.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'base64,name' -or $record.name -cnotin $allowed -or $seen.ContainsKey($record.name)) { throw 'Unexpected or duplicate evidence' }
         $seen[$record.name] = $true
         [IO.File]::WriteAllBytes((Join-Path $Evidence $record.name), [Convert]::FromBase64String($record.base64))
     }
@@ -311,6 +329,14 @@ try {
         if ($pairActor.sid -cne $sid.Value -or $pairActor.pid -ne $process.Id -or
             $pairActor.baseline -cne $pairHashes.baseline -or $pairActor.candidate -cne $pairHashes.candidate) { throw 'TEMP actor/binary hash binding differs' }
     }
+    $ownerResult = Get-Content (Join-Path $Evidence 'msys-result.json') -Raw | ConvertFrom-Json
+    $ownerActor = Get-Content (Join-Path $Evidence 'msys-caller.json') -Raw | ConvertFrom-Json
+    if (-not $ownerResult.success -or $ownerResult.primary -or @($ownerResult.cleanup).Count -ne 0 -or
+        $ownerActor.sid -cne $sid.Value -or $ownerActor.pid -ne $process.Id -or $ownerActor.tokenType -ne 1 -or
+        $ownerActor.elevationType -ne 1 -or $ownerActor.elevated -ne 0 -or $ownerActor.stable -cne $actor.fixture -or
+        $ownerActor.stableAcl -cne $actor.acl) { throw 'Ordinary MSYS run owner authority/result differs' }
+    if ((Get-Content (Join-Path $Evidence 'msys-hashes-before.json') -Raw) -cne
+        (Get-Content (Join-Path $Evidence 'msys-hashes-after.json') -Raw)) { throw 'Ordinary MSYS source/tools/binary changed' }
     $proofPassed = $true
 } catch { $executionError = $_ } finally {
     try {
@@ -356,4 +382,4 @@ if ($executionError -or $finalErrors.Count -ne 0) {
     if ($executionError) { throw $executionError }
     throw $finalErrors[0]
 }
-if ($proofPassed) { 'Exact three skills PASS; TEMP baseline exact causal FAIL and candidate exact PASS; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log') }
+if ($proofPassed) { 'Exact three skills PASS; TEMP baseline exact causal FAIL and candidate exact PASS; MSYS causal negative then owned positive and original operation fixtures PASS; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log') }

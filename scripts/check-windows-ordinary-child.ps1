@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory)][string]$ExpectedSid,
     [Parameter(Mandatory)][string]$BinaryHash,
     [Parameter(Mandatory)][string]$BaselineHash,
-    [Parameter(Mandatory)][string]$CandidateHash
+    [Parameter(Mandatory)][string]$CandidateHash,
+    [Parameter(Mandatory)][string]$RuntimeInputsHash
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -101,7 +102,17 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $privileges) { throw 'Missing native privilege metadata' }
     Publish-Text 'groups.log' ($groups -join "`n")
     Publish-Text 'privileges.log' ($privileges -join "`n")
-    if (($groups -join "`n") -match 'S-1-5-32-544' -or ($privileges -join "`n") -match 'SeCreateSymbolicLinkPrivilege') {
+    $groupRows = @($groups | ConvertFrom-Csv -Header Name, Type, Sid, Attributes)
+    $privilegeRows = @($privileges | ConvertFrom-Csv -Header Name, Description, State)
+    $userCSV = & $whoami /user /fo csv /nh
+    if ($LASTEXITCODE -ne 0 -or -not $userCSV) { throw 'Missing native user metadata' }
+    Publish-Text 'user.log' ($userCSV -join "`n")
+    $userRows = @($userCSV | ConvertFrom-Csv -Header Name, Sid)
+    if ($userRows.Count -ne 1 -or $userRows[0].Sid -cne $ExpectedSid -or
+        @($groupRows | Where-Object { $_.Sid -cnotmatch '^S-1-' }).Count -ne 0 -or
+        @($privilegeRows | Where-Object { $_.Name -cnotmatch '^Se\w+Privilege$' }).Count -ne 0) { throw 'Native CSV token identity differs' }
+    if (@($groupRows | Where-Object { $_.Sid -ceq 'S-1-5-32-544' }).Count -ne 0 -or
+        @($privilegeRows | Where-Object { $_.Name -ceq 'SeCreateSymbolicLinkPrivilege' }).Count -ne 0) {
         throw 'Administrator group or special symlink privilege present'
     }
     $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
@@ -161,31 +172,68 @@ public static class OrdinaryToken {
     Publish-Text 'actor.json' (@{ sid = $sid.Value; pid = $PID; tokenType = $tokenType; elevationType = $elevationType;
         elevated = $elevated; profile = $profilePath; fixture = $fixture; acl = $actual.Sddl; binarySHA256 = $hash;
         temp = $env:TEMP; tmp = $env:TMP; localAppData = $env:LOCALAPPDATA } | ConvertTo-Json)
-    & $binary '-test.list=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' 1> inventory.stdout 2> inventory.stderr
-    $inventoryExit = $LASTEXITCODE
-    Publish-Text 'inventory.exit' ([string]$inventoryExit)
-    foreach ($name in @('inventory.stdout', 'inventory.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
-    if ($inventoryExit -ne 0 -or (Get-Content inventory.stdout -Raw).Trim() -cne 'TestOrdinaryWindowsUserDiscoversSelectedSkills') { throw 'Exact named test inventory required' }
-    & $binary '-test.run=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' '-test.v=test2json' '-test.count=1' '-test.timeout=5m' 1> test.stdout 2> test.stderr
-    $testExit = $LASTEXITCODE
-    Publish-Text 'test.exit' ([string]$testExit)
-    foreach ($name in @('test.stdout', 'test.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
-    Publish-TempHashes 'temp-binaries.json'
+    $inputsPath = Join-Path $PSScriptRoot 'msys-inputs.json'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $inputsPath).Hash -cne $RuntimeInputsHash) { throw 'Staged runtime inputs differ' }
+    $inputs = Get-Content -LiteralPath $inputsPath -Raw | ConvertFrom-Json
+    $controller = Join-Path $PSScriptRoot 'check-windows-msys-owner.ps1'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $controller).Hash -cne $inputs.controllerSHA256) { throw 'Staged controller differs' }
+    Publish-Evidence 'msys-inputs.json' ([IO.File]::ReadAllBytes($inputsPath))
+    # Process-local offline compiler access: existing source/toolchain ACLs are read only.
+    $env:PATH = (Split-Path $inputs.go) + ';' + (Split-Path $inputs.git) + ';' + $env:PATH
+    $env:GOROOT = $inputs.goroot
+    $env:GOENV = 'off'
+    $env:GOTOOLCHAIN = 'local'
+    $env:GOFLAGS = '-mod=readonly'
+    $env:GOWORK = 'off'
+    $env:GOPROXY = 'off'
+    $env:GOSUMDB = 'off'
+    $env:GOPRIVATE = ''
+    $env:GONOSUMDB = ''
+    $env:GOCACHE = Join-Path $fixture 'go-cache'
+    $env:GOMODCACHE = Join-Path $fixture 'go-mod-cache'
+    $null = [IO.Directory]::CreateDirectory($env:GOCACHE)
+    $null = [IO.Directory]::CreateDirectory($env:GOMODCACHE)
+    foreach ($path in @((Join-Path $inputs.source 'internal/testfixture/scriptcmd/main_windows.go'),
+        (Join-Path $inputs.goroot 'src/runtime/runtime.go'), $inputs.go,
+        (Join-Path $inputs.goroot 'pkg/tool/windows_amd64/compile.exe'), (Join-Path $inputs.goroot 'pkg/tool/windows_amd64/link.exe'))) {
+        $null = Get-FileHash -Algorithm SHA256 -LiteralPath $path
+    }
+    $ownerEvidence = Join-Path $fixture 'msys-evidence'
+    $null = [IO.Directory]::CreateDirectory($ownerEvidence)
     try {
-        foreach ($variant in @('baseline', 'candidate')) {
-            $pairBinary = Join-Path $PSScriptRoot "temp-$variant.test.exe"
-            Invoke-TempBinary $pairBinary @('-test.list=.') "temp-$variant.inventory" 15000
-            if ((Get-Content (Join-Path $fixture "temp-$variant.inventory.stdout") -Raw) -cnotmatch '(?m)^TestTerminalEnvironmentPreservesOrdinaryUserTEMP\r?$') { throw "Frozen TEMP test missing: $variant" }
-            Invoke-TempBinary $pairBinary @('-test.run=^TestTerminalEnvironmentPreservesOrdinaryUserTEMP$', '-test.v=test2json', '-test.count=1', '-test.timeout=1m') "temp-$variant" 90000
+        & $controller -Evidence $ownerEvidence -FixtureBinary (Join-Path $PSScriptRoot 'temp-candidate.test.exe') -Source $inputs.source -ExpectedSources $inputs.sources -Go $inputs.go -Git $inputs.git -Operation {
+            & $binary '-test.list=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' 1> inventory.stdout 2> inventory.stderr
+            $inventoryExit = $LASTEXITCODE
+            Publish-Text 'inventory.exit' ([string]$inventoryExit)
+            foreach ($name in @('inventory.stdout', 'inventory.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
+            if ($inventoryExit -ne 0 -or (Get-Content inventory.stdout -Raw).Trim() -cne 'TestOrdinaryWindowsUserDiscoversSelectedSkills') { throw 'Exact named test inventory required' }
+            & $binary '-test.run=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' '-test.v=test2json' '-test.count=1' '-test.timeout=5m' 1> test.stdout 2> test.stderr
+            $testExit = $LASTEXITCODE
+            Publish-Text 'test.exit' ([string]$testExit)
+            foreach ($name in @('test.stdout', 'test.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
+            Publish-TempHashes 'temp-binaries.json'
+            try {
+                foreach ($variant in @('baseline', 'candidate')) {
+                    $pairBinary = Join-Path $PSScriptRoot "temp-$variant.test.exe"
+                    Invoke-TempBinary $pairBinary @('-test.list=.') "temp-$variant.inventory" 15000
+                    if ((Get-Content (Join-Path $fixture "temp-$variant.inventory.stdout") -Raw) -cnotmatch '(?m)^TestTerminalEnvironmentPreservesOrdinaryUserTEMP\r?$') { throw "Frozen TEMP test missing: $variant" }
+                    Invoke-TempBinary $pairBinary @('-test.run=^TestTerminalEnvironmentPreservesOrdinaryUserTEMP$', '-test.v=test2json', '-test.count=1', '-test.timeout=1m') "temp-$variant" 90000
+                }
+            } finally {
+                try { Publish-TempHashes 'temp-binaries-after.json' } finally {
+                    $after = & $whoami /priv /fo csv /nh
+                    if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
+                    Publish-Text 'privileges-after.log' ($after -join "`n")
+                }
+            }
+            if ($testExit -ne 0) { throw 'Selected native test failed' }
         }
     } finally {
-        try { Publish-TempHashes 'temp-binaries-after.json' } finally {
-            $after = & $whoami /priv /fo csv /nh
-            if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
-            Publish-Text 'privileges-after.log' ($after -join "`n")
-        }
+        foreach ($file in Get-ChildItem -LiteralPath $ownerEvidence -File) { Publish-Evidence $file.Name ([IO.File]::ReadAllBytes($file.FullName)) }
+        $after = & $whoami /priv /fo csv /nh
+        if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
+        if ((Get-Acl -LiteralPath $fixture).Sddl -cne $actual.Sddl -or (Get-Acl -LiteralPath $profilePath).Sddl -cne $profileAcl.Sddl) { throw 'Actor fixture/profile ACL changed' }
     }
-    if ($testExit -ne 0) { throw 'Selected native test failed' }
     Publish-Text 'actor-complete.log' 'Native test process returned; streams drained'
 } catch {
     [Console]::Error.WriteLine($_.ToString())

@@ -662,3 +662,39 @@ runner cannot establish ordinary-user operation. The complete elevated Windows
 suite still has unrelated failures; this selected actor proof does not establish
 full Windows readiness, provider authentication or beta release readiness.
 All other Task43 full-Windows obligations remain open.
+
+
+## Pending run-owned MSYS temporary-directory qualification
+
+The Windows caller harness now establishes a real Git MSYS keeper before the
+complete, unchanged `go test ./... -json -count=1 -timeout=20m` invocation. It
+checks `cygpath -w /tmp` against the caller's stable TEMP using native volume and
+file identity, and retains the original process handle until Go and both output
+streams have finished. It does not change that directory's ACL or remove it.
+An unexpected existing mapping fails setup without touching foreign processes.
+
+Before the suite, a synchronized counterfactual starts independent installed
+MSYS actors A and B with distinct temporary roots. A exits and is joined before
+its root is retired while B stays alive. The unchanged compiled literal test
+must fail specifically because its otherwise exact result includes the missing
+`/tmp` warning. The positive arm repeats that sequence and binary under the
+caller's earlier keeper; the backing identity must survive and the original
+literal test must pass. The same keeper then covers the actual suite. Original
+inplace tests and both frozen TEMP tests, including `later_original_literal`,
+must explicitly pass; unrelated failures and skips still block qualification.
+
+The existing disposable ordinary-account route reuses its candidate test binary
+and the same controller. It exposes read-only original source and the pinned
+compiler, with private writable Go caches and process-local offline settings.
+It retains the original skills and paired TEMP proofs, and additionally runs
+both frozen TEMP tests, the original literal test and the original live-session
+inplace test under the verified ordinary primary actor and whole-run lease.
+These bounded operation fixtures do not replace the administrator source job's
+complete original suite or its privileged adversarial cases. Raw streams, JSON,
+exits, handle observations and before/after source/tool/binary hashes are retained.
+
+This harness change has **not yet been natively qualified**. The recorded native
+full-suite failure predates it; macOS inspection cannot establish PowerShell
+parsing, the new controlled negative/positive result, ordinary-account runtime
+success or a complete Windows pass. Those checks remain pending on Windows CI.
+Task44 provider operation and release readiness remain open.
