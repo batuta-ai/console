@@ -131,7 +131,7 @@ function Read-ActorLine($Actor) {
 }
 function Send-Actor($Actor, [string]$Request) {
     Assert-Alive $Actor
-    Await-Task ($Actor.Process.StandardInput.WriteLineAsync($Request))
+    Await-Task ($Actor.Process.StandardInput.WriteAsync($Request + "`n"))
     Await-Task ($Actor.Process.StandardInput.FlushAsync())
 }
 function Observe-Actor($Actor, [string]$Phase, [string]$ExpectedPath, [string]$ExpectedIdentity, [bool]$Retired = $false) {
