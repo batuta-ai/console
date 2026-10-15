@@ -1,0 +1,538 @@
+package review
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/batuta-ai/core/executor"
+)
+
+func TestReportPrintsWalkthroughAndOrdersFindings(t *testing.T) {
+	manifest := Manifest{
+		Base: "0123456789abcdef",
+		Files: []File{
+			{Path: "a.go", Selected: true, Added: 3, Deleted: 1},
+			{Path: "b.go", Selected: true, Added: 2},
+		},
+		Cohorts: []Cohort{{Files: []string{"a.go"}}, {Files: []string{"b.go"}}},
+	}
+	minor := Finding{Severity: Minor, Kind: Advisory, File: "a.go", Line: 3, Premise: "The name is vague", Path: "Rename it", Fix: "Use a precise name"}
+	blocker := Finding{Severity: Blocker, Kind: Defect, File: "b.go", Line: 7, Premise: "The build fails", Path: "Compile the package", Verdict: "Compilation stops", Fix: "Restore the symbol"}
+	report := BuildReport(manifest, []CohortResult{
+		{Cohort: 0, Files: []string{"a.go"}, Covered: true, Findings: []Finding{minor}, Suppressed: []SuppressedFinding{{}}},
+		{Cohort: 1, Files: []string{"b.go"}, Covered: true, Findings: []Finding{blocker}},
+	}, &SpecSweep{Covered: true, Results: []SpecResult{{ID: "task-1.1", Status: CriterionViolated, Path: "b.go:7"}}})
+
+	var out bytes.Buffer
+	if err := PrintReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Files: 2 selected of 2 changed (+5 -1)",
+		"Cohorts: 2",
+		"Coverage: 2/2 cohorts",
+		"blocker · b.go:7 · The build fails · Restore the symbol",
+		"minor · a.go:3 · The name is vague · Use a precise name",
+		"| task-1.1 | violated | b.go:7 |",
+		"Suppressed overlaps: 1",
+		"Verdict: REWORK",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("report is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "blocker ·") > strings.Index(text, "minor ·") {
+		t.Fatalf("findings are not most severe first:\n%s", text)
+	}
+}
+
+func TestReportMarksOversizedCohort(t *testing.T) {
+	manifest := Manifest{
+		Base:  "0123456789abcdef",
+		Files: []File{{Path: "loop/loop_test.go", Selected: true, Added: 1443}},
+		Cohorts: []Cohort{{
+			Files:        []string{"loop/loop_test.go"},
+			ChangedLines: 1443,
+			Oversized:    true,
+		}},
+	}
+	report := BuildReport(manifest, []CohortResult{{Cohort: 0, Files: []string{"loop/loop_test.go"}, Covered: true}}, nil)
+	var out bytes.Buffer
+	if err := PrintReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Cohort 1: loop/loop_test.go (1443 changed lines, oversized)"; !strings.Contains(out.String(), want) {
+		t.Fatalf("report is missing %q:\n%s", want, out.String())
+	}
+}
+
+func TestWriteArtifactsPersistsThePrintedReportVerbatim(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "review")
+	report := BuildReport(Manifest{Base: "base"}, nil, nil)
+	var printed bytes.Buffer
+	if err := PrintReport(&printed, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteArtifacts(out, report, IncrementalState{Head: "0123456789abcdef"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"manifest.json", "findings.json", "review.md", "state.json"} {
+		if _, err := os.Stat(filepath.Join(out, name)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(out, "review.md")); err != nil || !bytes.Equal(got, printed.Bytes()) {
+		t.Fatalf("review.md = %q, %v; want printed report %q", got, err, printed.Bytes())
+	}
+	var findings []Finding
+	if payload, err := os.ReadFile(filepath.Join(out, "findings.json")); err != nil || json.Unmarshal(payload, &findings) != nil {
+		t.Fatalf("findings.json is invalid: %v", err)
+	}
+}
+
+func TestUncoveredReportCannotShip(t *testing.T) {
+	report := BuildReport(Manifest{Cohorts: []Cohort{{Files: []string{"a.go"}}}}, []CohortResult{{Cohort: 0, Covered: false, Reason: "reviewer failed"}}, nil)
+	if report.Verdict != Rework {
+		t.Fatalf("verdict = %s, want REWORK", report.Verdict)
+	}
+}
+
+func TestReportEscapesControlCharacters(t *testing.T) {
+	name := "bad\x1b[2J\n\t\r\x7f\u009b.go"
+	report := BuildReport(Manifest{Files: []File{{Path: name, OldPath: name, Selected: true}}, Cohorts: []Cohort{{Files: []string{name}}}},
+		[]CohortResult{{Files: []string{name}, Covered: true, Findings: []Finding{{File: name, Line: 1, Severity: Major}}}},
+		&SpecSweep{Covered: true, Results: []SpecResult{{ID: "task-1.1", Status: CriterionSatisfied, Path: name + ":1"}}})
+	var out bytes.Buffer
+	if err := PrintReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	escaped := `bad\x1b[2J\n\t\r\x7f\u009b.go`
+	if strings.Count(out.String(), escaped) != 3 || strings.ContainsAny(out.String(), "\x1b\r\t\x7f\u009b") {
+		t.Fatalf("unsafe or ambiguous report: %q", out.String())
+	}
+	dir := t.TempDir()
+	if err := WriteArtifacts(dir, report, IncrementalState{}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Files[0].Path != name || manifest.Files[0].OldPath != name || manifest.Cohorts[0].Files[0] != name {
+		t.Fatal("manifest paths changed")
+	}
+	payload, err = os.ReadFile(filepath.Join(dir, "findings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings []Finding
+	if err := json.Unmarshal(payload, &findings); err != nil {
+		t.Fatal(err)
+	}
+	if findings[0].File != name {
+		t.Fatal("finding path changed")
+	}
+}
+
+func TestArtifactsRefuseGitlinkDestination(t *testing.T) {
+	root := reviewRepo(t)
+	source := reviewRepo(t)
+	for _, name := range []string{"manifest.json", "findings.json", "review.md", "state.json", "review_failures.json"} {
+		writeTestFile(t, source, "reports/"+name, "tracked artifact\n")
+	}
+	gitTest(t, source, "add", ".")
+	gitTest(t, source, "commit", "-qm", "artifacts")
+	gitTest(t, root, "-c", "protocol.file.allow=always", "submodule", "add", source, "module")
+	gitTest(t, root, "commit", "-qm", "submodule")
+	for _, name := range []string{"manifest.json", "findings.json", "review.md", "state.json", "review_failures.json"} {
+		writeTestFile(t, root, "module/reports/"+name, "local edits\n")
+	}
+	for _, directory := range []string{"module/reports", "module/new-reports"} {
+		out := filepath.Join(root, directory)
+		_, err := CheckArtifactPaths(root, ArtifactPaths(out, Report{}))
+		if err == nil {
+			t.Errorf("accepted gitlink destination %s", directory)
+		}
+	}
+	for _, filename := range ArtifactPaths(filepath.Join(root, "module/reports"), Report{}) {
+		payload, err := os.ReadFile(filename)
+		if err != nil || string(payload) != "local edits\n" {
+			t.Fatalf("artifact changed: %q, %v", payload, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "module/new-reports")); !os.IsNotExist(err) {
+		t.Fatalf("created destination: %v", err)
+	}
+}
+
+func uncoveredTailReport() Report {
+	attempt := SessionAttempt{Result: executor.Result{ExitCode: 2, Stdout: []byte("out\n")}}
+	manifest := Manifest{Cohorts: []Cohort{{Files: []string{"a.go"}}, {Files: []string{"b.go"}}, {Files: []string{"c.go"}}}}
+	return BuildReport(manifest, []CohortResult{
+		{Cohort: 0, Files: []string{"a.go"}, Covered: true},
+		{Cohort: 1, Files: []string{"b.go"}, Reason: "reviewer failed", Attempts: []SessionAttempt{attempt}},
+		{Cohort: 2, Files: []string{"c.go"}, Reason: "never ran"},
+	}, nil)
+}
+
+func TestArtifactPathsIncludeCohortTails(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "artifacts")
+	got := ArtifactPaths(directory, uncoveredTailReport())
+	want := []string{"manifest.json", "findings.json", "review.md", "state.json", "review_failures.json", "cohort-2.tail.txt"}
+	if len(got) != len(want) {
+		t.Fatalf("ArtifactPaths() = %v, want %v under %s", got, want, directory)
+	}
+	for i, name := range want {
+		if got[i] != filepath.Join(directory, name) {
+			t.Errorf("ArtifactPaths()[%d] = %q, want %q", i, got[i], filepath.Join(directory, name))
+		}
+	}
+}
+
+func TestReviewTailRedaction(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, in, want string }{
+		{"relative path", "edit a/b/c now", "edit a/b/c now"},
+		{"dotted relative path", "see ./x/y", "see ./x/y"},
+		{"url", "fetch https://host/path", "fetch https://host/path"},
+		{"absolute workspace path", "open /work/space/a/b.go", "open b.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := reviewOutputTail([]byte(tc.in)); got != tc.want {
+				t.Fatalf("reviewOutputTail(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWriteArtifactsPrunesStaleTails(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "art[if]acts*?")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := []string{"cohort-1.tail.txt", "cohort-7.tail.txt"}
+	kept := []string{"cohort-1.tail.txt.bak", "cohort-notes.txt", "notes.tail.txt", "cohort-9.tail.txt.d"}
+	for _, name := range append(slices.Clone(stale), kept...) {
+		writeTestFile(t, directory, name, "old\n")
+	}
+	if err := os.Mkdir(filepath.Join(directory, "cohort-8.tail.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteArtifacts(directory, uncoveredTailReport(), IncrementalState{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(directory, name)); !os.IsNotExist(err) {
+			t.Errorf("stale %s survived: %v", name, err)
+		}
+	}
+	for _, name := range kept {
+		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
+			t.Errorf("unrelated %s removed: %v", name, err)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(directory, "cohort-8.tail.txt")); err != nil || !info.IsDir() {
+		t.Errorf("directory matching the pattern was removed: %v", err)
+	}
+	payload, err := os.ReadFile(filepath.Join(directory, "cohort-2.tail.txt"))
+	if err != nil || !strings.Contains(string(payload), "out") {
+		t.Fatalf("current tail = %q, %v", payload, err)
+	}
+}
+
+func TestIncrementalReviewPrunesStaleTailInsideGuard(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := []string{"cohort-1.tail.txt", "cohort-7.tail.txt"}
+	for _, name := range stale {
+		writeTestFile(t, directory, name, "old\n")
+	}
+	if err := os.Mkdir(filepath.Join(directory, "cohort-8.tail.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, directory, "cohort-notes.txt", "keep\n")
+	guard := append(ArtifactPaths(directory, Report{}), ExistingTailPaths(directory)...)
+	if err := WriteArtifacts(directory, uncoveredTailReport(), IncrementalState{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		filename := filepath.Join(directory, name)
+		if _, err := os.Stat(filename); !os.IsNotExist(err) {
+			t.Fatalf("stale %s survived: %v", name, err)
+		}
+		if !slices.Contains(guard, filename) {
+			t.Errorf("pruned %s is outside the guard %v", name, guard)
+		}
+	}
+	for _, filename := range guard {
+		if strings.HasSuffix(filename, "cohort-8.tail.txt") || strings.HasSuffix(filename, "cohort-notes.txt") {
+			t.Errorf("guard lists a file the review never prunes: %s", filename)
+		}
+	}
+}
+
+func TestReportFindingsNeverNull(t *testing.T) {
+	t.Parallel()
+	report := BuildReport(Manifest{Base: "base"}, nil, nil)
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["findings"]); got != "[]" {
+		t.Errorf("report findings = %s, want []", got)
+	}
+	out := filepath.Join(t.TempDir(), "review")
+	if err := WriteArtifacts(out, report, IncrementalState{}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(out, "findings.json"))
+	if err != nil || strings.TrimSpace(string(written)) != "[]" {
+		t.Errorf("findings.json = %q, %v; want []", written, err)
+	}
+}
+
+func reviewFailuresReport() Report {
+	manifest := Manifest{Cohorts: []Cohort{{Files: []string{"a.go"}}, {Files: []string{"b.go"}}, {Files: []string{"c.go"}}}}
+	failed := SessionAttempt{Result: executor.Result{ExitCode: 2, Stdout: []byte("out line\n"), Stderr: []byte("boom\n")}}
+	clean := SessionAttempt{Result: executor.Result{Stdout: []byte("no verdict\n")}}
+	spec := &SpecSweep{Reason: "sweep failed", Attempts: []SessionAttempt{failed}}
+	return BuildReport(manifest, []CohortResult{
+		{Cohort: 0, Files: []string{"a.go"}, Covered: true},
+		{Cohort: 1, Files: []string{"b.go"}, Reason: "reviewer failed", Attempts: []SessionAttempt{clean, failed}},
+		{Cohort: 2, Files: []string{"c.go"}, Reason: "never ran"},
+	}, spec)
+}
+
+func TestReportReviewFailures(t *testing.T) {
+	t.Parallel()
+	if got := BuildReport(Manifest{}, nil, nil).ReviewFailures; got == nil || len(got) != 0 {
+		t.Errorf("complete coverage ReviewFailures = %#v, want empty non-nil list", got)
+	}
+	exit := 2
+	got := reviewFailuresReport().ReviewFailures
+	if len(got) != 3 {
+		t.Fatalf("ReviewFailures = %+v, want 3 entries", got)
+	}
+	cases := []struct {
+		scope    string
+		reason   string
+		exitCode *int
+		tail     string
+	}{
+		{"1", "reviewer failed", &exit, "boom"},
+		{"2", "never ran", nil, ""},
+		{"spec", "sweep failed", &exit, "boom"},
+	}
+	for i, tc := range cases {
+		failure := got[i]
+		if failure.Kind != "operational" || failure.Cohort != tc.scope || failure.Reason != tc.reason {
+			t.Errorf("failure %d = %+v, want operational/%s/%s", i, failure, tc.scope, tc.reason)
+		}
+		if (failure.ExitCode == nil) != (tc.exitCode == nil) || (tc.exitCode != nil && *failure.ExitCode != *tc.exitCode) {
+			t.Errorf("failure %d exit code = %v, want %v", i, failure.ExitCode, tc.exitCode)
+		}
+		if !strings.Contains(failure.Tail, tc.tail) || (tc.tail == "" && failure.Tail != "") {
+			t.Errorf("failure %d tail = %q, want it to contain %q", i, failure.Tail, tc.tail)
+		}
+	}
+	payload, err := json.Marshal(got[0])
+	if err != nil || !strings.Contains(string(payload), `"exit_code":2`) || !strings.Contains(string(payload), `"cohort":"1"`) {
+		t.Errorf("failure JSON = %s, %v", payload, err)
+	}
+}
+
+func TestWriteArtifactsReviewFailures(t *testing.T) {
+	t.Parallel()
+	read := func(report Report) []ReviewFailure {
+		out := filepath.Join(t.TempDir(), "review")
+		if err := WriteArtifacts(out, report, IncrementalState{}); err != nil {
+			t.Fatal(err)
+		}
+		payload, err := os.ReadFile(filepath.Join(out, "review_failures.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var failures []ReviewFailure
+		if err := json.Unmarshal(payload, &failures); err != nil || failures == nil {
+			t.Fatalf("review_failures.json = %q, %v; want a JSON list", payload, err)
+		}
+		return failures
+	}
+	if got := read(BuildReport(Manifest{}, nil, nil)); len(got) != 0 {
+		t.Errorf("complete coverage wrote %+v, want []", got)
+	}
+	if got := read(reviewFailuresReport()); len(got) != 3 {
+		t.Errorf("uncovered review wrote %d failures, want 3", len(got))
+	}
+	if !slices.Contains(ArtifactPaths("dir", Report{}), filepath.Join("dir", "review_failures.json")) {
+		t.Error("ArtifactPaths omits review_failures.json")
+	}
+}
+
+func TestPrintReportReviewFailures(t *testing.T) {
+	t.Parallel()
+	var clean bytes.Buffer
+	if err := PrintReport(&clean, BuildReport(Manifest{}, nil, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(clean.String(), "Review failures:") {
+		t.Errorf("complete review prints a failures section:\n%s", clean.String())
+	}
+	report := reviewFailuresReport()
+	var printed bytes.Buffer
+	if err := PrintReport(&printed, report); err != nil {
+		t.Fatal(err)
+	}
+	text := printed.String()
+	section := strings.Index(text, "Review failures:\n")
+	if section < 0 {
+		t.Fatalf("no Review failures section:\n%s", text)
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != "Verdict: "+string(report.Verdict) {
+		t.Errorf("last line = %q, want the verdict line", last)
+	}
+	body := text[section:]
+	for _, want := range []string{"cohort 2 · reviewer failed · exit 2", "cohort 3 · never ran", "spec · sweep failed · exit 2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("section lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestReviewExitCode(t *testing.T) {
+	blocker := Finding{Severity: Blocker, Kind: Defect, File: "a.go", Line: 1, Premise: "Build fails", Path: "Compile", Verdict: "Stops", Fix: "Restore"}
+	major := Finding{Severity: Major, Kind: Defect, File: "a.go", Line: 1, Premise: "Wrong", Path: "Call", Verdict: "Fails", Fix: "Fix"}
+	failure := []ReviewFailure{{Kind: failureKindOperational, Cohort: "0", Reason: "reviewer failed"}}
+	violated := &SpecSweep{Covered: true, Results: []SpecResult{{ID: "task-1.1", Status: CriterionViolated}}}
+	satisfied := &SpecSweep{Covered: true, Results: []SpecResult{{ID: "task-1.1", Status: CriterionSatisfied}}}
+	for _, tc := range []struct {
+		name      string
+		report    Report
+		wantCode  int
+		wantState string
+	}{
+		{name: "ship", report: Report{Verdict: Ship}, wantCode: 0, wantState: "SHIP"},
+		{name: "fix before ship", report: Report{Verdict: FixBeforeShip, Findings: []Finding{major}}, wantCode: 2, wantState: "FIX_BEFORE_SHIP"},
+		{name: "rework from blocker", report: Report{Verdict: Rework, Findings: []Finding{blocker}}, wantCode: 3, wantState: "REWORK"},
+		{name: "blocker with failures", report: Report{Verdict: Rework, Findings: []Finding{blocker}, ReviewFailures: failure}, wantCode: 3, wantState: "REWORK"},
+		{name: "violated criterion with failures", report: Report{Verdict: Rework, Spec: violated, ReviewFailures: failure}, wantCode: 3, wantState: "REWORK"},
+		{name: "failures only", report: Report{Verdict: Rework, ReviewFailures: failure}, wantCode: 4, wantState: "review_incomplete"},
+		{name: "major and satisfied criterion with failures", report: Report{Verdict: Rework, Findings: []Finding{major}, Spec: satisfied, ReviewFailures: failure}, wantCode: 4, wantState: "review_incomplete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, state := ReviewExitCode(tc.report)
+			if code != tc.wantCode || state != tc.wantState {
+				t.Fatalf("ReviewExitCode = %d %q, want %d %q", code, state, tc.wantCode, tc.wantState)
+			}
+		})
+	}
+}
+
+func TestReviewFailureTailRawFallback(t *testing.T) {
+	t.Parallel()
+	attempts := []SessionAttempt{{Result: executor.Result{
+		ExitCode:  1,
+		RawStdout: []byte("raw line one\nraw line two\nAPI_KEY=sk-secret-value\n"),
+		Stderr:    []byte("stderr note\n"),
+	}}}
+	failure := newReviewFailure("1", "reviewer failed", attempts)
+	if !strings.Contains(failure.Tail, "raw line two") || !strings.Contains(failure.Tail, "stderr note") {
+		t.Errorf("tail = %q, want raw stdout and stderr", failure.Tail)
+	}
+	if strings.Contains(failure.Tail, "sk-secret-value") {
+		t.Errorf("tail = %q, want secret lines dropped", failure.Tail)
+	}
+	big := strings.Repeat("0123456789abcdef\n", 600)
+	failure = newReviewFailure("1", "reviewer failed", []SessionAttempt{{Result: executor.Result{RawStdout: []byte(big)}}})
+	if len(failure.Tail) == 0 || len(failure.Tail) > 4096 {
+		t.Errorf("tail length = %d, want within (0, 4096]", len(failure.Tail))
+	}
+}
+
+func TestReviewFailureTailSeparateStreams(t *testing.T) {
+	t.Parallel()
+	attempts := []SessionAttempt{{Result: executor.Result{
+		ExitCode: 1,
+		Stdout:   []byte("progress line"),
+		Stderr:   []byte("API_KEY=sk-secret-value\nstderr note\n"),
+	}}}
+	failure := newReviewFailure("1", "reviewer failed", attempts)
+	if strings.Contains(failure.Tail, "sk-secret-value") || strings.Contains(failure.Tail, "API_KEY") {
+		t.Errorf("tail = %q, want the stderr secret dropped", failure.Tail)
+	}
+	if want := "progress line\nstderr note"; failure.Tail != want {
+		t.Errorf("tail = %q, want %q", failure.Tail, want)
+	}
+}
+
+func TestReviewFailureTailRawSecrets(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		line   string
+		secret string
+	}{
+		{name: "assignment inside a string", line: `{"type":"text","text":"API_KEY=sk-example"}`, secret: "sk-example"},
+		{name: "token field", line: `{"type":"auth","token":"tok-example"}`, secret: "tok-example"},
+		{name: "api_key field", line: `{"api_key": "key-example"}`, secret: "key-example"},
+		{name: "password field upper case", line: `{"PASSWORD":"pw-example"}`, secret: "pw-example"},
+		{name: "secret field", line: `{"event":{"Secret":"shh-example"}}`, secret: "shh-example"},
+		{name: "escaped field", line: `{"text":"{\"token\":\"nested-example\"}"}`, secret: "nested-example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			attempts := []SessionAttempt{{Result: executor.Result{
+				ExitCode:  1,
+				RawStdout: []byte(`{"type":"text","text":"kept event"}` + "\n" + tc.line + "\n"),
+				Stderr:    []byte("stderr note\n"),
+			}}}
+			failure := newReviewFailure("1", "reviewer failed", attempts)
+			if strings.Contains(failure.Tail, tc.secret) || strings.Contains(failure.Tail, tc.line) {
+				t.Errorf("tail = %q, want the secret line dropped", failure.Tail)
+			}
+			if !strings.Contains(failure.Tail, "kept event") || !strings.Contains(failure.Tail, "stderr note") {
+				t.Errorf("tail = %q, want the other lines kept", failure.Tail)
+			}
+		})
+	}
+}
+
+func TestReviewFailureTailDecoded(t *testing.T) {
+	t.Parallel()
+	attempts := []SessionAttempt{{Result: executor.Result{
+		ExitCode:  1,
+		Stdout:    []byte("decoded text\n"),
+		RawStdout: []byte("raw-json-event\n"),
+		Stderr:    []byte("stderr note\n"),
+	}}}
+	failure := newReviewFailure("1", "reviewer failed", attempts)
+	if !strings.Contains(failure.Tail, "decoded text") || !strings.Contains(failure.Tail, "stderr note") {
+		t.Errorf("tail = %q, want decoded stdout and stderr", failure.Tail)
+	}
+	if strings.Contains(failure.Tail, "raw-json-event") {
+		t.Errorf("tail = %q, want raw stdout ignored when decoded has content", failure.Tail)
+	}
+}

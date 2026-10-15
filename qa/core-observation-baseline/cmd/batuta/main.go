@@ -1,0 +1,1641 @@
+// Command batuta provides the deterministic tools used by the Batuta
+// conducting cycle: capability discovery, environment inspection, delivery
+// execution and audit trails, and standalone verification gates. Hosts probe
+// `batuta capabilities` before relying on a command.
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime/debug"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode"
+
+	"github.com/batuta-ai/core/executor"
+	"github.com/batuta-ai/core/gates"
+	"github.com/batuta-ai/core/inventory"
+	"github.com/batuta-ai/core/inventory/adapters"
+	"github.com/batuta-ai/core/judge"
+	"github.com/batuta-ai/core/loop"
+	"github.com/batuta-ai/core/publication"
+	"github.com/batuta-ai/core/review"
+	"github.com/batuta-ai/core/routing"
+	"github.com/batuta-ai/core/worktree"
+)
+
+const usage = `batuta — the conductor's deterministic tools
+
+Usage:
+  batuta version
+  batuta capabilities
+  batuta inventory [--workspace <dir>] [--timeout <duration>]
+  batuta doctor    [--workspace <dir>] [--json] [--timeout <duration>]
+  batuta dispatch  --brief-file <path> --executor <id> --model <id> [--effort <value>] --cwd <worktree> [--transport cli|acp|auto] [--timeout 45m] [--preflight]
+  batuta loop      [--dry-run] [--parallel N] [--skills <dir>] [--transport cli|acp|auto] [<plan>]
+  batuta loop      --roadmap [--dry-run] [--resume <delivery>]
+  batuta loop      --resume <delivery> | --answer <task> "<text>" | --abandon <delivery>
+  batuta loop      --recover <delivery> <task> | --reconcile <delivery> <task>
+  batuta loop      --prune [--apply] [--workspace <dir>]
+  batuta loop      --dashboard [--watch] [--interval 500ms] [<delivery>]
+  batuta loop      --supervise <delivery> --cursor <absolute-path> [--once] [--interval 500ms] [--notify desktop|<absolute-directory>] [--policy <path>]
+  batuta loop      --supervise <delivery> --review-status
+  batuta loop      --supervise <delivery> --review-judgment accept|reject --review-id <id> --review-digest <sha256:digest> --rationale "<reason>"
+  batuta watch     [<delivery>] [--interval 500ms] [--once] [--lang en|pt] [--ascii]
+  batuta trail     [<delivery>]
+  batuta review    [--base <ref>] [--worktree] [--spec <plan>] [--cohort-files N] [--parallel N] [--reviewer <executor/model>] [--full] [--out <dir>]
+  batuta council   --plan <file> [--parallel N] [--timeout <duration>] [--out <dir>]
+  batuta judge     ask --state-file <path> --questions-file <path> [--decision <name>] [--config <path>] [--workspace <dir>] [--base-url <url>]
+  batuta judge     probe [--config <path>] [--workspace <dir>] [--base-url <url>]
+  batuta gate tree --snapshot [--dir <d>]
+  batuta gate tree --before '<json>' [--dir <d>]
+  batuta gate tests --command "<cmd>" [--dir <d>] [--timeout <duration>]
+  batuta gate scope --base <sha-or-ref> --scope <a,b,c> [--dir <d>]
+  batuta gate proofs --accept "<criterion → proof>;..." [--dir <d>] [--timeout <duration>]
+  batuta gate verifier --criteria <n> [--proofs '<json array>'] < output
+
+capabilities  The subcommands this binary ships, as JSON. Skills probe it
+           before calling gate or loop; an older binary fails the probe.
+
+dispatch   One bounded external attempt, compact JSON and private artifacts in
+           the temporary directory. Exit 0 completed, 1 worker failed,
+           2 invalid/unavailable, 3 waiting_input, 4 rate_limited,
+           5 uncertain, 6 executor_incapable (--preflight), 124 timed out,
+           130 interrupted. Evidence is retained;
+           uncertain work is never replayed. Run acceptance gates separately.
+           CLI is the default. ACP requires qualified runtime evidence;
+           this release has no qualified ACP launches. Auto falls back to CLI
+           before submission. Native tools belong to the interactive host.
+supervise  Foreground observation, then full review of a completed delivery.
+           Normal new/resume/answer/roadmap runs include supervision and full
+           review after finalized done. --supervise attaches separately.
+           Waiting makes no model calls; --policy remains opt-in. Implementation
+           completion and SHIP do not grant conductor acceptance or Git approval.
+           Normal loop stdout retains worker logs; observer JSON goes to stderr.
+           --supervise emits JSON on stdout and continuation logs on stderr.
+           Normal cursors live at .batuta/runs/supervision/<delivery>.json.
+           --review-status prints the progression gate and exact evidence digest
+           without launching review. --review-judgment records accept/reject with
+           exact --review-id, --review-digest and nonempty --rationale; it cannot
+           combine with execution, policy or observer flags. A rejection remains
+           blocked. Judgment grants progression only, never execution permission.
+           --interval is bounded to 100ms..1m; Ctrl-C/SIGTERM stops cleanly.
+           --cursor persists unread events; --once performs one observation.
+           Each observation handles up to 32 events, with overflow in the cursor;
+           event output is bounded to 4 KiB. Continuous mode exits on completion.
+           Local sink calls have a five-second timeout.
+           --notify writes private event JSON to an existing local directory,
+           or uses installed desktop notifications on macOS/Linux. No sink or
+           failed delivery leaves events pending. Desktop delivery is at least
+           once across crashes; stable event IDs support sink deduplication.
+           --policy accepts bounded JSON actions: continue_approved_task for a
+           scoped worker answer and routed runner continuation, or propose_correction
+           after operator judgment of
+           FIX_BEFORE_SHIP/REWORK. Without policy, review still runs but no answer
+           or correction is authorized. Review uses a fixed one-hour timeout;
+           ownership-wait interruption returns before a job transition, while
+           probe or snapshot interruption is failed/execution_failed. Cancellation
+           or timeout while the engine runs is uncertain/cleanup_unresolved;
+           post-exit verification may be failed/execution_failed. Recovery from
+           durable launching is uncertain with no outcome necessarily set. Neither
+           uncertain case is replayed automatically; descendant cleanup is not
+           claimed when the host cannot verify it. job.json, the spec and source
+           are under .batuta/reviews/supervision/<job-id>/; engine output is in its
+           artifacts/ subdirectory. No background service
+           is installed; the process must remain running. Local output does not
+           promise an asynchronous chat notification.
+
+loop       The mechanical conductor over an approved plan
+           (.batuta/plans/<slug>.md): routing from .batuta/routing.md, one
+           executor session per task in its own worktree through the
+           adapter, the four gates, retry then escalation, one commit per
+           task integrated onto the checked-out branch, everything
+           journaled under .batuta/journal/. Exit 0 after implementation and
+           required review clear progression; 2 blocked or review_blocked;
+           3 waiting for an answer; 4 waiting for an approved roadmap plan;
+           1 runtime error; 130 canceled. Missing, failed, uncertain or incomplete
+           review cannot return unreviewed success. Resume retains review budgets.
+           --recover runs the gates of a normal attempt in the worktree of a task
+           parked in waiting_input, records a candidate and continues the delivery;
+           when a gate fails it prints the failures on stderr, exits 2 and leaves
+           the task waiting. --reconcile prints, read-only, how the task's parked
+           ref merges into the delivery branch as TSV lines (ref, status, file,
+           conflict); it exits 2 on conflict.
+           --prune prints, read-only, the task worktrees no open delivery owns as
+           TSV lines (path, branch, slug, state: orphan or missing); --prune
+           --apply parks each orphan under refs/batuta/parked and removes it,
+           printing the final state (removed, missing or skipped); it exits 2
+           when any line is skipped. --apply needs --prune.
+           Dry-run, dashboard, reconcile and abandon do not launch reviewers.
+           --transport selects the task transport (default cli); verification
+           stays independently CLI.
+watch      Live dashboard of a delivery (the most recent open one by
+           default). --interval sets the journal poll interval; --once prints a
+           snapshot; --lang selects labels; --ascii uses ASCII borders and
+           status glyphs. Keys: Up/Down and PgUp/PgDn scroll, f follows the
+           active task, r opens the answer editor, R shows the answer command,
+           d opens the delivery picker, o opens the log, l changes focus,
+           ? shows the legend, q quits, and the mouse wheel scrolls the
+           focused panel. In the editor, ctrl+enter, alt+enter or ctrl+s
+           submits.
+trail      One line per journal record of a delivery (the latest by
+           default).
+review     Read-only, cohort-based delivery review through the configured
+           executor adapter. Writes manifest.json, findings.json, review.md
+           and state.json; exits 0 SHIP, 2 FIX_BEFORE_SHIP, 3 REWORK,
+           4 review_incomplete (a cohort failed or the spec sweep is uncovered;
+           review_failures.json names it).
+           The cohort driver uses CLI independently of dispatch transport.
+
+council    Asks the routed executors, through their read-only lines, whether a
+           plan is ready to approve: independent critiques, anonymous
+           cross-review with a ranking, then a chairman synthesis. Writes
+           council.json and council.md under .batuta/councils/<date>-<plan
+           slug>/ (--out overrides) and prints council.md. Exit 0 APPROVE,
+           2 REVISE, 4 incomplete (fewer than two critiques parsed),
+           1 an error before a report. The council never approves a plan.
+
+judge      Manual probes of a System One decision model (Jev): typed noul,
+           choice and score questions over a bounded state. Config lives in
+           .batuta/judge.json; BATUTA_JUDGE selects another file or off.
+           ask prints the Response as indented JSON. probe sends one noul
+           question to confirm the configuration works. Exit 0 answered,
+           2 unavailable — the judge never approves, clears a gate, answers
+           a question or widens a scope, so unavailable keeps today's
+           deterministic rule — and 1 usage or config error.
+
+inventory  Redacted snapshot of the executor CLIs installed on this machine
+           (codex, opencode, cursor-agent, claude, agy, compozy): versions,
+           provider/model bindings, credential state, diagnostics. JSON.
+doctor     What a conductor needs to know before the first cycle: which
+           executors run, whether the workspace is a git repository, and
+           whether the Batuta skills are installed. Human text, or --json.
+`
+
+func main() {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		var exit *ExitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code)
+		}
+		fmt.Fprintln(os.Stderr, "batuta:", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return errors.New("a subcommand is required")
+	}
+	switch args[0] {
+	case "version", "--version", "-v":
+		fmt.Fprintln(stdout, version())
+		return nil
+	case "capabilities":
+		return runCapabilities(stdout)
+	case "inventory":
+		return runInventory(args[1:], stdout)
+	case "doctor":
+		return runDoctor(args[1:], stdout)
+	case "dispatch":
+		return runDispatch(args[1:], stdout, stderr)
+	case "loop":
+		return runLoop(args[1:], stdout, stderr)
+	case "watch":
+		return runWatch(args[1:], stdout, stderr)
+	case "trail":
+		return runTrail(args[1:], stdout)
+	case "review":
+		return runReview(args[1:], stdout, stderr)
+	case "council":
+		return runCouncil(args[1:], stdout, stderr)
+	case "judge":
+		return runJudge(args[1:], stdout, stderr)
+	case "gate":
+		return runGate(args[1:], stdout)
+	case "help", "--help", "-h":
+		fmt.Fprint(stdout, usage)
+		return nil
+	default:
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("unknown subcommand %q", args[0])
+	}
+}
+
+// buildVersion is set by goreleaser (-X main.buildVersion={{ .Tag }}); a
+// `go install` build reports the module version from build info instead.
+var buildVersion string
+
+func version() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "devel"
+}
+
+// commands lists every capability this binary ships; skills read this list,
+// never the usage text.
+var commands = []string{"capabilities", "council", "dispatch", "doctor", "gate", "inventory", "judge", "loop", "review", "roadmap", "trail", "version", "watch"}
+
+type capabilities struct {
+	Version  string   `json:"version"`
+	Commands []string `json:"commands"`
+}
+
+func runCapabilities(stdout io.Writer) error {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(capabilities{Version: version(), Commands: commands})
+}
+
+// executables resolves the executor CLIs on PATH (and through mise when
+// present), the same way the CompozyOS extension does.
+type executables struct {
+	Compozy, Codex, OpenCode, Cursor, Claude, Agy string
+}
+
+func discoverExecutables() executables {
+	cursor := optionalExecutable("cursor-agent")
+	if cursor == "" {
+		cursor = optionalExecutable("agent")
+	}
+	return executables{
+		Compozy: optionalExecutable("compozy"), Codex: optionalExecutable("codex"),
+		OpenCode: optionalExecutable("opencode"), Cursor: cursor,
+		Claude: optionalExecutable("claude"), Agy: optionalExecutable("agy"),
+	}
+}
+
+func optionalExecutable(name string) string {
+	if path, err := exec.LookPath(name); err == nil {
+		if abs, err := filepath.Abs(path); err == nil {
+			return abs
+		}
+	}
+	mise, err := exec.LookPath("mise")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, mise, "which", name).Output()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Clean(strings.TrimSpace(string(output)))
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
+}
+
+func workspaceRoot(flagValue string) (string, error) {
+	root := flagValue
+	if root == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		root = cwd
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("workspace %q: %w", root, err)
+	}
+	return resolved, nil
+}
+
+func collect(ctx context.Context, root string) (inventory.InventorySnapshot, executables, error) {
+	found := discoverExecutables()
+	snapshot, err := collectWithRunner(ctx, root, found, publication.ExecRunner{})
+	return snapshot, found, err
+}
+
+func collectWithRunner(ctx context.Context, root string, found executables, runner publication.CommandRunner) (inventory.InventorySnapshot, error) {
+	collector, err := adapters.NewCollector(runner, adapters.CollectorOptions{
+		TrustedWorkspace: root, WorkspaceID: "local",
+		CompozyExecutable: found.Compozy, CodexExecutable: found.Codex,
+		OpenCodeExecutable: found.OpenCode, CursorExecutable: found.Cursor,
+		ClaudeExecutable: found.Claude, AgyExecutable: found.Agy,
+		ProbeParallelism: 8,
+	})
+	if err != nil {
+		return inventory.InventorySnapshot{}, err
+	}
+	return collector.Collect(ctx)
+}
+
+func runInventory(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("inventory", flag.ContinueOnError)
+	workspace := flags.String("workspace", "", "workspace directory (default: current directory)")
+	timeout := flags.Duration("timeout", 60*time.Second, "overall probe timeout")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	root, err := workspaceRoot(*workspace)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	snapshot, _, err := collect(ctx, root)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(inventory.Redact(snapshot))
+}
+
+type doctorReport struct {
+	Workspace      string                `json:"workspace"`
+	GitRepository  bool                  `json:"git_repository"`
+	GitToplevel    string                `json:"git_toplevel,omitempty"`
+	GitState       string                `json:"git_state,omitempty"`
+	GitClean       *bool                 `json:"git_clean,omitempty"`
+	GitExecutable  string                `json:"git_executable,omitempty"`
+	Commands       []string              `json:"commands"`
+	SkillsPath     string                `json:"skills_path,omitempty"`
+	Executors      []doctorExecutor      `json:"executors"`
+	Digest         string                `json:"inventory_digest"`
+	ProbeDurations []doctorProbeDuration `json:"-"`
+}
+
+type doctorProbeDuration struct {
+	Executor string
+	Probe    string
+	Duration time.Duration
+}
+
+type doctorProbeRunner struct {
+	runner            publication.CommandRunner
+	executorByCommand map[string]string
+	mu                sync.Mutex
+	durations         []doctorProbeDuration
+}
+
+func (r *doctorProbeRunner) Run(ctx context.Context, command publication.Command) (publication.CommandResult, error) {
+	started := time.Now()
+	result, err := r.runner.Run(ctx, command)
+	duration := doctorProbeDuration{
+		Executor: r.executorByCommand[command.Executable],
+		Probe:    strings.Join(command.Args, " "),
+		Duration: time.Since(started),
+	}
+	r.mu.Lock()
+	r.durations = append(r.durations, duration)
+	r.mu.Unlock()
+	return result, err
+}
+
+func (r *doctorProbeRunner) snapshot() []doctorProbeDuration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	durations := append([]doctorProbeDuration(nil), r.durations...)
+	sort.Slice(durations, func(i, j int) bool {
+		if durations[i].Executor != durations[j].Executor {
+			return durations[i].Executor < durations[j].Executor
+		}
+		return durations[i].Probe < durations[j].Probe
+	})
+	return durations
+}
+
+func doctorExecutorCommands(found executables) map[string]string {
+	commands := make(map[string]string)
+	for executor, command := range map[string]string{
+		"compozy": found.Compozy, "codex": found.Codex, "opencode": found.OpenCode,
+		"cursor-agent": found.Cursor, "claude": found.Claude, "agy": found.Agy,
+	} {
+		if command != "" {
+			commands[command] = executor
+		}
+	}
+	return commands
+}
+
+type doctorExecutor struct {
+	ID           string   `json:"executor_id"`
+	Executable   string   `json:"executable,omitempty"`
+	Availability string   `json:"availability"`
+	Version      string   `json:"version,omitempty"`
+	Models       int      `json:"models"`
+	Credential   string   `json:"credential_state,omitempty"`
+	Diagnostics  []string `json:"diagnostics,omitempty"`
+}
+
+func runDoctor(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	workspace := flags.String("workspace", "", "workspace directory (default: current directory)")
+	asJSON := flags.Bool("json", false, "machine-readable output")
+	timeout := flags.Duration("timeout", 60*time.Second, "overall probe timeout")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	root, err := workspaceRoot(*workspace)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	found := discoverExecutables()
+	probeRunner := &doctorProbeRunner{runner: publication.ExecRunner{}, executorByCommand: doctorExecutorCommands(found)}
+	snapshot, err := collectWithRunner(ctx, root, found, probeRunner)
+	if err != nil {
+		return err
+	}
+	report := doctorReport{Workspace: root, Digest: snapshot.Digest, Commands: commands, ProbeDurations: probeRunner.snapshot()}
+	if git, err := exec.LookPath("git"); err == nil {
+		report.GitExecutable = git
+		// The probe context may already be spent by collect; git gets its own.
+		gitCtx, cancelGit := context.WithTimeout(context.Background(), 5*time.Second)
+		report.GitToplevel, report.GitState, report.GitClean = inspectGit(gitCtx, git, root)
+		cancelGit()
+		report.GitRepository = report.GitToplevel != ""
+	}
+	report.SkillsPath = findSkills(root)
+	paths := map[inventory.ExecutorID]string{
+		"compozy": found.Compozy, "codex": found.Codex, "opencode": found.OpenCode,
+		"cursor-agent": found.Cursor, "claude": found.Claude, "agy": found.Agy,
+	}
+	for _, executor := range snapshot.Executors {
+		entry := doctorExecutor{
+			ID:           string(executor.ID),
+			Executable:   paths[executor.ID],
+			Availability: string(executor.Availability),
+			Credential:   string(executor.CredentialState),
+		}
+		entry.Version, entry.Models = summarizeEvidence(executor)
+		for _, diagnostic := range executor.Diagnostics {
+			entry.Diagnostics = append(entry.Diagnostics, diagnostic.Code)
+		}
+		report.Executors = append(report.Executors, entry)
+	}
+	if *asJSON {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	}
+	printDoctor(stdout, report)
+	return nil
+}
+
+// summarizeEvidence returns the probed version (first identifier of the
+// version evidence) and the number of concrete model bindings.
+func summarizeEvidence(executor inventory.ExecutorSnapshot) (string, int) {
+	models := 0
+	for _, binding := range executor.ProviderBindings {
+		if binding.ModelID != "" {
+			models++
+		}
+	}
+	if len(executor.Version.Identifiers) > 0 {
+		return executor.Version.Identifiers[0], models
+	}
+	return "", models
+}
+
+// inspectGit asks git itself whether root is inside a repository — a
+// worktree checkout has a .git file, a nested directory has none — and
+// distinguishes a clean tree from conductor-owned state and other changes.
+func inspectGit(ctx context.Context, git, root string) (toplevel, state string, clean *bool) {
+	out, err := exec.CommandContext(ctx, git, "-C", root, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", "", nil
+	}
+	toplevel = strings.TrimSpace(string(out))
+	status, err := exec.CommandContext(ctx, git, "-C", root, "status", "--porcelain").Output()
+	if err != nil {
+		return toplevel, "", nil
+	}
+	state = gitState(status)
+	isClean := state == "clean"
+	return toplevel, state, &isClean
+}
+
+func gitState(status []byte) string {
+	if len(bytes.TrimSpace(status)) == 0 {
+		return "clean"
+	}
+	for _, entry := range strings.Split(strings.TrimSpace(string(status)), "\n") {
+		if len(entry) <= 3 {
+			return "dirty"
+		}
+		for _, path := range strings.Split(strings.TrimSpace(entry[3:]), " -> ") {
+			if !worktree.IsManaged(path) {
+				return "dirty"
+			}
+		}
+	}
+	return "managed"
+}
+
+func findSkills(root string) string {
+	path, err := loop.FindSkills(root, "")
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// ExitError carries the loop's exit code: the delivery ended, and not in
+// the state that means success.
+type ExitError struct {
+	Code  int
+	State string
+}
+
+func (e *ExitError) Error() string { return "delivery " + e.State }
+
+func runDispatch(args []string, stdout, stderr io.Writer) error {
+	report := executor.DispatchReport{ExitClass: "invalid_arguments", ExitCode: 2, WorkerExitCode: -1,
+		Receipt: executor.Receipt{Submission: executor.Submission{State: executor.SubmissionNotSubmitted}, Transport: executor.Transport{Outcome: executor.TransportNotStarted}, Worker: executor.WorkerClaim{Outcome: executor.WorkerClaimUnknown}}}
+	finish := func(err error) error {
+		if err != nil {
+			fmt.Fprintln(stderr, "dispatch:", err)
+			if report.ExitCode == 0 {
+				report.ExitClass, report.ExitCode = "uncertain", 5
+			}
+		}
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			return err
+		}
+		if report.ExitCode != 0 {
+			return &ExitError{Code: report.ExitCode, State: report.ExitClass}
+		}
+		return nil
+	}
+	flags := flag.NewFlagSet("dispatch", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	briefFile := flags.String("brief-file", "", "brief file (at most 1 MiB)")
+	executorID := flags.String("executor", "", "external executor adapter ID")
+	model := flags.String("model", "", "explicit model ID")
+	effort := flags.String("effort", "", "reasoning effort")
+	cwd := flags.String("cwd", "", "worktree directory")
+	transport := flags.String("transport", "cli", "cli, acp or auto (no headless native tools)")
+	timeout := flags.Duration("timeout", 45*time.Minute, "time budget for the single attempt")
+	preflight := flags.Bool("preflight", false, "probe that the executor can run commands before the brief")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return finish(err)
+	}
+	if flags.NArg() != 0 || *briefFile == "" || *executorID == "" || *model == "" || *cwd == "" || *timeout <= 0 {
+		return finish(errors.New("dispatch requires --brief-file, --executor, --model, --cwd, a positive timeout and no positional arguments"))
+	}
+	if err := executor.ValidateTransport(*transport); err != nil {
+		return finish(err)
+	}
+	directory, err := filepath.Abs(*cwd)
+	if err != nil {
+		return finish(err)
+	}
+	info, err := os.Stat(*briefFile)
+	if err != nil {
+		return finish(err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return finish(errors.New("dispatch brief must be a regular file of at most 1 MiB"))
+	}
+	file, err := os.Open(*briefFile)
+	if err != nil {
+		return finish(err)
+	}
+	brief, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err := errors.Join(readErr, file.Close()); err != nil {
+		return finish(err)
+	}
+	skills, err := loop.FindSkills(directory, "")
+	if err != nil {
+		return finish(err)
+	}
+	adapter, err := executor.LoadAdapter(skills, *executorID)
+	if err != nil {
+		return finish(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	report, err = executor.Dispatch(ctx, executor.DispatchOptions{Adapter: adapter,
+		Request:   executor.Request{Brief: string(brief), Cwd: directory, Model: *model, Effort: *effort},
+		Transport: executor.NewNativeTransport(*transport), Timeout: *timeout, Preflight: *preflight})
+	return finish(err)
+}
+
+func runLoop(args []string, stdout, stderr io.Writer) (runErr error) {
+	flags := flag.NewFlagSet("loop", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := flags.String("workspace", "", "repository root (default: current directory)")
+	skills := flags.String("skills", "", "batuta skill directory holding adapters/ and templates/ (default: auto-detected)")
+	transport := flags.String("transport", "cli", "task transport: cli, acp or auto; verifier remains independent CLI")
+	dryRun := flags.Bool("dry-run", false, "show the waves, executors and worktrees; run nothing")
+	roadmap := flags.Bool("roadmap", false, "run the phases in .batuta/roadmap.md in order")
+	resume := flags.String("resume", "", "continue a delivery from its journal")
+	abandon := flags.String("abandon", "", "close a delivery that will not continue; ticks what integrated")
+	answer := flags.String("answer", "", "task (task_N or N) to answer; the text follows as the next argument")
+	recoverTask := flags.Bool("recover", false, "run the gates on a task parked in waiting_input: <delivery> <task>")
+	reconcile := flags.Bool("reconcile", false, "print how a task's parked ref merges into the delivery branch: <delivery> <task>")
+	prune := flags.Bool("prune", false, "print the task worktrees no open delivery owns as TSV: path, branch, slug, state")
+	apply := flags.Bool("apply", false, "with --prune, park and remove the orphaned worktrees")
+	dashboard := flags.Bool("dashboard", false, "print the state of the open deliveries as TSV")
+	watch := flags.Bool("watch", false, "redraw a live dashboard until the delivery ends")
+	supervise := flags.String("supervise", "", "observe one explicit delivery in the foreground")
+	cursor := flags.String("cursor", "", "absolute durable supervision cursor path, outside the journal")
+	once := flags.Bool("once", false, "observe supervision once, then exit")
+	notify := flags.String("notify", "", "local sink: desktop or an existing absolute directory (default: leave unread)")
+	policy := flags.String("policy", "", "explicit scoped supervision policy JSON file")
+	reviewStatus := flags.Bool("review-status", false, "inspect the delivery progression gate without launching review")
+	reviewJudgment := flags.String("review-judgment", "", "explicit progression judgment: accept or reject")
+	reviewID := flags.String("review-id", "", "exact review job ID for judgment")
+	reviewDigest := flags.String("review-digest", "", "exact current progression evidence digest for judgment")
+	rationale := flags.String("rationale", "", "operator rationale for the progression judgment")
+	interval := flags.Duration("interval", 500*time.Millisecond, "journal poll interval")
+	parallel := flags.Int("parallel", 0, "executors per wave, at most 4 (default: the profile's Execution line)")
+	taskTimeout := flags.Duration("task-timeout", 45*time.Minute, "time budget per executor session")
+	testTimeout := flags.Duration("test-timeout", 15*time.Minute, "time budget for the test command and each proof")
+	maxWaves := flags.Int("max-waves", 0, "stop after N waves (the delivery stays resumable)")
+	keep := flags.Bool("keep-worktrees", false, "keep task worktrees after integration or abort")
+	maxLimitWaits := flags.Int("max-limit-waits", 20, "consecutive usage-limit waits one attempt may take")
+	limitHorizon := flags.Duration("limit-horizon", 2*time.Hour, "switch to the next runtime when a usage-limit reset lies beyond this duration")
+	limitWait := flags.Duration("limit-wait", 30*time.Minute, "wait when a usage-limit message names no reset time")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := executor.ValidateTransport(*transport); err != nil {
+		return err
+	}
+	executionOptions := func() loop.Options {
+		backend := executor.NewNativeTransport(*transport)
+		return loop.Options{
+			Transport: &backend,
+			Workspace: *workspace, Skills: *skills, Parallel: *parallel, TaskTimeout: *taskTimeout, TestTimeout: *testTimeout,
+			MaxWaves: *maxWaves, KeepWorktrees: *keep, MaxLimitWaits: *maxLimitWaits, LimitWaitDefault: *limitWait, LimitHorizon: *limitHorizon,
+			Stdout: stdout, Inventory: func(ctx context.Context) (inventory.InventorySnapshot, error) {
+				root, err := workspaceRoot(*workspace)
+				if err != nil {
+					return inventory.InventorySnapshot{}, err
+				}
+				probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+				defer cancel()
+				snapshot, _, err := collect(probeCtx, root)
+				return snapshot, err
+			},
+		}
+	}
+	rest := flags.Args()
+	if *apply && !*prune {
+		return errors.New("--apply requires --prune")
+	}
+	if *prune {
+		var conflict string
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "prune", "apply", "workspace":
+			default:
+				conflict = f.Name
+			}
+		})
+		if conflict != "" || len(rest) != 0 {
+			return errors.New("usage: batuta loop --prune [--apply] [--workspace <dir>]; it takes no plan and no other loop flag")
+		}
+	}
+	if *recoverTask || *reconcile {
+		var conflict string
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "dry-run", "resume", "answer", "abandon", "roadmap", "dashboard", "watch", "supervise":
+				conflict = f.Name
+			}
+		})
+		if conflict != "" || (*recoverTask && *reconcile) || len(rest) != 2 {
+			return errors.New("usage: batuta loop --recover <delivery> <task> | --reconcile <delivery> <task>; neither combines with other modes")
+		}
+	}
+	var judgmentMode bool
+	flags.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "review-status", "review-judgment", "review-id", "review-digest", "rationale":
+			judgmentMode = true
+		}
+	})
+	if judgmentMode {
+		var conflict string
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "workspace", "supervise", "review-status", "review-judgment", "review-id", "review-digest", "rationale":
+			default:
+				conflict = f.Name
+			}
+		})
+		if conflict != "" || len(rest) != 0 || *supervise == "" || (*reviewStatus == (*reviewJudgment != "")) {
+			return errors.New("review status/judgment requires --supervise <delivery> and exactly one of --review-status or --review-judgment; execution and observer flags are not allowed")
+		}
+		if *reviewStatus && (*reviewID != "" || *reviewDigest != "" || *rationale != "") {
+			return errors.New("--review-id, --review-digest and --rationale require --review-judgment")
+		}
+		root, err := workspaceRoot(*workspace)
+		if err != nil {
+			return err
+		}
+		observer := loop.SupervisionOptions{Workspace: root, Delivery: *supervise}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		var gate loop.SupervisionGate
+		if *reviewStatus {
+			gate, err = loop.CheckSupervisionGate(ctx, observer)
+		} else {
+			gate, err = loop.JudgeSupervisionGate(ctx, observer, loop.SupervisionJudgment{
+				Delivery: *supervise, ReviewID: *reviewID, EvidenceDigest: *reviewDigest, Decision: *reviewJudgment, Rationale: *rationale,
+			})
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.NewEncoder(stdout).Encode(gate); err != nil {
+			return err
+		}
+		if !gate.Cleared {
+			return loopExit(loop.StateReviewBlocked)
+		}
+		return nil
+	}
+	if *supervise != "" {
+		var conflict string
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "supervise", "workspace", "cursor", "once", "notify", "policy", "interval", "skills":
+			case "transport", "parallel", "task-timeout", "test-timeout", "max-waves", "keep-worktrees", "max-limit-waits", "limit-horizon", "limit-wait":
+				if *policy == "" {
+					conflict = f.Name
+				}
+			default:
+				conflict = f.Name
+			}
+		})
+		if conflict != "" || len(rest) > 0 {
+			return errors.New("--supervise accepts observer flags and, with --policy, runner execution settings")
+		}
+		if !filepath.IsAbs(*cursor) {
+			return errors.New("--supervise requires --cursor with an absolute durable path")
+		}
+		root, err := workspaceRoot(*workspace)
+		if err != nil {
+			return err
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		reviewSkills, err := loop.FindSkills(root, *skills)
+		// Passive observation does not require an implicit skills installation.
+		// Keep explicit selections strict; review will report missing defaults.
+		if err != nil && (*skills != "" || strings.TrimSpace(os.Getenv("BATUTA_SKILLS")) != "") {
+			return err
+		}
+		opts := loop.SuperviseOptions{Observer: loop.SupervisionOptions{Workspace: root, Delivery: *supervise, CursorPath: *cursor}, Interval: *interval, Once: *once, Output: stdout}
+		opts.Review = &loop.SupervisionReviewOptions{Executable: executable, Skills: reviewSkills}
+		if *notify == "desktop" {
+			opts.Sink = loop.NewSupervisionDesktopSink()
+		} else if *notify != "" {
+			if !filepath.IsAbs(*notify) {
+				return errors.New("--notify requires desktop or an existing absolute local directory")
+			}
+			opts.Sink = loop.SupervisionFileSink{Directory: *notify}
+		}
+		if *policy != "" {
+			opts.Policy, err = loop.LoadSupervisionPolicy(*policy)
+			if err != nil {
+				return err
+			}
+		}
+		if opts.Policy != nil && opts.Policy.Action == loop.SupervisionContinueApprovedTask {
+			execution := executionOptions()
+			execution.Workspace = root
+			execution.Skills, err = loop.FindSkills(root, *skills)
+			if err != nil {
+				return err
+			}
+			// Keep the supervisor output as JSON; worker output has its own stream.
+			execution.Stdout = stderr
+			opts.Execution = &execution
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := errors.Join(loop.Supervise(ctx, opts), ctx.Err()); err != nil {
+			return loopRunExit(loop.StateCanceled, err)
+		}
+		observation, err := loop.ObserveSupervision(opts.Observer)
+		if err != nil {
+			return err
+		}
+		if job := observation.Review; job != nil {
+			gate, err := loop.CheckSupervisionGate(ctx, opts.Observer)
+			if err != nil {
+				return err
+			}
+			if !gate.Cleared || (!gate.Required && opts.Review != nil && job.ID != "" && (job.State != "reported" || job.Outcome != "SHIP")) {
+				return loopExit(loop.StateReviewBlocked)
+			}
+		}
+		return nil
+	}
+	var supervisionFlag string
+	flags.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "supervise", "cursor", "once", "notify", "policy":
+			supervisionFlag = f.Name
+		}
+	})
+	if supervisionFlag != "" {
+		return fmt.Errorf("--%s requires --supervise <delivery>", supervisionFlag)
+	}
+	if *roadmap && (*dashboard || *watch || *abandon != "" || (len(rest) > 0 && *answer == "")) {
+		return errors.New("--roadmap runs .batuta/roadmap.md; it cannot be combined with a plan, --dashboard, --watch or --abandon")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if *dashboard {
+		delivery := ""
+		if len(rest) > 0 {
+			delivery = rest[0]
+		}
+		if *watch {
+			return loop.Watch(ctx, *workspace, delivery, *interval, stdout)
+		}
+		return loop.Dashboard(*workspace, delivery, stdout)
+	}
+	if *watch {
+		return errors.New("--watch requires --dashboard")
+	}
+	if *reconcile {
+		root, err := workspaceRoot(*workspace)
+		if err != nil {
+			return err
+		}
+		report, err := loop.Reconcile(ctx, root, rest[0], rest[1])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "ref\t%s\t%s\nstatus\t%s\n", report.Ref, report.SHA, report.Status)
+		for _, path := range report.Changed {
+			fmt.Fprintf(stdout, "file\t%s\n", reconcileField(path))
+		}
+		for _, path := range report.Conflicts {
+			fmt.Fprintf(stdout, "conflict\t%s\n", reconcileField(path))
+		}
+		if report.Status == loop.ReconcileConflict {
+			return &ExitError{Code: 2, State: report.Status}
+		}
+		return nil
+	}
+	if *prune {
+		root, err := workspaceRoot(*workspace)
+		if err != nil {
+			return err
+		}
+		report, err := loop.Prune(ctx, root, loop.PruneOptions{Apply: *apply})
+		for _, warning := range report.Warnings {
+			fmt.Fprintf(stderr, "warning: %s\n", warning)
+		}
+		printed := printPrune(stdout, report)
+		if err != nil {
+			return err
+		}
+		return printed
+	}
+	opts := executionOptions()
+	if err := attachLoopJudge(&opts, *workspace); err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Fprintf(stdout, "judge     %s\n", judgeProviderLine(opts.JudgeConfig))
+	}
+	if *roadmap && *dryRun {
+		return loop.DryRunRoadmap(opts)
+	}
+	if *abandon != "" {
+		opts.Resume = *abandon
+		state, err := loop.Abandon(ctx, opts)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "delivery %s %s\n", *abandon, state)
+		return nil
+	}
+	if !*dryRun {
+		if *interval < 100*time.Millisecond || *interval > time.Minute {
+			return errors.New("loop: supervision interval must be between 100ms and 1m")
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("loop: required review executable: %w", err)
+		}
+		root, err := workspaceRoot(*workspace)
+		if err != nil {
+			return err
+		}
+		reviewSkills, err := loop.FindSkills(root, *skills)
+		// A roadmap can stop at a missing plan before it needs an implicit skills
+		// installation. Explicit selections remain strict, and execution resolves
+		// its required adapters before opening a delivery.
+		if err != nil && (!*roadmap || *skills != "" || strings.TrimSpace(os.Getenv("BATUTA_SKILLS")) != "") {
+			return err
+		}
+		// Preserve loop stdout; observer reports use a separate stream.
+		opts.Supervisor = &loop.SuperviseOptions{
+			Interval: *interval, Output: stderr,
+			Review: &loop.SupervisionReviewOptions{Executable: executable, Skills: reviewSkills},
+		}
+	}
+	if *answer != "" {
+		if len(rest) != 1 {
+			return errors.New("usage: batuta loop --answer <task> \"<text>\"")
+		}
+		delivery, err := loop.Answer(*workspace, *answer, rest[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "answer recorded for %s in delivery %s; resuming\n", *answer, delivery)
+		opts.Resume = delivery
+	} else if *recoverTask {
+		opts.Resume = rest[0]
+		err := loop.Recover(ctx, opts, rest[0], rest[1])
+		var gateFailure *loop.GateFailureError
+		if errors.As(err, &gateFailure) {
+			fmt.Fprintf(stderr, "recover: gates failed for %s in delivery %s; the task stays waiting\n%s\n", rest[1], rest[0], gateFailure)
+			return &ExitError{Code: 2, State: "gates_failed"}
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "recovered %s in delivery %s; resuming\n", rest[1], rest[0])
+	} else if *resume != "" {
+		opts.Resume = *resume
+	}
+	if *roadmap {
+		state, err := loop.RunRoadmap(ctx, opts)
+		if errors.Is(err, loop.ErrStopped) {
+			return nil
+		}
+		return loopRunExit(state, err)
+	}
+	var runner *loop.Runner
+	var err error
+	if opts.Resume != "" {
+		runner, err = loop.Resume(ctx, opts)
+	} else {
+		if len(rest) > 0 {
+			opts.Plan = rest[0]
+		}
+		runner, err = loop.New(ctx, opts)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, runner.Release()) }()
+	if *dryRun {
+		preview, err := runner.DryRun()
+		if err != nil {
+			return err
+		}
+		loop.PrintPreview(stdout, preview)
+		return nil
+	}
+	state, err := runner.Run(ctx)
+	if errors.Is(err, loop.ErrStopped) {
+		fmt.Fprintf(stdout, "stopped after %d wave(s); resume with: batuta loop --resume %s\n", *maxWaves, runner.Delivery())
+		return nil
+	}
+	return loopRunExit(state, err)
+}
+
+func attachLoopJudge(opts *loop.Options, workspace string) error {
+	root, err := workspaceRoot(workspace)
+	if err != nil {
+		return err
+	}
+	config, err := judge.LoadConfig(root, os.Getenv)
+	if err != nil {
+		return err
+	}
+	opts.JudgeConfig = config
+	built, err := config.Judge(os.Getenv)
+	if err == nil {
+		opts.Judge = built
+	}
+	return nil
+}
+
+func judgeProviderLine(config judge.Config) string {
+	switch config.Provider {
+	case judge.ProviderOff, "":
+		return judge.ReasonJudgeOff
+	case judge.ProviderAuto:
+		providers := config.Providers
+		if len(providers) == 0 {
+			providers = []judge.Provider{judge.ProviderTypesafe, judge.ProviderVercel, judge.ProviderOpenRouter}
+		}
+		names := make([]string, len(providers))
+		for i, provider := range providers {
+			names[i] = string(provider)
+		}
+		return strings.Join(names, ",")
+	default:
+		return string(config.Provider)
+	}
+}
+
+func loopRunExit(state string, err error) error {
+	if err != nil {
+		if (state == loop.StateCanceled || state == loop.StateDone || state == loop.StateReviewBlocked) && cancellationOnly(err) {
+			// Foreground cancellation does not rewrite completed implementation.
+			return loopExit(loop.StateCanceled)
+		}
+		return err
+	}
+	return loopExit(state)
+}
+
+// errors.Is alone would hide independent failures joined with cancellation.
+func cancellationOnly(err error) bool {
+	switch e := err.(type) {
+	case interface{ Unwrap() []error }:
+		errors := e.Unwrap()
+		if len(errors) == 0 {
+			return false
+		}
+		for _, child := range errors {
+			if !cancellationOnly(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return cancellationOnly(e.Unwrap())
+	default:
+		return err == context.Canceled
+	}
+}
+
+func loopExit(state string) error {
+	switch state {
+	case loop.StateDone:
+		return nil
+	case loop.StateWaitingInput:
+		return &ExitError{Code: 3, State: state}
+	case loop.StateWaitingPlan:
+		return &ExitError{Code: 4, State: state}
+	case loop.StateCanceled:
+		return &ExitError{Code: 130, State: state}
+	default:
+		return &ExitError{Code: 2, State: state}
+	}
+}
+
+var (
+	reviewNow            = time.Now
+	reviewSessionOptions = func(root string, parallel int) review.SessionOptions {
+		return review.SessionOptions{Root: root, Parallel: parallel}
+	}
+)
+
+func runReview(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("review", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	base := flags.String("base", "", "base git ref (default: the branch point or HEAD)")
+	includeWorktree := flags.Bool("worktree", false, "include untracked, non-ignored files")
+	spec := flags.String("spec", "", "plan slug or plan file whose criteria are the review spec")
+	cohortFiles := flags.Int("cohort-files", review.CohortFiles, "maximum files per cohort")
+	parallel := flags.Int("parallel", 1, "reviewer sessions to run in parallel")
+	reviewer := flags.String("reviewer", "", "reviewer override as executor/model")
+	full := flags.Bool("full", false, "ignore prior review state and review from --base")
+	out := flags.String("out", "", "artifact directory (default: .batuta/reviews/<date>-<slug>)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("review accepts flags only")
+	}
+	if *cohortFiles < 1 || *parallel < 1 {
+		return errors.New("review requires positive --cohort-files and --parallel values")
+	}
+	root, err := workspaceRoot("")
+	if err != nil {
+		return err
+	}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return err
+	}
+	git := publication.GitClient{Executable: gitPath, Runner: publication.ExecRunner{}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var rules []review.SpecRule
+	var resolvedSpecPath string
+	if *spec != "" {
+		rules, err = review.LoadSpecCriteria(root, *spec)
+		if err != nil {
+			return fmt.Errorf("review: load spec %s: %w", *spec, err)
+		}
+		resolvedSpecPath, err = reviewSpecPath(root, *spec)
+		if err != nil {
+			return err
+		}
+	}
+	options := reviewSessionOptions(root, *parallel)
+	if options.Timeout < 0 {
+		return errors.New("review: timeout must not be negative")
+	}
+	if options.Timeout == 0 {
+		options.Timeout = 10 * time.Minute
+	}
+	baseline, err := git.WorktreeState(ctx, root)
+	if err != nil {
+		return err
+	}
+	trackedBaseline, err := trackedChangeSignatures(root, baseline.HeadSHA)
+	if err != nil {
+		return err
+	}
+	var proofResults []review.SpecResult
+	var sweepRules []review.SpecRule
+	if *spec != "" {
+		shell, err := gates.NewShellRunner(options.Timeout)
+		if err != nil {
+			return err
+		}
+		for _, rule := range rules {
+			if rule.Proof == "" {
+				sweepRules = append(sweepRules, rule)
+				continue
+			}
+			results, _, proofErr := review.RunSpecProofs(ctx, root, []review.SpecRule{rule}, shell)
+			after, stateErr := git.WorktreeState(ctx, root)
+			if stateErr != nil {
+				return fmt.Errorf("review: verify source tree: %w", stateErr)
+			}
+			if after != baseline {
+				paths := changedTrackedPaths(root, baseline.HeadSHA, trackedBaseline)
+				if len(paths) == 0 {
+					paths = []string{"worktree state changed"}
+				}
+				return fmt.Errorf("review: proof of %s changed the source tree: %s", rule.ID, strings.Join(paths, ", "))
+			}
+			if proofErr != nil {
+				return proofErr
+			}
+			proofResults = append(proofResults, results...)
+		}
+	}
+	slug, err := reviewSlug(root, *spec)
+	if err != nil {
+		return err
+	}
+	branch, err := reviewSlug(root, "")
+	if err != nil {
+		return err
+	}
+	branchIdentity, err := reviewBranchIdentity(root)
+	if err != nil {
+		return err
+	}
+	specSlug := ""
+	if *spec != "" {
+		specSlug = slug
+	}
+	key := reviewStateKey(branch, branchIdentity, specSlug, resolvedSpecPath)
+	statePath := filepath.Join(root, ".batuta", "reviews", "state", key+".json")
+	sessionSlug := reviewNow().Format("2006-01-02") + "-" + slug
+	directory := *out
+	if directory == "" {
+		directory = filepath.Join(root, ".batuta", "reviews", sessionSlug)
+	} else if !filepath.IsAbs(directory) {
+		directory = filepath.Join(root, directory)
+	}
+	artifactPaths := reviewGuardPaths(directory, review.Report{}, statePath)
+	resolvedPaths, err := review.CheckArtifactPaths(root, artifactPaths)
+	if err != nil {
+		return err
+	}
+	requestedBase := *base
+	if requestedBase == "" {
+		requestedBase, err = defaultReviewBase(root)
+		if err != nil {
+			return err
+		}
+	}
+	state, err := review.LoadIncrementalState(root, statePath, requestedBase, *full)
+	if err != nil {
+		return err
+	}
+	manifest, err := review.BuildIncrementalManifest(root, state, review.ManifestOptions{Worktree: *includeWorktree, CohortFiles: *cohortFiles})
+	if err != nil {
+		return err
+	}
+	tablePayload, err := os.ReadFile(filepath.Join(root, ".batuta", "routing.md"))
+	if err != nil {
+		return errors.New("review: .batuta/routing.md is missing — run /batuta-init first")
+	}
+	table, err := routing.ParseRoutingTable(tablePayload)
+	if err != nil {
+		return fmt.Errorf("review: %w", err)
+	}
+	runtime, err := review.ReviewerRuntimeFromTable(table, routing.DomainGeneral, *reviewer)
+	if err != nil {
+		return err
+	}
+	cohorts, err := review.RunCohorts(ctx, manifest, runtime, options)
+	if err != nil {
+		return reviewSessionError(ctx, git, root, baseline, trackedBaseline, err)
+	}
+	var sweep *review.SpecSweep
+	if *spec != "" {
+		result, err := review.RunSpecSweep(ctx, manifest, sweepRules, runtime, options)
+		if err != nil {
+			return reviewSessionError(ctx, git, root, baseline, trackedBaseline, err)
+		}
+		result.Results = review.MergeSpecResults(rules, proofResults, result.Results)
+		sweep = &result
+	}
+	after, stateErr := git.WorktreeState(ctx, root)
+	if stateErr != nil {
+		return fmt.Errorf("review: verify source tree: %w", stateErr)
+	}
+	if after != baseline {
+		paths := changedTrackedPaths(root, baseline.HeadSHA, trackedBaseline)
+		if len(paths) == 0 {
+			paths = []string{"worktree state changed"}
+		}
+		return fmt.Errorf("review: source tree changed during review: %s", strings.Join(paths, ", "))
+	}
+	report := review.BuildReport(manifest, cohorts, sweep)
+	state = review.StateAfterReport(report, after.HeadSHA)
+	artifactPaths = reviewGuardPaths(directory, report, statePath)
+	resolvedPaths, err = review.CheckArtifactPaths(root, artifactPaths)
+	if err != nil {
+		return err
+	}
+	publicationGit := git
+	publicationGit.Runner = reviewPublicationRunner{paths: resolvedPaths, runner: git.Runner}
+	beforePublication, err := publicationGit.WorktreeState(ctx, root)
+	if err != nil {
+		return err
+	}
+	if err := review.WriteArtifacts(directory, report, state); err != nil {
+		return err
+	}
+	if err := reviewSessionError(ctx, publicationGit, root, beforePublication, trackedBaseline, nil); err != nil {
+		return err
+	}
+	if err := review.WriteIncrementalState(statePath, state); err != nil {
+		return err
+	}
+	if err := reviewSessionError(ctx, publicationGit, root, beforePublication, trackedBaseline, nil); err != nil {
+		return err
+	}
+	if err := review.PrintReport(stdout, report); err != nil {
+		return err
+	}
+	if code, state := review.ReviewExitCode(report); code != 0 {
+		return &ExitError{Code: code, State: state}
+	}
+	return nil
+}
+
+// reviewGuardPaths lists every file the review may create or prune: the
+// report artifacts, the state file and the cohort tails already on disk.
+func reviewGuardPaths(directory string, report review.Report, statePath string) []string {
+	paths := append(review.ArtifactPaths(directory, report), statePath)
+	return append(paths, review.ExistingTailPaths(directory)...)
+}
+
+func reviewSessionError(ctx context.Context, git publication.GitClient, root string, baseline publication.WorktreeState, trackedBaseline map[string]string, sessionErr error) error {
+	after, stateErr := git.WorktreeState(ctx, root)
+	if stateErr != nil {
+		return errors.Join(sessionErr, fmt.Errorf("review: verify source tree: %w", stateErr))
+	}
+	if after == baseline {
+		return sessionErr
+	}
+	paths := changedTrackedPaths(root, baseline.HeadSHA, trackedBaseline)
+	if len(paths) == 0 {
+		paths = []string{"worktree state changed"}
+	}
+	return errors.Join(sessionErr, fmt.Errorf("review: source tree changed during review: %s", strings.Join(paths, ", ")))
+}
+
+// Exclude only the authorized artifact files from the publication tree guard;
+// other tracked, staged and untracked changes still invalidate the review.
+type reviewPublicationRunner struct {
+	paths  []string
+	runner publication.CommandRunner
+}
+
+func (r reviewPublicationRunner) Run(ctx context.Context, command publication.Command) (publication.CommandResult, error) {
+	if len(command.Args) > 0 {
+		switch command.Args[0] {
+		case "status", "diff", "ls-files":
+			command.Args = append(command.Args, "--", ".")
+			for _, filename := range r.paths {
+				relative, err := filepath.Rel(command.Directory, filename)
+				if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+					command.Args = append(command.Args, ":(top,literal,exclude)"+filepath.ToSlash(relative))
+				}
+			}
+		}
+	}
+	return r.runner.Run(ctx, command)
+}
+
+func reviewSlug(root, spec string) (string, error) {
+	if spec != "" {
+		name := strings.TrimSuffix(filepath.Base(spec), filepath.Ext(spec))
+		name = strings.TrimPrefix(name, "plan-")
+		return name, nil
+	}
+	output, err := exec.Command("git", "-C", root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	if err != nil {
+		return "detached-head", nil
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(string(output))) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+		} else if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		slug = "branch"
+	}
+	return slug, nil
+}
+
+func reviewBranchIdentity(root string) (string, error) {
+	output, err := exec.Command("git", "-C", root, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	if err == nil {
+		return strings.TrimSpace(string(output)), nil
+	}
+	output, err = exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("review: determine branch identity: %w", err)
+	}
+	return "detached-head:" + strings.TrimSpace(string(output)), nil
+}
+
+func reviewSpecPath(root, spec string) (string, error) {
+	paths := []string{spec}
+	if !filepath.IsAbs(spec) && !strings.ContainsAny(spec, "/\\") && filepath.Ext(spec) == "" {
+		paths = []string{routing.PlanPath(spec), filepath.Join(".batuta", "plans", "done", spec+".md"), filepath.Join(".batuta", "plan-"+spec+".md")}
+	}
+	for _, filename := range paths {
+		if !filepath.IsAbs(filename) {
+			filename = filepath.Join(root, filename)
+		}
+		if _, err := os.Stat(filename); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return "", fmt.Errorf("review: resolve spec path: %w", err)
+		}
+		resolved, err := filepath.EvalSymlinks(filename)
+		if err != nil {
+			return "", fmt.Errorf("review: resolve spec path: %w", err)
+		}
+		return filepath.Clean(resolved), nil
+	}
+	return "", fmt.Errorf("review: plan %q is unavailable", spec)
+}
+
+func reviewStateKey(branchSlug, branchIdentity, specSlug, resolvedSpecPath string) string {
+	name := branchSlug
+	if specSlug != "" {
+		name += "-" + specSlug
+	}
+	digest := sha256.Sum256([]byte(branchIdentity + "\x00" + resolvedSpecPath))
+	return fmt.Sprintf("%s-%x", name, digest[:8])
+}
+
+func defaultReviewBase(root string) (string, error) {
+	for _, candidate := range []string{"main", "origin/main", "master", "origin/master", "@{upstream}", "HEAD^", "HEAD"} {
+		cmd := exec.Command("git", "-C", root, "merge-base", "HEAD", candidate)
+		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return strings.TrimSpace(string(output)), nil
+		}
+	}
+	return "", errors.New("review: cannot determine a default base; pass --base <ref>")
+}
+
+func trackedChangeSignatures(root, beforeHead string) (map[string]string, error) {
+	output, err := exec.Command("git", "-C", root, "diff", "--name-only", "-z", beforeHead, "--").Output()
+	if err != nil {
+		return nil, fmt.Errorf("review: list tracked changes: %w", err)
+	}
+	signatures := make(map[string]string)
+	for _, name := range bytes.Split(output, []byte{0}) {
+		if len(name) == 0 {
+			continue
+		}
+		diff, err := exec.Command("git", "-C", root, "diff", "--binary", "--no-ext-diff", beforeHead, "--", string(name)).Output()
+		if err != nil {
+			return nil, fmt.Errorf("review: inspect tracked change %q: %w", name, err)
+		}
+		signatures[string(name)] = string(diff)
+	}
+	return signatures, nil
+}
+
+func changedTrackedPaths(root, beforeHead string, baseline map[string]string) []string {
+	after, err := trackedChangeSignatures(root, beforeHead)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for name, signature := range after {
+		if baseline[name] != signature {
+			paths = append(paths, name)
+		}
+	}
+	for name := range baseline {
+		if _, exists := after[name]; !exists {
+			paths = append(paths, name)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func runWatch(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	interval := flags.Duration("interval", 500*time.Millisecond, "journal poll interval")
+	once := flags.Bool("once", false, "print one dashboard snapshot")
+	ascii := flags.Bool("ascii", false, "use ASCII borders and status glyphs")
+	var lang string
+	flags.Func("lang", "label language (en or pt)", func(value string) error {
+		if value != "en" && value != "pt" {
+			return errors.New("language must be en or pt")
+		}
+		lang = value
+		return nil
+	})
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: batuta watch [<delivery>] [--interval 500ms] [--once] [--lang en|pt] [--ascii]")
+		flags.PrintDefaults()
+		fmt.Fprintln(stderr, "Keys: Up/Down and PgUp/PgDn scroll; f follows; r opens the answer editor; R shows the answer command; d opens the delivery picker; o opens the log; l changes focus; ? shows the legend; q quits; the mouse wheel scrolls the focused panel. In the editor, ctrl+enter, alt+enter or ctrl+s submits; enter inserts a newline; esc cancels.")
+	}
+	delivery := ""
+	for {
+		if err := flags.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		rest := flags.Args()
+		if len(rest) == 0 {
+			break
+		}
+		if delivery != "" {
+			return errors.New("watch accepts at most one delivery")
+		}
+		delivery, args = rest[0], rest[1:]
+	}
+	if lang != "" {
+		if err := os.Setenv("BATUTA_LANG", lang); err != nil {
+			return err
+		}
+	}
+	if *ascii {
+		if err := os.Setenv("LC_ALL", "C"); err != nil {
+			return err
+		}
+	}
+	if *once {
+		return loop.Snapshot("", delivery, stdout)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return loop.Watch(ctx, "", delivery, *interval, stdout)
+}
+
+func runTrail(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("trail", flag.ContinueOnError)
+	workspace := flags.String("workspace", "", "repository root (default: current directory)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	delivery := ""
+	if rest := flags.Args(); len(rest) > 0 {
+		delivery = rest[0]
+	}
+	return loop.Trail(*workspace, delivery, stdout)
+}
+
+func printDoctor(w io.Writer, report doctorReport) {
+	fmt.Fprintf(w, "workspace   %s\n", report.Workspace)
+	if report.GitRepository {
+		state := "status unknown"
+		switch report.GitState {
+		case "clean":
+			state = "clean tree"
+		case "managed":
+			state = "managed state only (WORK.md, .batuta/) — fine for /batuta, commit before batuta loop"
+		case "dirty":
+			state = "dirty tree — commit or stash before delegating"
+		default:
+			if report.GitClean != nil {
+				state = "dirty tree — commit or stash before delegating"
+				if *report.GitClean {
+					state = "clean tree"
+				}
+			}
+		}
+		fmt.Fprintf(w, "git         repository ✓ %s (%s)\n", state, report.GitToplevel)
+	} else {
+		fmt.Fprintln(w, "git         not a repository — /batuta-init will offer to initialize it")
+	}
+	if report.SkillsPath != "" {
+		fmt.Fprintf(w, "skills      %s\n", report.SkillsPath)
+	} else {
+		fmt.Fprintln(w, "skills      not found — npx skills add batuta-ai/skills")
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "%-13s %-12s %-14s %7s  %s\n", "executor", "available", "version", "models", "notes")
+	for _, executor := range report.Executors {
+		notes := executor.Credential
+		if len(executor.Diagnostics) > 0 {
+			notes = strings.Join(executor.Diagnostics, ",")
+		}
+		fmt.Fprintf(w, "%-13s %-12s %-14s %7d  %s\n", executor.ID, executor.Availability, truncate(executor.Version, 14), executor.Models, notes)
+	}
+	for _, probe := range report.ProbeDurations {
+		if probe.Duration > 5*time.Second {
+			fmt.Fprintf(w, "note: %s %s took %.1fs (budget 5s)\n", probe.Executor, probe.Probe, probe.Duration.Seconds())
+		}
+	}
+}
+
+func truncate(value string, width int) string {
+	if len(value) <= width {
+		return value
+	}
+	return value[:width-1] + "…"
+}
+
+// printPrune writes one TSV line per entry and maps a skipped entry to exit 2.
+func printPrune(stdout io.Writer, report loop.PruneReport) error {
+	var skipped bool
+	for _, entry := range report.Entries {
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", reconcileField(entry.Path), reconcileField(entry.Branch), reconcileField(entry.Slug), entry.State)
+		skipped = skipped || entry.State == loop.PruneSkipped
+	}
+	if skipped {
+		return &ExitError{Code: 2, State: loop.PruneSkipped}
+	}
+	return nil
+}
+
+// reconcileField keeps a path on one tab-separated line: git hands paths
+// over verbatim, and a name may hold a tab, a newline or another control
+// character. Backslash and those characters leave as Go escapes.
+func reconcileField(path string) string {
+	plain := true
+	for _, r := range path {
+		if r == '\\' || unicode.IsControl(r) {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return path
+	}
+	quoted := strconv.Quote(path)
+	return strings.ReplaceAll(quoted[1:len(quoted)-1], `\"`, `"`)
+}

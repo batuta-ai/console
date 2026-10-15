@@ -1,0 +1,144 @@
+package executor
+
+import "testing"
+
+func TestRedactPathsKeepsRelative(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, in, workspace, want string }{
+		{"relative path", "edit a/b.go now", "", "edit a/b.go now"},
+		{"dotted relative path", "see ./a/b.go and ../c/d.go", "", "see ./a/b.go and ../c/d.go"},
+		{"absolute path", "open /private/x", "", "open x"},
+		{"absolute path at start", "/private/x failed", "", "x failed"},
+		{"trailing punctuation", "open /private/x.", "", "open x."},
+		{"workspace prefix", "open /work/tree/a/b.go", "/work/tree", "open a/b.go"},
+		{"windows separator", `open a\b.go`, "", `open a\b.go`},
+		{"empty", "", "/work", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RedactPaths(tc.in, tc.workspace); got != tc.want {
+				t.Fatalf("RedactPaths(%q, %q) = %q, want %q", tc.in, tc.workspace, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRedactWorkspaceBoundary(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, in, workspace, want string }{
+		{"sibling with shared prefix", "open /work/spacefoo", "/work/space", "open spacefoo"},
+		{"followed by separator", "open /work/space/a.go", "/work/space", "open a.go"},
+		{"followed by quote", `open "/work/space"`, "/work/space", `open ""`},
+		{"followed by whitespace", "cd /work/space now", "/work/space", "cd  now"},
+		{"at end of string", "cd /work/space", "/work/space", "cd "},
+		{"followed by period", "cannot open /work/space.", "/work/space", "cannot open ."},
+		{"followed by comma", "in /work/space, then", "/work/space", "in , then"},
+		{"followed by semicolon", "cd /work/space; ls", "/work/space", "cd ; ls"},
+		{"followed by colon", "/work/space: not found", "/work/space", ": not found"},
+		{"followed by parenthesis", "(cwd /work/space)", "/work/space", "(cwd )"},
+		{"trailing separator on workspace", "open /work/space/a.go", "/work/space/", "open a.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RedactPaths(tc.in, tc.workspace); got != tc.want {
+				t.Fatalf("RedactPaths(%q, %q) = %q, want %q", tc.in, tc.workspace, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDropSecretLines(t *testing.T) {
+	t.Parallel()
+	in := "kept\nAPI_KEY=abc\n  TOKEN=x\nlower=case\nkept too"
+	if got, want := DropSecretLines(in), "kept\nlower=case\nkept too"; got != want {
+		t.Fatalf("DropSecretLines = %q, want %q", got, want)
+	}
+	if got := DropSecretLines(""); got != "" {
+		t.Fatalf("DropSecretLines(empty) = %q", got)
+	}
+}
+
+func TestDropSecretBearingLines(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, in, want string }{
+		{"line start", "kept\nAPI_KEY=abc\nkept too", "kept\nkept too"},
+		{"mid line", "before\nprovider error: OPENAI_API_KEY=sk-test-123\nafter", "before\nafter"},
+		{"indented", "kept\n  TOKEN=x", "kept"},
+		{"lowercase assignment", "lower=case\nkept", "lower=case\nkept"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DropSecretBearingLines(tc.in); got != tc.want {
+				t.Fatalf("DropSecretBearingLines(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	if !IsSecretLine("  TOKEN=x") || IsSecretLine("note: TOKEN=x") {
+		t.Fatal("IsSecretLine changed behaviour")
+	}
+	if got, want := DropSecretLines("note: TOKEN=x\nTOKEN=y\nok"), "note: TOKEN=x\nok"; got != want {
+		t.Fatalf("DropSecretLines = %q, want %q", got, want)
+	}
+}
+
+func TestDropSecretFieldLines(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"embedded assignment", "provider error: OPENAI_API_KEY=sk-x\nkept", "kept"},
+		{"api_key field", `{"api_key":"sk-live"}` + "\nkept", "kept"},
+		{"token field", `{"type":"x","token": "tok-example"}` + "\nkept", "kept"},
+		{"password field", `{"Password":"p"}` + "\nkept", "kept"},
+		{"secret in longer key", `{"client_secret":"s"}` + "\nkept", "kept"},
+		{"apikey spelling", `{"ApiKey":"k"}` + "\nkept", "kept"},
+		{"plain json", `{"type":"message","text":"hello"}`, `{"type":"message","text":"hello"}`},
+		{"word without field", "the token was refused", "the token was refused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DropSecretFieldLines(tc.in); got != tc.want {
+				t.Fatalf("DropSecretFieldLines(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDropSecretFieldLinesNames(t *testing.T) {
+	t.Parallel()
+	keys := []string{
+		"token", "access_token", "refresh_token", "api_key", "apikey", "password",
+		"secret", "client_secret", "access_key", "private_key",
+		"TOKEN", "Access_Token", "x-token", "db-password",
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			in := `{"type":"x","` + key + `":"v"}` + "\nkept"
+			if got := DropSecretFieldLines(in); got != "kept" {
+				t.Fatalf("DropSecretFieldLines(%q) = %q, want the line dropped", in, got)
+			}
+		})
+	}
+}
+
+func TestDropSecretFieldLinesBenignKeys(t *testing.T) {
+	t.Parallel()
+	keys := []string{
+		"input_tokens", "output_tokens", "token_count", "tokenizer",
+		"max_tokens", "secretary", "passwordless_login",
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			in := `{"usage":{"` + key + `":12}}`
+			if got := DropSecretFieldLines(in); got != in {
+				t.Fatalf("DropSecretFieldLines(%q) = %q, want the line kept", in, got)
+			}
+		})
+	}
+}

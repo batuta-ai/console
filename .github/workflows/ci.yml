@@ -275,3 +275,84 @@ jobs:
           name: windows-ordinary-skills-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ORDINARY_EVIDENCE }}/*
           if-no-files-found: error
+
+  # TEMPORARY DIAGNOSTIC ONLY: same-source-pair Core observation; no SDK adoption.
+  core-observation-native:
+    name: DIAGNOSTIC ONLY Core observation (${{ matrix.variant }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+        variant: [baseline, candidate]
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOWORK: 'off'
+      GOENV: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      CGO_ENABLED: '0'
+    steps:
+      - name: Initialize owned diagnostic evidence before checkout
+        run: |
+          evidence=$(mktemp -d "${RUNNER_TEMP}/core-observation.XXXXXXXX")
+          if [ "$RUNNER_OS" = Windows ]; then evidence=$(cygpath -m "$evidence"); fi
+          echo "OBSERVATION_EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          printf '%s\n' 'TEMPORARY DIAGNOSTIC ONLY: native normal journal and focused gate tests. No race, whole-Core, ordinary-user Windows, full Console proof, SDK adoption or release. Baseline gate failure must remain nonzero. Expected test events (not repeat counts): journal 42 Unix / 41 Windows pass both variants; baseline gate 15 fail + 5 pass; candidate gate 20 pass.' > "$evidence/scope.log"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Preserve full tested source and bounded native environment
+        working-directory: qa/core-observation-${{ matrix.variant }}
+        run: |
+          cp -R . "$OBSERVATION_EVIDENCE/source"
+          git rev-parse HEAD > "$OBSERVATION_EVIDENCE/checkout-head.log"
+          git status --porcelain --untracked-files=all -- . > "$OBSERVATION_EVIDENCE/source-before.log"
+          if [ -s "$OBSERVATION_EVIDENCE/source-before.log" ]; then exit 1; fi
+          go version > "$OBSERVATION_EVIDENCE/go-version.log" 2> "$OBSERVATION_EVIDENCE/go-version.stderr"
+          go env -json GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH GOROOT GOTOOLCHAIN GOENV GOWORK GOFLAGS CGO_ENABLED > "$OBSERVATION_EVIDENCE/go-env.json" 2> "$OBSERVATION_EVIDENCE/go-env.stderr"
+          go list -m -json > "$OBSERVATION_EVIDENCE/module.json" 2> "$OBSERVATION_EVIDENCE/module.stderr"
+      - name: Build, vet, journal and focused gate once each with original exits
+        working-directory: qa/core-observation-${{ matrix.variant }}
+        run: |
+          set +e
+          go build ./journal ./loop > "$OBSERVATION_EVIDENCE/build.stdout" 2> "$OBSERVATION_EVIDENCE/build.stderr"
+          build_exit=$?
+          printf '%s\n' "$build_exit" > "$OBSERVATION_EVIDENCE/build.exit"
+          go vet ./journal ./loop > "$OBSERVATION_EVIDENCE/vet.stdout" 2> "$OBSERVATION_EVIDENCE/vet.stderr"
+          vet_exit=$?
+          printf '%s\n' "$vet_exit" > "$OBSERVATION_EVIDENCE/vet.exit"
+          go test -json -count=1 -timeout=2m ./journal > "$OBSERVATION_EVIDENCE/journal.stdout" 2> "$OBSERVATION_EVIDENCE/journal.stderr"
+          journal_exit=$?
+          printf '%s\n' "$journal_exit" > "$OBSERVATION_EVIDENCE/journal.exit"
+          go test -json -count=1 -timeout=3m -run '^(TestSupervisionGateWaitsForJournalPublication|TestSupervisionGateCancellationWhileJournalOwned|TestSupervisionGatePreCancelledLegacyOpening|TestSupervisionJudgeReadsCurrentJournalAfterSnapshotCapture|TestSupervisionGateSnapshotStates|TestSupervisionGateSnapshotPreCancelledLegacyOpening|TestSupervisionGateSnapshotUsesCapturedJournalWithoutReacquiring|TestSupervisionGateEvidenceAndJudgment)$' ./loop > "$OBSERVATION_EVIDENCE/gate.stdout" 2> "$OBSERVATION_EVIDENCE/gate.stderr"
+          gate_exit=$?
+          printf '%s\n' "$gate_exit" > "$OBSERVATION_EVIDENCE/gate.exit"
+          git status --porcelain --untracked-files=all -- . > "$OBSERVATION_EVIDENCE/source-after.log"
+          guard_exit=$?
+          if [ -s "$OBSERVATION_EVIDENCE/source-after.log" ]; then guard_exit=1; fi
+          printf '%s\n' "$guard_exit" > "$OBSERVATION_EVIDENCE/source-guard.exit"
+          if [ "$gate_exit" -ne 0 ]; then exit "$gate_exit"; fi
+          if [ "$journal_exit" -ne 0 ]; then exit "$journal_exit"; fi
+          if [ "$build_exit" -ne 0 ]; then exit "$build_exit"; fi
+          if [ "$vet_exit" -ne 0 ]; then exit "$vet_exit"; fi
+          exit "$guard_exit"
+      - name: Always retain complete diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: core-observation-${{ matrix.variant }}-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.OBSERVATION_EVIDENCE }}/*
+          if-no-files-found: error
