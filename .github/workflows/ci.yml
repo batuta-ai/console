@@ -295,6 +295,10 @@ jobs:
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
       CGO_ENABLED: '0'
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
     steps:
       - name: Initialize owned diagnostic evidence before checkout
         run: |
@@ -319,10 +323,34 @@ jobs:
         run: |
           cp -R . "$OBSERVATION_EVIDENCE/source"
           git rev-parse HEAD > "$OBSERVATION_EVIDENCE/checkout-head.log"
-          git status --porcelain --untracked-files=all -- . > "$OBSERVATION_EVIDENCE/source-before.log"
-          if [ -s "$OBSERVATION_EVIDENCE/source-before.log" ]; then exit 1; fi
+          guard_exit=0
+          git status --porcelain --untracked-files=all --ignored -- . > "$OBSERVATION_EVIDENCE/source-before.log" || guard_exit=$?
+          if [ -s "$OBSERVATION_EVIDENCE/source-before.log" ]; then guard_exit=1; fi
+          printf '%s\n' "$guard_exit" > "$OBSERVATION_EVIDENCE/source-before-guard.exit"
+          if [ "$guard_exit" -ne 0 ]; then exit "$guard_exit"; fi
           go version > "$OBSERVATION_EVIDENCE/go-version.log" 2> "$OBSERVATION_EVIDENCE/go-version.stderr"
-          go env -json GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH GOROOT GOTOOLCHAIN GOENV GOWORK GOFLAGS CGO_ENABLED > "$OBSERVATION_EVIDENCE/go-env.json" 2> "$OBSERVATION_EVIDENCE/go-env.stderr"
+          go env -json GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH GOROOT GOTOOLCHAIN GOENV GOWORK GOFLAGS CGO_ENABLED GOPROXY GOSUMDB GONOSUMDB GOPRIVATE GOMODCACHE GOEXPERIMENT > "$OBSERVATION_EVIDENCE/go-env.json" 2> "$OBSERVATION_EVIDENCE/go-env.stderr"
+          {
+            printf 'RUNNER_OS=%s\nRUNNER_ARCH=%s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+            case "$RUNNER_OS" in
+              Linux) expected_goos=linux ;;
+              macOS) expected_goos=darwin ;;
+              Windows) expected_goos=windows ;;
+              *) echo 'Unknown native runner OS'; exit 1 ;;
+            esac
+            case "$RUNNER_ARCH" in
+              X64) expected_goarch=amd64 ;;
+              ARM64) expected_goarch=arm64 ;;
+              *) echo 'Unknown native runner architecture'; exit 1 ;;
+            esac
+            actual_goversion=$(go env GOVERSION)
+            actual_goos=$(go env GOOS)
+            actual_goarch=$(go env GOARCH)
+            if [ "$actual_goversion" != go1.27.2 ] || [ "$actual_goos" != "$expected_goos" ] || [ "$actual_goarch" != "$expected_goarch" ]; then
+              echo 'Unexpected Go version or non-native target; see go-env.json'
+              exit 1
+            fi
+          } > "$OBSERVATION_EVIDENCE/platform-guard.log" 2>&1
           go list -m -json > "$OBSERVATION_EVIDENCE/module.json" 2> "$OBSERVATION_EVIDENCE/module.stderr"
       - name: Build, vet, journal and focused gate once each with original exits
         working-directory: qa/core-observation-${{ matrix.variant }}
@@ -340,7 +368,7 @@ jobs:
           go test -json -count=1 -timeout=3m -run '^(TestSupervisionGateWaitsForJournalPublication|TestSupervisionGateCancellationWhileJournalOwned|TestSupervisionGatePreCancelledLegacyOpening|TestSupervisionJudgeReadsCurrentJournalAfterSnapshotCapture|TestSupervisionGateSnapshotStates|TestSupervisionGateSnapshotPreCancelledLegacyOpening|TestSupervisionGateSnapshotUsesCapturedJournalWithoutReacquiring|TestSupervisionGateEvidenceAndJudgment)$' ./loop > "$OBSERVATION_EVIDENCE/gate.stdout" 2> "$OBSERVATION_EVIDENCE/gate.stderr"
           gate_exit=$?
           printf '%s\n' "$gate_exit" > "$OBSERVATION_EVIDENCE/gate.exit"
-          git status --porcelain --untracked-files=all -- . > "$OBSERVATION_EVIDENCE/source-after.log"
+          git status --porcelain --untracked-files=all --ignored -- . > "$OBSERVATION_EVIDENCE/source-after.log"
           guard_exit=$?
           if [ -s "$OBSERVATION_EVIDENCE/source-after.log" ]; then guard_exit=1; fi
           printf '%s\n' "$guard_exit" > "$OBSERVATION_EVIDENCE/source-guard.exit"
@@ -350,9 +378,10 @@ jobs:
           if [ "$vet_exit" -ne 0 ]; then exit "$vet_exit"; fi
           exit "$guard_exit"
       - name: Always retain complete diagnostic evidence
-        if: always()
+        if: always() && env.OBSERVATION_EVIDENCE != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: core-observation-${{ matrix.variant }}-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.OBSERVATION_EVIDENCE }}/*
           if-no-files-found: error
+          include-hidden-files: true
