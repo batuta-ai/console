@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -69,6 +70,9 @@ func TestSetupConcurrentOwnedExitNeverInterrupted(t *testing.T) {
 			<-gate
 			// Manager stop produces a native exit without a service stop-request event.
 			if _, err := svc.Session.Stop(row.ID); err != nil {
+				stacks := make([]byte, 8<<20)
+				n := runtime.Stack(stacks, true)
+				t.Logf("Stop error for %s: all-goroutine stacks (bytes=%d, possibly truncated=%t; snapshot does not establish native process liveness):\n%s", row.ID, n, n == len(stacks), stacks[:n])
 				t.Error(err)
 			}
 		}()
