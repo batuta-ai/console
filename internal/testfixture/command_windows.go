@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	consolert "github.com/batuta-ai/console/internal/runtime"
 )
 
 // Capture the actual installed Git before tests replace PATH with CLI fixtures.
@@ -55,14 +53,14 @@ func TerminalEnvironment(t testing.TB, original []string) []string {
 		}
 	}
 	utilities := filepath.Join(filepath.Dir(filepath.Dir(nativeFixtureGit)), "usr", "bin")
-	// MSYS shares /tmp across actors that can outlive this test's HOME.
+	// Synthetic fixtures borrow TEMP; its caller owns permissions, cleanup, and lifetime.
 	temporary := os.Getenv("TEMP")
-	dir, err := consolert.OpenPrivateDirectory(temporary)
+	info, err := os.Stat(temporary)
 	if err != nil {
-		t.Fatal("owned protected harness temporary root", err)
+		t.Fatal("existing harness temporary directory", err)
 	}
-	if err := dir.Close(); err != nil {
-		t.Fatal(err)
+	if !info.IsDir() {
+		t.Fatal("harness temporary path is not a directory", temporary)
 	}
 	return append(append([]string(nil), original...), "TEMP="+temporary, "TMP="+temporary, "PATH="+utilities+string(os.PathListSeparator)+runtimePath)
 }
