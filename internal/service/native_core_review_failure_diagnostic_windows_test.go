@@ -26,7 +26,7 @@ func task43CoreReviewFailureDiagnostic(t *testing.T, a domain.PlanApproval, home
 		t.Logf("same-test review diagnostic workspace=%q delivery=%q observation_error=%v", opts.Workspace, opts.Delivery, err)
 		task43CoreReviewDiagnosticValue(t, "observation", observation)
 		task43CoreReviewDiagnosticValue(t, "review_job", observation.Review)
-		for _, name := range []string{"manifest.json", "findings.json", "review.md", "state.json"} {
+		for _, name := range []string{"manifest.json", "findings.json", "review.md", "state.json", "review_failures.json"} {
 			if job := observation.Review; job != nil && job.Artifacts != "" && job.Delivery == opts.Delivery {
 				task43CoreReviewDiagnosticFile(t, opts.Workspace, filepath.Join(job.Artifacts, name), job.ArtifactDigests[name])
 			} else {

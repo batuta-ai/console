@@ -5,6 +5,7 @@ import (
 	"log"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -58,7 +59,12 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 				t.Fatalf("runtime admission leaked behind stale row: %v", err)
 			}
 			sqlExec(t, f.db, "DROP TRIGGER reject_exit")
-			if _, err := f.svc.StopSession(next.ID); err != nil {
+			if stopped, err := f.svc.StopSession(next.ID); err != nil {
+				stacks := make([]byte, 256<<10)
+				n := runtime.Stack(stacks, true)
+				t.Logf("second Stop failure mode=%q first_launch_id=%q first_pid=%d first_identity=%q second_launch_id=%q second_pid=%d second_identity=%q error=%v", mode, live.ID, live.PID, live.ProcessIdentity, next.ID, next.PID, next.ProcessIdentity, err)
+				t.Logf("returned Stop snapshot id=%q pid=%d identity=%q process=%q ended_at=%v", stopped.ID, stopped.PID, stopped.ProcessIdentity, stopped.Process, stopped.EndedAt)
+				t.Logf("second Stop all-goroutine stacks captured=%d limit=%d truncated=%t\n%s", n, len(stacks), n == len(stacks), stacks[:n])
 				t.Fatal(err)
 			}
 			waitExit(t, done)
