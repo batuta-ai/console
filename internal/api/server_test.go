@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +123,22 @@ func TestValidateDraftDoesNotSave(t *testing.T) {
 	}
 }
 
+func logAPIStopFailureStacks(t *testing.T) {
+	if !t.Failed() {
+		return
+	}
+	for size := 64 * 1024; ; size *= 2 {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			t.Logf("API stop failure goroutine diagnostic (before fixture cleanup):\n%s", buf[:n])
+			return
+		}
+	}
+}
+
 func TestSessionReconnect(t *testing.T) {
+	defer logAPIStopFailureStacks(t)
 	h, svc := testServer(t)
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
@@ -211,6 +227,7 @@ func TestTwoCodexAccountsIndependent(t *testing.T) {
 }
 
 func TestAccountSessionCap(t *testing.T) {
+	defer logAPIStopFailureStacks(t)
 	h, _ := testServer(t)
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)
 	a := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
