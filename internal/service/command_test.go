@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -103,6 +104,21 @@ func TestOfficialSessionCommand(t *testing.T) {
 	for _, adapter := range []string{"codex", "claude"} {
 		for _, binding := range []string{"snapshot", "same-ID", "mixed", "different-ID", "defaults", "blank", "whitespace", "whitespace-generic", "injected", "custom"} {
 			t.Run(adapter+"/"+binding, func(t *testing.T) {
+				defer func() {
+					if !t.Failed() {
+						return
+					}
+					stacks := make([]byte, 1<<20)
+					for {
+						n := runtime.Stack(stacks, true)
+						if n < len(stacks) {
+							stacks = stacks[:n]
+							break
+						}
+						stacks = make([]byte, 2*len(stacks))
+					}
+					t.Logf("%s: current goroutine stacks after subtest failure, before fixture cleanup (pending session completion stage unverified):\n%s", t.Name(), stacks)
+				}()
 				f, cli, out := commandFixture(t, adapter)
 				goal := "  literal goal; $(do-not-run) `literal`\nsecond line  "
 				model, effort := "future-model;$(literal)", "high"
