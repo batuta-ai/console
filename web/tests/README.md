@@ -79,7 +79,7 @@ Chromium distribution; the test itself only contacts the owned loopback daemon.
 ```sh
 export PLAYWRIGHT_BROWSERS_PATH="$PWD/.batuta/runs/rendered-browser/chromium"
 export npm_config_cache="$PWD/.batuta/runs/rendered-browser/npm-cache"
-npm --prefix web ci --offline --ignore-scripts --no-audit --no-fund
+npm --prefix web ci --ignore-scripts --no-audit --no-fund
 npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e -- --list
 
@@ -109,7 +109,8 @@ inside the main landmark. In Missions, it checks each mission row’s exact ID,
 title, objective and snapshot name before selection. In Room, it checks the
 selected mission’s exact ID, title, objective and member models. Squad versions
 and complete mission identities are checked through the public catalog. No
-provider execution, route interception or substituted App is involved. A missing workspace profile is intentional; this slice navigates
+provider execution, route interception or substituted App is involved. A missing
+workspace profile is intentional; this slice navigates
 existing missions and does not qualify workspace initialization.
 
 The owned daemon must close and join with exit 0 before another process opens
@@ -131,12 +132,12 @@ also on failure; Playwright retains test and teardown failures separately.
 Forced daemon cleanup is a failure. If joining or cleanup cannot be established,
 the private runtime is retained instead of being deleted under a live process.
 
-Native rendered proof is **PENDING until Root runs the actual browser command**.
-The worker sandbox denies loopback. Listing or syntax checks are not rendered
-proof; Root must run the rendered journey and rerun the unchanged unit and type
-gates outside that sandbox. A prior Root browser run exposed an ambiguous
-workspace selector; successful rendered qualification remains pending. This
-desktop slice makes no responsive-layout qualification claim.
+The rendered journey passed on macOS/arm64 with Node 26.10.0, npm 12.2.0,
+Go 1.27.2, Playwright 1.64.1 and Chromium 156.0.8078.4 at 1280×720. Both mission
+identities and their immutable snapshots were selected through the UI before
+and after the owned daemon restarted. The unchanged 165 unit tests and
+TypeScript check also passed. This desktop slice makes no Windows or
+responsive-layout qualification claim.
 
 This is bounded catalog/navigation/restart coverage, not full Task38, native
 execution, question/answer, resume, execution stop, provider qualification or a
