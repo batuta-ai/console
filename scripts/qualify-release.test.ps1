@@ -118,7 +118,7 @@ try {
                     if ($case -eq 'pe') { $offset=[BitConverter]::ToInt32($bytes,0x3c); $bytes[$offset+4]=0x4c; $bytes[$offset+5]=0x01 }
                     else {
                         $before='go1.27.2'; $after='go1.27.3'
-                        if ($case -eq 'core') { $before='v1.1.0-beta.49'; $after='v1.1.0-beta.48' }
+                        if ($case -eq 'core') { $before='v1.1.0-beta.55'; $after='v1.1.0-beta.54' }
                         $changed=Replace-ImageData $bytes $before $after
                         $bytes=$changed.bytes
                         $mutation.dataMutation=$true; $mutation.replacements=$changed.count
