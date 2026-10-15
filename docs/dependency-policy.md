@@ -9,7 +9,7 @@ and Go module checks; never use floating installs for qualification or disable
 checksum, peer, type, test or vulnerability checks. Keep migrations separate
 from product redesign.
 
-Development tracks `github.com/batuta-ai/core v1.1.0-beta.49` without `replace`.
+Development tracks `github.com/batuta-ai/core v1.1.0-beta.55` without `replace`.
 Go's `@latest` selects older stable v1.0.1; do not downgrade to it. Stable Console
 publication requires a qualified stable core/plugin contract. Source checks
 below do not establish release readiness or completion of the stabilization plan.
@@ -217,13 +217,13 @@ and Task37's final full release matrix remain pending. WSL qualifies Linux only.
 
 The repository is now public at [batuta-ai/console](https://github.com/batuta-ai/console), and its source-check and beta-release workflows are enabled. The release workflow inherits the organization's `RELEASE_PLEASE_TOKEN`; no credential value was copied into the repository.
 
-The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. This SDK update preserves the Core beta49, Go module checksum and npm dependency graphs. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
+The current exact SDK is Go 1.27.2, confirmed by the [official Go downloads metadata](https://go.dev/dl/?mode=json). The first public CI vulnerability scan reported 11 reachable standard-library advisories with Go 1.27.1, each fixed in Go 1.27.2. At that SDK update, Core beta49, Go module checksum and npm dependency graphs were preserved. The dated Go 1.27.1 qualification evidence above retains its original authority; source checks with the corrected SDK do not establish native Windows, provider or full release qualification.
 
 Native mission review requires Git support for `git show-ref --exists`, which Core uses to prove exact parked-ref absence. The shared tooling check rejects unsupported versions; current qualification uses Git 2.56.0.
 
 ## Published Core approved-snapshot API adoption — 2026-10-06
 
-The current pin is [Core v1.1.0-beta.49](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.49),
+At that adoption, the pin was [Core v1.1.0-beta.49](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.49),
 published from `90290592cc7279c86b219a311d0ebde872fa41aa`. The public module
 checksum is `h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=`;
 there is no replacement or private checksum-database bypass. Other dependency
@@ -267,3 +267,55 @@ Source compatibility checks for this snapshot include native macOS and Linux
 sessions, regression tests, race checks, the full source contract, public CI and
 Windows builds. Native Windows runtime and provider qualification remain
 separate gates.
+
+## Published Core beta55 adoption and native runtime qualification — 2026-10-15
+
+The current pinned release is [Core v1.1.0-beta.55](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55),
+released from commit `5c098af1d734af1e0dd8b6733f54faa78a2536da` following normal
+[PR 173](https://github.com/batuta-ai/core/pull/173). Public Core
+[PR 172](https://github.com/batuta-ai/core/pull/172) merged `7985226` after CI green
+and administrator authorization. Module public checksum is
+`h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=` and `go.mod` checksum is
+`h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. The module checksum was verified
+through the public Go proxy and checksum database. In separate comparisons against
+Git, all 652 module files matched release commit `5c098af1`; the 306 Go files also
+matched reviewed Core `c963`. Only those Go files were compared with the reviewed
+commit. No replacement directive, global cache modification or CLI upgrade was performed.
+This adoption supersedes earlier current-pin wording. Dated beta46, beta47, and
+beta49 evidence and tables above remain authoritative
+at their recorded dates.
+
+### Core CI and provenance limits
+
+Core upstream CI ran clean on Linux Go 1.26.4; macOS Go 1.26.5 and Go 1.27.2 each passed
+4,096 tests across 18 packages with `-race`. A known historical macOS Go 1.26.4 race timeout (15m)
+cause remains unknown; newer SDK passes do not qualify older SDKs.
+Core published binary archives for five targets have verified checksums matching GitHub API
+digests, and metadata revision, version and platform match the release commit, but all record
+`vcs.modified=true` (`v1.1.0-beta.55+dirty`). Exact build tree changes are not captured, and clean
+source or reproducible build is not attested. Commit checksum and archive checksum are distinct.
+These provenance limits are publicly documented in the Core release notes. Qualified stable Core
+and plugin requirements remain unchanged future gates.
+
+Current native runtime requirements supersede the earlier dated pin expectations.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55` with the required
+capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
+executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK contained
+in the Console image, with strict beta55 version, public module checksum and
+no-replacement checks; it does not require an external Core CLI. Native Windows
+qualification remains open. Earlier native package evidence does not qualify beta55.
+
+### Console local bounded proof and unreleased status
+
+Console's SDK adoption and strict native pins received review of the full change and
+deltas. Bounded local checks covered service and integration tests with synthetic providers:
+
+- 119 integration tests passed with `-race`; the unchanged concurrent-start
+  regression passed all 20 executions.
+- 56 Unix service-family tests passed; these do not qualify full native API/TUI operation.
+- Windows strict metadata checks passed 10 subcases under an existing elevated SSH
+  account only; Windows cross-build and `go vet` also passed.
+
+These local bounded checks do not establish full Windows runtime support, real provider qualification, full web/TUI operation, or completion of Task38/43/44/Beta.
+Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954) on candidate `20ae827bbf5ebe72eb46cff986ce5956b92b7321` has finished: all 5 jobs failed. Linux and macOS native API and TUI fixtures still stamp Core 49 or lack capability response; the snapshot verifier escaped regex for 49 rejects 55; ordinary test runs are blocked by the failed producer; Windows also failed (3,530 passing and 22 failing test records, no skips), with detailed analysis pending. The four earlier Windows service failures involving Git exit 128 and Stop remain unresolved. Corrective compatibility work is ongoing.
+Normal CI and bundle qualification remain open. Core publication is finished, but Console publication is not (`v0.1.0-beta.1` is not published or installed). No release-ready claim is made for Console.

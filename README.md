@@ -43,7 +43,7 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 Use Go 1.27.2 or newer and run these commands from a checkout of the desired
 Console revision (the qualified SDK here is Go 1.27.2). `go.mod` and `go.sum` pin the dependency graph, including
-Batuta core `v1.1.0-beta.49`. The tracked embedded web assets are sufficient
+Batuta core `v1.1.0-beta.55`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 Git must support `git show-ref --exists` for native mission review; the shared
 checks verify this capability before running tests.
@@ -140,13 +140,14 @@ requires qualification against a stable core/plugin contract.
    inspection/approval. Keep the receipt identity, including its original
    binding with empty delivery/opening fields.
 7. **Execute and recover.** Start native execution explicitly from that receipt.
-   It requires the selected ready accounts, installed skills, permitted routes
-   and a Core CLI matching the linked SDK (`v1.1.0-beta.49`). Start `consoled
-   -core /absolute/path/to/batuta` to choose that executable; otherwise it uses
-   `batuta` on PATH. This version/capability check does not close the separate
-   official Core binary security gate. Inspect the resulting deterministic
-   delivery and opening. Resume uses the **original receipt and target plus
-   that same delivery/opening**. After native binding, Plan Detail returns the
+   It requires selected ready accounts, installed skills and permitted routes.
+   On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55`; start
+   `consoled -core /absolute/path/to/batuta` to choose that private explicit executable,
+   otherwise `batuta` on PATH is used. Windows uses the Core SDK included with the Console image
+   and does not require an external Core CLI (native Windows qualification remains
+   pending; see [release qualification](docs/release-qualification.md)). Inspect the
+   resulting deterministic delivery and opening. Resume uses the **original receipt and target
+   plus that same delivery/opening**. After native binding, Plan Detail returns the
    **original approved snapshot**, even if the editable source changed or was
    deleted. Current editable bytes are unavailable through that API; there is
    no local-file fallback. Historical receipts remain separate, read-only facts.

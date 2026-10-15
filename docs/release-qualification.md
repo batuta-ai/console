@@ -961,3 +961,53 @@ are **PENDING** until Root verifies their real outputs. Task37/38/43 remain boun
 slices; native TUI/ConPTY, providers, full Task38/43, Task44 and release remain
 open. Go 1.27.2 and Core beta.49 remain unchanged; there is no Core publication
 or adoption in this work.
+
+## Core beta.55 adoption and native runtime qualification — 2026-10-15
+
+The current pinned release is [Core v1.1.0-beta.55](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55),
+released from commit `5c098af1d734af1e0dd8b6733f54faa78a2536da` following normal
+[PR 173](https://github.com/batuta-ai/core/pull/173). Public Core
+[PR 172](https://github.com/batuta-ai/core/pull/172) merged `7985226` after CI green
+and administrator authorization. Module public checksum is
+`h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=` and `go.mod` checksum is
+`h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. The module checksum was verified
+through the public Go proxy and checksum database. In separate comparisons against
+Git, all 652 module files matched release commit `5c098af1`; the 306 Go files also
+matched reviewed Core `c963`. Only those Go files were compared with the reviewed
+commit. No replacement directive, global cache modification or CLI upgrade was performed.
+Earlier dated Core 49 qualification records remain historical and do not qualify 55.
+
+### Upstream Core CI and binary provenance limits
+
+Core upstream CI ran clean on Linux Go 1.26.4; macOS Go 1.26.5 and Go 1.27.2 each passed
+4,096 tests across 18 packages with `-race`. A known historical macOS Go 1.26.4 race timeout (15m)
+cause remains unknown; newer SDK passes do not qualify older SDKs.
+Core published binary archives for five targets have verified checksums matching GitHub API
+digests, and metadata revision, version and platform match the release commit, but all record
+`vcs.modified=true` (`v1.1.0-beta.55+dirty`). Exact build tree changes are not captured, and clean
+source or reproducible build is not attested. Commit checksum and archive checksum are distinct.
+These provenance limits are publicly documented in the Core release notes. Qualified stable Core
+and plugin requirements remain unchanged future gates.
+
+Current native runtime requirements supersede the earlier dated pin expectations.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55` with the required
+capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
+executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK contained
+in the Console image, with strict beta55 version, public module checksum and
+no-replacement checks; it does not require an external Core CLI. Native Windows
+qualification remains open. Earlier native package evidence does not qualify beta55.
+
+### Console local bounded proof and unreleased status
+
+Console's SDK adoption and strict native pins received review of the full change and
+deltas. Bounded local checks covered service and integration tests with synthetic providers:
+
+- 119 integration tests passed with `-race`; the unchanged concurrent-start
+  regression passed all 20 executions.
+- 56 Unix service-family tests passed; these do not qualify full native API/TUI operation.
+- Windows strict metadata checks passed 10 subcases under an existing elevated SSH
+  account only; Windows cross-build and `go vet` also passed.
+
+These local bounded checks do not establish full Windows runtime support, real provider qualification, full web/TUI operation, or completion of Task38/43/44/Beta.
+Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954) on candidate `20ae827bbf5ebe72eb46cff986ce5956b92b7321` has finished: all 5 jobs failed. Linux and macOS native API and TUI fixtures still stamp Core 49 or lack capability response; the snapshot verifier escaped regex for 49 rejects 55; ordinary test runs are blocked by the failed producer; Windows also failed (3,530 passing and 22 failing test records, no skips), with detailed analysis pending. The four earlier Windows service failures involving Git exit 128 and Stop remain unresolved. Corrective compatibility work is ongoing.
+Normal CI and bundle qualification remain open. Core publication is finished, but Console publication is not (`v0.1.0-beta.1` is not published or installed). No release-ready claim is made for Console.

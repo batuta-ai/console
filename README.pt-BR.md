@@ -46,7 +46,7 @@ nunca abre o navegador por conta própria.
 
 Use Go 1.27.2 ou mais recente e execute os comandos em um checkout da revisão
 desejada do Console (o SDK qualificado aqui é Go 1.27.2). `go.mod` e `go.sum`
-fixam o grafo de dependências, incluindo Batuta core `v1.1.0-beta.49`.
+fixam o grafo de dependências, incluindo Batuta core `v1.1.0-beta.55`.
 Os assets web incorporados e rastreados bastam para compilar ambos os binários
 sem Node.js.
 O Git precisa oferecer `git show-ref --exists` para a revisão nativa de missões;
@@ -147,17 +147,19 @@ estável ainda exige qualificação contra um contrato estável de core/plugin.
    nova inspeção/aprovação. Preserve a identidade do recibo, incluindo seu
    vínculo original com os campos de entrega/opening vazios.
 7. **Executar e recuperar.** Inicie explicitamente a execução nativa a partir
-   desse recibo. Exige contas selecionadas prontas, habilidades instaladas,
-   rotas permitidas e uma CLI Core correspondente ao SDK vinculado
-   (`v1.1.0-beta.49`). Inicie `consoled -core /absolute/path/to/batuta` para
-   escolher esse executável; caso contrário, usa `batuta` no PATH. Essa
-   verificação de versão/capacidade não encerra o gate separado de segurança
-   do binário oficial Core. Inspecione a entrega determinística e o opening
-   resultantes. Resume usa o **recibo e alvo originais e a mesma entrega/opening**.
-   Após o vínculo nativo, Plan Detail retorna o **snapshot original aprovado**,
-   mesmo que a fonte editável tenha mudado ou sido excluída. Os bytes editáveis
-   atuais não estão disponíveis nessa API; não há alternativa de arquivo local.
-   Recibos históricos continuam fatos separados e somente leitura.
+   desse recibo. Exige contas selecionadas prontas, habilidades instaladas e
+   rotas permitidas. No macOS e Linux, a CLI Core precisa corresponder exatamente
+   a `v1.1.0-beta.55`; inicie `consoled -core /absolute/path/to/batuta` para escolher
+   esse executável privado e explícito; caso contrário, usa `batuta` no PATH.
+   O Windows utiliza o SDK Core incluído com a imagem do Console e não exige CLI
+   Core externa (a qualificação nativa de Windows segue pendente; veja
+   [qualificação de release](docs/release-qualification.md)). Inspecione a entrega
+   determinística e o opening resultantes. Resume usa o **recibo e alvo originais
+   e a mesma entrega/opening**. Após o vínculo nativo, Plan Detail retorna o
+   **snapshot original aprovado**, mesmo que a fonte editável tenha mudado ou sido
+   excluída. Os bytes editáveis atuais não estão disponíveis nessa API; não há
+   alternativa de arquivo local. Recibos históricos continuam fatos separados e
+   somente leitura.
 8. **Perguntas e conclusão.** Responda à identidade exata da pergunta atual
    (missão, workspace, entrega, tarefa, execução, ID da pergunta e opening).
    Registrar resposta não retoma execução. Inspecione e retome explicitamente
