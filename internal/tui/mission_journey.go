@@ -345,7 +345,6 @@ func (m model) mutateJourney(kind string) (model, tea.Cmd) {
 		member, err := planningMember(r.mission)
 		if err != nil {
 			r.problem = "journey_identity"
-			r.problemErr, r.problemKind, r.mutationFailure = nil, "", nil
 			m.putJourney(r)
 			return m, nil
 		}
