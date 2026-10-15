@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
-	"syscall"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,19 +42,26 @@ func TestDaemonDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "daemon.go")
-	// The acknowledgment keeps the owned process alive until the caller has its
-	// process handle. The deadline also bounds its life if the caller fails.
+	// The live control exchange binds ownership before any receipt read.
 	const helper = `package main
-import("encoding/json"; "os"; "path/filepath"; "time")
+import("encoding/json"; "net"; "os"; "path/filepath"; "time")
 func main() {
+ deadline := time.Now().Add(5*time.Second)
  home := os.Args[2]
+ c, err := net.DialTimeout("tcp", os.Getenv("CONSOLE_DISCOVERY_CONTROL"), time.Until(deadline)); if err != nil { panic(err) }; defer c.Close()
+ if err := c.SetDeadline(deadline); err != nil { panic(err) }
+ enc, dec := json.NewEncoder(c), json.NewDecoder(c)
  self, err := os.Executable(); if err != nil { panic(err) }
- data, err := json.Marshal(struct { Path string; Args []string; PID int }{self, os.Args[1:], os.Getpid()}); if err != nil { panic(err) }
+ receipt := struct { Path string; Args []string; PID int }{self, os.Args[1:], os.Getpid()}
+ if err := enc.Encode(receipt); err != nil { panic(err) }
+ var command string
+ if err := dec.Decode(&command); err != nil { panic(err) }
+ if command == "ack" { return }; if command != "bound" { panic(command) }
+ data, err := json.Marshal(receipt); if err != nil { panic(err) }
  if err := os.WriteFile(filepath.Join(home,"receipt.tmp"), data, 0600); err != nil { panic(err) }
  if err := os.Rename(filepath.Join(home,"receipt.tmp"), filepath.Join(home,"receipt.json")); err != nil { panic(err) }
- ticker := time.NewTicker(10*time.Millisecond); defer ticker.Stop()
- deadline := time.NewTimer(5*time.Second); defer deadline.Stop()
- for { select { case <-ticker.C: if _, err := os.Stat(filepath.Join(home,"ack")); err == nil { return }; case <-deadline.C: os.Exit(2) } }
+ if err := enc.Encode("ready"); err != nil { panic(err) }
+ if err := dec.Decode(&command); err != nil { panic(err) }; if command != "ack" { panic(command) }
 }
 `
 	if err := os.WriteFile(source, []byte(helper), 0600); err != nil {
@@ -65,9 +73,12 @@ func main() {
 		t.Fatalf("build daemon: %v: %s", err, output)
 	}
 	pathDaemon := filepath.Join(pathDir, testfixture.ExecutableName("consoled"))
-	for _, mode := range []string{"sibling", "path"} {
+	for _, mode := range []string{"sibling", "read-failure", "path"} {
 		t.Run(mode, func(t *testing.T) {
-			home := t.TempDir()
+			home, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			childPath := pathDir
 			expected := daemon
 			if mode == "path" {
@@ -88,6 +99,14 @@ func main() {
 			if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
 				cmd.Env = append(cmd.Env, "SystemRoot="+systemRoot)
 			}
+			if mode == "read-failure" {
+				cmd.Env = append(cmd.Env, "CONSOLE_DISCOVERY_READ_FAILURE=1")
+				output, err := cmd.CombinedOutput()
+				if err == nil || !strings.Contains(string(output), "receipt read:") || !strings.Contains(string(output), "owned daemon completed") {
+					t.Fatalf("read failure must preserve primary error and complete owned helper: %v\n%s", err, output)
+				}
+				return
+			}
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("native %s discovery: %v\n%s", mode, err, output)
 			}
@@ -100,70 +119,129 @@ func TestDaemonDiscoveryCaller(t *testing.T) {
 	if home == "" {
 		return
 	}
-	const listen = "127.0.0.1:43987"
-	if err := startDaemon(consoleruntime.Paths{Home: home, Listen: listen}); err != nil {
-		t.Fatalf("startDaemon: %v", err)
+	if err := discoveryCaller(t, home); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.NewTimer(8 * time.Second)
-	defer deadline.Stop()
+}
+
+type discoveryReceipt struct {
+	Path string
+	Args []string
+	PID  int
+}
+
+func discoveryCaller(t *testing.T, home string) (result error) {
+	const listen = "127.0.0.1:43987"
+	deadline := time.Now().Add(8 * time.Second)
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if err := listener.SetDeadline(deadline); err != nil {
+		return err
+	}
+	t.Setenv("CONSOLE_DISCOVERY_CONTROL", listener.Addr().String())
+	if err := startDaemon(consoleruntime.Paths{Home: home, Listen: listen}); err != nil {
+		return fmt.Errorf("startDaemon: %w", err)
+	}
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	var identity discoveryReceipt
+	if err := dec.Decode(&identity); err != nil {
+		return err
+	}
+	// The helper remains blocked on this connection while its process is opened.
+	owned, err := bindDiscoveryProcess(identity.PID, os.Getenv("CONSOLE_DISCOVERY_EXPECT"))
+	if err != nil {
+		return err
+	}
+	defer owned.release()
+	defer func() {
+		ackErr := enc.Encode("ack")
+		waitErr := owned.wait(deadline)
+		if waitErr == nil {
+			t.Logf("owned daemon completed: %d", identity.PID)
+		}
+		result = errors.Join(result, ackErr, waitErr)
+	}()
+	if identity.Path != os.Getenv("CONSOLE_DISCOVERY_EXPECT") {
+		return fmt.Errorf("bound image = %q", identity.Path)
+	}
+	if err := enc.Encode("bound"); err != nil {
+		return err
+	}
+	var ready string
+	if err := dec.Decode(&ready); err != nil {
+		return err
+	}
+	if ready != "ready" {
+		return fmt.Errorf("helper readiness = %q", ready)
+	}
+	receiptPath := filepath.Join(home, "receipt.json")
+	if os.Getenv("CONSOLE_DISCOVERY_READ_FAILURE") != "" {
+		receiptPath = home
+	}
+	data, err := readDiscoveryReceipt(receiptPath, deadline, os.ReadFile)
+	if err != nil {
+		return fmt.Errorf("receipt read: %w", err)
+	}
+	var receipt discoveryReceipt
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		return err
+	}
+	if receipt.PID != identity.PID {
+		return fmt.Errorf("receipt PID = %d, bound PID = %d", receipt.PID, identity.PID)
+	}
+	if receipt.Path != os.Getenv("CONSOLE_DISCOVERY_EXPECT") {
+		return fmt.Errorf("executed path = %q, want %q", receipt.Path, os.Getenv("CONSOLE_DISCOVERY_EXPECT"))
+	}
+	if want := []string{"-home", home, "-listen", listen}; !reflect.DeepEqual(receipt.Args, want) {
+		return fmt.Errorf("arguments = %q, want %q", receipt.Args, want)
+	}
+	return nil
+}
+
+func readDiscoveryReceipt(path string, deadline time.Time, read func(string) ([]byte, error)) ([]byte, error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	var receipt struct {
-		Path string
-		Args []string
-		PID  int
-	}
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
 	for {
-		data, err := os.ReadFile(filepath.Join(home, "receipt.json"))
+		data, err := read(path)
 		if err == nil {
-			if err := json.Unmarshal(data, &receipt); err != nil {
-				t.Fatal(err)
-			}
-			break
+			return data, nil
 		}
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
+		if !errors.Is(err, os.ErrNotExist) && !discoverySharingViolation(err) {
+			return nil, err
 		}
 		select {
 		case <-ticker.C:
-		case <-deadline.C:
-			t.Fatal("owned daemon receipt timed out")
+		case <-timer.C:
+			return nil, fmt.Errorf("owned daemon receipt timed out: %w", err)
 		}
 	}
-	process, err := os.FindProcess(receipt.PID)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestDiscoveryReceiptReadFailure(t *testing.T) {
+	path := t.TempDir()
+	_, want := os.ReadFile(path)
+	if want == nil {
+		t.Fatal("directory read unexpectedly succeeded")
 	}
-	defer process.Release()
-	if err := os.WriteFile(filepath.Join(home, "ack"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS == "windows" {
-		state, err := process.Wait()
-		if err != nil || !state.Success() {
-			t.Fatalf("owned daemon completion: %v, %v", state, err)
-		}
-	} else {
-		// startDaemon owns Wait; observe only the PID supplied by our helper.
-		for {
-			err := process.Signal(syscall.Signal(0))
-			if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
-				break
-			}
-			if err != nil {
-				t.Fatalf("observe owned daemon completion: %v", err)
-			}
-			select {
-			case <-ticker.C:
-			case <-deadline.C:
-				t.Fatal("owned daemon did not exit")
-			}
-		}
-	}
-	if receipt.Path != os.Getenv("CONSOLE_DISCOVERY_EXPECT") {
-		t.Fatalf("executed path = %q, want %q", receipt.Path, os.Getenv("CONSOLE_DISCOVERY_EXPECT"))
-	}
-	if want := []string{"-home", home, "-listen", listen}; !reflect.DeepEqual(receipt.Args, want) {
-		t.Fatalf("arguments = %q, want %q", receipt.Args, want)
+	calls := 0
+	_, err := readDiscoveryReceipt(path, time.Now().Add(8*time.Second), func(path string) ([]byte, error) {
+		calls++
+		return os.ReadFile(path)
+	})
+	if err == nil || err.Error() != want.Error() || calls != 1 {
+		t.Fatalf("read error = %v, want %v, calls = %d", err, want, calls)
 	}
 }
