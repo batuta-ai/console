@@ -604,7 +604,7 @@ func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
 
 func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	_, home := task43CoreHome(t)
-	image := filepath.Join(home, "published-core49.exe")
+	image := filepath.Join(home, "published-core55.exe")
 	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-mod=readonly", "-o", image, "github.com/batuta-ai/core/cmd/batuta")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -657,7 +657,7 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	if !found {
 		t.Fatal("public Core does not advertise review", public)
 	}
-	t.Logf("Actual public Core49 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
+	t.Logf("Actual public Core55 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
 }
 
 func task43CoreReviewGuardPE() (bool, int) {
