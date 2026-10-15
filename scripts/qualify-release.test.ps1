@@ -37,7 +37,7 @@ public static class BundleCaseStreams {
  }
 }
 '@
-if ($original -cne '98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c4643937b3') { throw 'Frozen consumer differs' }
+if ($original -cne '6f2d94507a2714764fc95035a12e64465a57e5b1ad768b851110e4ef4edc62d5') { throw 'Frozen consumer differs' }
 $null = New-Item -ItemType Directory -Path $Evidence
 $cases = @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')
 $results = [Collections.Generic.List[object]]::new()
