@@ -296,3 +296,257 @@ jobs:
           name: windows-ordinary-skills-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ORDINARY_EVIDENCE }}/*
           if-no-files-found: error
+  windows-go-list-native-diagnostic:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/batuta/windows-go-list-native-probe'
+    name: Temporary SDK metadata diagnostic (no qualification credit)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
+    steps:
+      - name: Create owned diagnostic directory
+        timeout-minutes: 1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP ('console-go-list-diagnostic-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          'Native administrative runner before account creation; diagnostic only; no ordinary-token, full-native or MSYS qualification.' | Set-Content (Join-Path $evidence 'scope.txt')
+          "GO_LIST_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 1
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Record actual SDK and run bounded counterfactual controls
+        timeout-minutes: 4
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = $env:GO_LIST_EVIDENCE
+          $source = $PWD.Path
+          $budget = [Diagnostics.Stopwatch]::StartNew()
+          $go = (Get-Command go.exe -CommandType Application | Select-Object -First 1).Source
+          $go = [IO.Path]::GetFullPath($go)
+          foreach ($key in @('GOCACHE', 'GOMODCACHE', 'GOTMPDIR')) {
+            $value = Join-Path $evidence $key
+            New-Item -ItemType Directory -Path $value | Out-Null
+            [Environment]::SetEnvironmentVariable($key, $value, 'Process')
+          }
+          $env:GOPROXY = 'off'
+          $env:GOSUMDB = 'off'
+          $control = Join-Path $evidence 'stdlib-cwd'
+          New-Item -ItemType Directory -Path $control | Out-Null
+          $ancestor = [IO.DirectoryInfo]::new($control)
+          while ($null -ne $ancestor) {
+            foreach ($name in @('go.mod', 'go.work')) {
+              if (Test-Path -LiteralPath (Join-Path $ancestor.FullName $name)) { throw 'Stdlib control requires module-free ancestors; stop without preflight' }
+            }
+            $ancestor = $ancestor.Parent
+          }
+          # Persist process settings and executable identity before any SDK command.
+          $settings = [ordered]@{
+            go = $go; goSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $go).Hash
+            cwd = $source; stdlibCwd = $control; os = $env:RUNNER_OS; arch = $env:RUNNER_ARCH
+            processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            elevated = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          }
+          foreach ($key in @('GOENV', 'GOTOOLCHAIN', 'GOWORK', 'GOFLAGS', 'GOPROXY', 'GOSUMDB', 'GOPRIVATE', 'GONOSUMDB', 'GONOPROXY', 'GOROOT', 'GOOS', 'GOARCH', 'GOAMD64', 'CGO_ENABLED', 'GOCACHE', 'GOMODCACHE', 'GOTMPDIR', 'GOMEMLIMIT', 'GOGC', 'GODEBUG', 'GOEXPERIMENT', 'GO111MODULE')) {
+            $settings[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+          }
+          $settings | ConvertTo-Json | Set-Content (Join-Path $evidence 'process-before-sdk.json')
+          function Invoke-Capture([string]$Name, [string]$Executable, [string[]]$Arguments, [string]$Cwd) {
+            $prefix = Join-Path $evidence $Name
+            $info = [Diagnostics.ProcessStartInfo]::new($Executable)
+            $info.WorkingDirectory = $Cwd
+            $info.UseShellExecute = $false
+            $info.RedirectStandardOutput = $true
+            $info.RedirectStandardError = $true
+            foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+            $remaining = 210000 - [int]$budget.ElapsedMilliseconds
+            $waitMs = [Math]::Min(90000, $remaining - 20000)
+            @{ executable = $Executable; declaredArgumentList = $Arguments; cwd = $Cwd;
+               actualWindowsCommandLine = 'unobserved'; capture = '.NET ArgumentList; BaseStream raw bytes; Parent uses PowerShell native invocation';
+               goproxy = $env:GOPROXY; gosumdb = $env:GOSUMDB; waitMilliseconds = $waitMs } |
+              ConvertTo-Json -Depth 4 | Set-Content "$prefix.command.json"
+            $out = $err = $process = $stdout = $stderr = $null
+            $started = $false
+            $failures = [Collections.Generic.List[string]]::new()
+            try {
+              if ($waitMs -le 0) { throw 'Shared 210-second command budget exhausted; reserve guard/upload time' }
+              $out = [IO.File]::Create("$prefix.stdout")
+              $err = [IO.File]::Create("$prefix.stderr")
+              $process = [Diagnostics.Process]::new()
+              $process.StartInfo = $info
+              try {
+                $started = $process.Start()
+                if (-not $started) { throw 'Process did not start' }
+              } catch { $_.ToString() | Set-Content "$prefix.launch-error.txt"; throw }
+              $stdout = $process.StandardOutput.BaseStream.CopyToAsync($out)
+              $stderr = $process.StandardError.BaseStream.CopyToAsync($err)
+              if (-not $process.WaitForExit($waitMs)) {
+                'Command wait exceeded its shared-budget allowance' | Set-Content "$prefix.timeout.txt"
+                throw "Diagnostic timeout: $Name"
+              }
+              $code = $process.ExitCode
+              $code | Set-Content "$prefix.exit"
+              if ($code -ne 0) { throw "Diagnostic command failed: $Name exit $code" }
+            } catch {
+              $failures.Add($_.ToString())
+            } finally {
+              if ($started) {
+                try {
+                  if (-not $process.HasExited) {
+                    # Terminate only the original creation object; no tree/PID lookup.
+                    $process.Kill()
+                    if (-not $process.WaitForExit(3000)) { throw 'Original process termination join incomplete' }
+                  }
+                  if ($process.HasExited) { $process.ExitCode | Set-Content "$prefix.exit" }
+                } catch { $failures.Add("termination: $_") }
+              }
+              $copies = [Threading.Tasks.Task[]]@(@($stdout, $stderr) | Where-Object { $null -ne $_ })
+              if ($copies.Count) {
+                try {
+                  $drained = [Threading.Tasks.Task]::WaitAll($copies, 3000)
+                  if (-not $drained) { throw 'Raw stream drain incomplete (possible inherited child pipe)' }
+                } catch { $failures.Add("drain: $_") }
+              }
+              if ($started) {
+                foreach ($streamName in @('StandardOutput', 'StandardError')) {
+                  try { $process.$streamName.Dispose() } catch { $failures.Add("close $streamName`: $_") }
+                }
+              }
+              if ($copies.Count) {
+                try {
+                  $joined = [Threading.Tasks.Task]::WaitAll($copies, 1000)
+                  if (-not $joined) { throw 'Copy tasks still incomplete after closing read streams' }
+                } catch { $failures.Add("copy join: $_") }
+              }
+              foreach ($resource in @($out, $err, $process)) {
+                if ($null -ne $resource) {
+                  try { $resource.Dispose() } catch { $failures.Add("dispose: $_") }
+                }
+              }
+            }
+            if ($failures.Count) {
+              $failures | Set-Content "$prefix.capture-errors.txt"
+              throw ($failures -join [Environment]::NewLine)
+            }
+          }
+          $git = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+          Invoke-Capture 'source-head-before' $git @('rev-parse', 'HEAD') $source
+          Invoke-Capture 'source-status-before' $git @('status', '--porcelain', '--untracked-files=all') $source
+          if ((Get-Item (Join-Path $evidence 'source-status-before.stdout')).Length) { throw 'Clean source checkout required' }
+          $tracked = & $git ls-files
+          if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
+          @($tracked | ForEach-Object {
+            @{ path = $_; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $source $_)).Hash }
+          }) | ConvertTo-Json | Set-Content (Join-Path $evidence 'source-before.json')
+          $parent = Join-Path $source 'scripts/check-windows-ordinary.ps1'
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $parent).Hash -ine 'ac14d9fca8cb407396ee272dcecb0a779bcbe4a0bcb2a52520d4d968cbf8233b') { throw 'Frozen Parent source changed' }
+          $tokens = $null
+          $errors = $null
+          $ast = [Management.Automation.Language.Parser]::ParseFile($parent, [ref]$tokens, [ref]$errors)
+          if ($errors.Count) { throw 'Frozen Parent parse failed' }
+          $assignments = @($ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$graph'
+          }, $true))
+          if ($assignments.Count -ne 1) { throw 'Exactly one frozen formatter assignment required' }
+          $literal = $assignments[0].Right.Extent.Text
+          if ($literal[0] -cne "'" -or $literal[-1] -cne "'") { throw 'Frozen formatter must be a single quoted literal' }
+          $graph = $literal.Substring(1, $literal.Length - 2).Replace("''", "'")
+          [IO.File]::WriteAllBytes((Join-Path $evidence 'formatter.txt'), [Text.Encoding]::UTF8.GetBytes($graph))
+          @{ parent = 'scripts/check-windows-ordinary.ps1'; parentSHA256 = (Get-FileHash $parent -Algorithm SHA256).Hash;
+             line = $assignments[0].Extent.StartLineNumber; literal = $literal;
+             formatterSHA256 = (Get-FileHash (Join-Path $evidence 'formatter.txt') -Algorithm SHA256).Hash } |
+            ConvertTo-Json | Set-Content (Join-Path $evidence 'formatter-binding.json')
+          Invoke-Capture 'go-version' $go @('version') $control
+          if ([IO.File]::ReadAllText((Join-Path $evidence 'go-version.stdout')).Trim() -cne 'go version go1.27.2 windows/amd64') { throw 'Pinned native Go required' }
+          Invoke-Capture 'go-version-m' $go @('version', '-m', $go) $control
+          Invoke-Capture 'go-env' $go @('env', '-json', 'GOROOT', 'GOTOOLDIR', 'GOVERSION', 'GOENV', 'GOTOOLCHAIN', 'GOWORK', 'GOFLAGS', 'GOOS', 'GOARCH', 'GOAMD64', 'CGO_ENABLED', 'GOCACHE', 'GOMODCACHE', 'GOTMPDIR', 'GOPROXY', 'GOSUMDB', 'GOPRIVATE', 'GONOSUMDB', 'GONOPROXY', 'GOEXPERIMENT') $control
+          $sdk = Get-Content -Raw (Join-Path $evidence 'go-env.stdout') | ConvertFrom-Json
+          foreach ($relative in @('src/cmd/go/internal/list/list.go', 'src/bufio/bufio.go', 'src/fmt/print.go', 'src/fmt/format.go', 'src/text/template/exec.go', 'LICENSE')) {
+            $path = Join-Path $sdk.GOROOT $relative
+            @{ path = $path; sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash } |
+              ConvertTo-Json -Compress | Add-Content (Join-Path $evidence 'sdk-source-hashes.jsonl')
+          }
+          foreach ($tool in @('compile', 'link')) {
+            $path = Join-Path $sdk.GOTOOLDIR "$tool.exe"
+            @{ path = $path; sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash } |
+              ConvertTo-Json -Compress | Add-Content (Join-Path $evidence 'sdk-tool-hashes.jsonl')
+            Invoke-Capture "$tool-version" $path @('-V=full') $control
+            Invoke-Capture "$tool-build" $go @('version', '-m', $path) $control
+          }
+          'Variations from Parent: operand internal/goarch; module-free owned CWD; no overlay; new owned GOCACHE/GOMODCACHE/GOTMPDIR; GOPROXY/GOSUMDB off; no project preflight; .NET ArgumentList/raw capture instead of Parent PowerShell native invocation. Declared argv recorded; actual Windows command line unobserved.' | Set-Content (Join-Path $evidence 'stdlib-variation.txt')
+          Invoke-Capture 'stdlib' $go @('list', '-tags', 'console_ordinary_user', '-deps', '-test', '-f', $graph, 'internal/goarch') $control
+          'NOTREPRODUCED: stdlib control returned zero; not fixed and SDK not cleared. Project/overlay triggering remains possible.' | Set-Content (Join-Path $evidence 'stdlib-interpretation.txt')
+          $env:GOPROXY = 'https://proxy.golang.org'
+          $env:GOSUMDB = 'sum.golang.org'
+          if ($env:GOPRIVATE -or $env:GONOSUMDB -or $env:GONOPROXY) { throw 'Public module policy required' }
+          Invoke-Capture 'mod-download' $go @('mod', 'download') $source
+          Invoke-Capture 'mod-verify' $go @('mod', 'verify') $source
+          foreach ($entry in (Get-Content -Raw (Join-Path $evidence 'source-before.json') | ConvertFrom-Json)) {
+            if ($entry.path -in @('go.mod', 'go.sum') -and (Get-FileHash (Join-Path $source $entry.path) -Algorithm SHA256).Hash -cne $entry.sha256) { throw 'Frozen module files changed' }
+          }
+          'go.mod/go.sum unchanged after public download and verify' | Set-Content (Join-Path $evidence 'module-guard.txt')
+          $env:GOPROXY = 'off'
+          $env:GOSUMDB = 'off'
+          'Original project operand/CWD/formatter/flags; overlay removed; new owned GOCACHE/GOMODCACHE/GOTMPDIR; public preflight uses https://proxy.golang.org without direct fallback and sum.golang.org, then GOPROXY/GOSUMDB off; .NET ArgumentList/raw capture instead of Parent PowerShell native invocation. Declared argv recorded; actual Windows command line unobserved.' | Set-Content (Join-Path $evidence 'project-variation.txt')
+          Invoke-Capture 'project-no-overlay' $go @('list', '-tags', 'console_ordinary_user', '-deps', '-test', '-f', $graph, './internal/testfixture') $source
+          'NOTREPRODUCED: both controls returned zero; root cause UNKNOWN; these cache/policy/launch/overlay variations do not isolate an overlay defect or clear the SDK; no waiver or qualification credit.' | Set-Content (Join-Path $evidence 'project-interpretation.txt')
+      - name: Always verify source bytes and preserve diagnostic interpretation
+        timeout-minutes: 1
+        if: always() && env.GO_LIST_EVIDENCE != ''
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = $env:GO_LIST_EVIDENCE
+          'Any nonzero/launch/setup/preflight failure fails this diagnostic. Stdlib failure makes project/overlay unnecessary for that failure only; compare raw signature. Project failure makes overlay unnecessary for that failure only. Root cause UNKNOWN; no qualification credit.' | Set-Content (Join-Path $evidence 'interpretation.txt')
+          $manifest = Join-Path $evidence 'source-before.json'
+          if (-not (Test-Path $manifest)) { throw 'Initial source manifest unavailable; diagnostic incomplete' }
+          $head = & git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Final source HEAD unavailable' }
+          $head | Set-Content (Join-Path $evidence 'source-head-after.txt')
+          $expectedHead = [IO.File]::ReadAllText((Join-Path $evidence 'source-head-before.stdout')).Trim()
+          if ($head -cne $expectedHead) { throw 'Source HEAD changed' }
+          foreach ($entry in (Get-Content -Raw $manifest | ConvertFrom-Json)) {
+            $hash = (Get-FileHash -LiteralPath $entry.path -Algorithm SHA256).Hash
+            if ($hash -cne $entry.sha256) { throw "Source bytes changed: $($entry.path)" }
+          }
+          $status = & git status --porcelain --untracked-files=all
+          if ($LASTEXITCODE -ne 0) { throw 'Final source status failed' }
+          $status | Set-Content (Join-Path $evidence 'source-status-after.txt')
+          if ($status) { throw 'Source checkout changed' }
+          'HEAD, all tracked hashes and clean status preserved' | Set-Content (Join-Path $evidence 'source-guard.txt')
+      - name: Always retain raw diagnostic outputs and partial SDK metadata
+        timeout-minutes: 1
+        if: always() && env.GO_LIST_EVIDENCE != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-go-list-native-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.GO_LIST_EVIDENCE }}/*.txt
+            ${{ env.GO_LIST_EVIDENCE }}/*.json
+            ${{ env.GO_LIST_EVIDENCE }}/*.jsonl
+            ${{ env.GO_LIST_EVIDENCE }}/*.stdout
+            ${{ env.GO_LIST_EVIDENCE }}/*.stderr
+            ${{ env.GO_LIST_EVIDENCE }}/*.exit
+          if-no-files-found: error
