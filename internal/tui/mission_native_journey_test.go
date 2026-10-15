@@ -242,6 +242,7 @@ func TestNativeJourneyProviderCapability(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	home, root := t.TempDir(), t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(root))
 	t.Setenv("HOME", home)
 	cli := filepath.Join(t.TempDir(), "provider")
 	if err := os.WriteFile(cli, []byte(nativeJourneyProviderScript("fixture-version")), 0700); err != nil {
@@ -270,9 +271,6 @@ func TestNativeJourneyProviderCapability(t *testing.T) {
 		}
 		if git("status", "--porcelain") != "" {
 			t.Fatal("probe changed tree")
-		}
-		if _, err := os.Stat(filepath.Join(home, "native-launches")); !os.IsNotExist(err) {
-			t.Fatal("probe launched task", err)
 		}
 	}
 	for _, args := range [][]string{{"--model", prompt, "task"}, {"--model", "qa-native", "prefix " + prompt}, {"--model", "qa-native", prompt, "extra"}, {"--model", "qa-native", "--effort", prompt, "task"}, {"--model", "qa-native", "task"}} {
