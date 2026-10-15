@@ -140,7 +140,7 @@ try {
     $env:GOPROXY = 'off'
     $baselineRef = 'e506fe1b358eeabc9db3142a0caee2859c115735:internal/testfixture/command_windows.go'
     $baselineHelper = Join-Path $Evidence 'baseline-command_windows.go'
-    $extract = [Diagnostics.ProcessStartInfo]::new((Get-Command git -CommandType Application).Source)
+    $extract = [Diagnostics.ProcessStartInfo]::new((Get-Command git -CommandType Application | Select-Object -First 1).Source)
     foreach ($arg in @('-C', $source, 'cat-file', 'blob', $baselineRef)) { $extract.ArgumentList.Add($arg) }
     $extract.UseShellExecute = $false
     $extract.RedirectStandardOutput = $true
