@@ -124,7 +124,13 @@ func (r nativeCoreCommands) Run(ctx context.Context, command publication.Command
 			return failed, domain.ErrInvalidReference
 		}
 		var err error
-		command.Environment, err = nativeCoreGitEnvironment(command.Environment)
+		if base == "git" || base == "git.exe" {
+			_, err = session.NativeEnvironment(nil, command.Environment)
+			// Keep the argv override after command-local GIT_CONFIG_PARAMETERS.
+			command.Args = append([]string{"-c", "core.longpaths=true"}, command.Args...)
+		} else {
+			command.Environment, err = nativeCoreGitEnvironment(command.Environment)
+		}
 		if err != nil {
 			return failed, err
 		}
@@ -194,7 +200,7 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 	}
 	// Public Core review also invokes Git directly. Scope long-path support to
 	// this contained image; injected commands still close inherited Git config
-	// and receive the same setting in their command-local environment.
+	// and receive controlled long-path support at the command boundary.
 	for key, value := range map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths", "GIT_CONFIG_VALUE_0": "true"} {
 		if err := os.Setenv(key, value); err != nil {
 			return err

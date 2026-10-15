@@ -165,3 +165,70 @@ func nativeCoreGitEnvironmentPairs(count int) []string {
 	}
 	return env
 }
+
+func TestNativeCoreGitEnvironmentDirectPrecedence(t *testing.T) {
+	commands, home, shell, git := nativeCoreGitEnvironmentCommands(t)
+	for _, fixture := range []struct {
+		name       string
+		executable string
+		env        []string
+		options    []string
+		want       string
+		all        string
+	}{
+		{"direct-parameters", git, []string{"GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS='core.longpaths=false'"}, nil, "true\n", "false\ntrue\n"},
+		{"direct-order", git, []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.longpaths", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_PARAMETERS='core.longpaths=false'"}, nil, "true\n", "false\nfalse\ntrue\n"},
+		{"direct-argv", git, []string{"GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS='core.longpaths=false'"}, []string{"-c", "core.longpaths=false"}, "false\n", "false\ntrue\nfalse\n"},
+		{"direct-full-count", git, nativeCoreGitEnvironmentPairs(256), nil, "true\n", "true\n"},
+		{"shell-parameters", shell, []string{"GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS='core.longpaths=false'"}, nil, "false\n", "true\nfalse\n"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			for _, query := range []struct {
+				option string
+				want   string
+			}{{"--get", fixture.want}, {"--get-all", fixture.all}} {
+				args := append(slices.Clone(fixture.options), "config", query.option, "core.longpaths")
+				if fixture.executable == shell {
+					args = append([]string{"-c", `git "$@"`, "sh"}, args...)
+				}
+				beforeArgs, beforeEnv := slices.Clone(args), slices.Clone(fixture.env)
+				result, err := commands.Run(context.Background(), publication.Command{Executable: fixture.executable, Directory: home, Args: args, Environment: fixture.env})
+				if err != nil || result.ExitCode != 0 || strings.ReplaceAll(string(result.Stdout), "\r\n", "\n") != query.want || len(result.Stderr) != 0 || result.StdoutTruncated || result.StderrTruncated {
+					t.Errorf("config %s core.longpaths: exit=%d error=%v stdout=%q stderr=%q want=%q", query.option, result.ExitCode, err, result.Stdout, result.Stderr, query.want)
+				}
+				if !slices.Equal(beforeArgs, args) || !slices.Equal(beforeEnv, fixture.env) {
+					t.Fatal("command arguments or environment were mutated")
+				}
+			}
+		})
+	}
+}
+
+func TestNativeCoreGitEnvironmentDirectInvalidBeforeLaunch(t *testing.T) {
+	commands, home, _, git := nativeCoreGitEnvironmentCommands(t)
+	for _, fixture := range []struct {
+		name string
+		env  []string
+	}{
+		{"empty-count", []string{"GIT_CONFIG_COUNT="}},
+		{"negative-count", []string{"GIT_CONFIG_COUNT=-1"}},
+		{"malformed-count", []string{"GIT_CONFIG_COUNT=invalid"}},
+		{"overflow-count", []string{"GIT_CONFIG_COUNT=999999999999999999999999999"}},
+		{"above-limit", []string{"GIT_CONFIG_COUNT=257"}},
+		{"missing-key", []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_VALUE_0=local"}},
+		{"missing-value", []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=proof.local"}},
+		{"invalid-entry", []string{"GIT_CONFIG_COUNT=0", "invalid"}},
+		{"nul-entry", []string{"GIT_CONFIG_COUNT=0", "GIT_DIR=invalid\x00"}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			marker := filepath.Join(home, "direct-launched-"+fixture.name)
+			result, err := commands.Run(context.Background(), publication.Command{Executable: git, Directory: home, Args: []string{"config", "--file", marker, "proof.launched", "true"}, Environment: fixture.env})
+			if err == nil || result.ExitCode != -1 || len(result.Stdout) != 0 || len(result.Stderr) != 0 {
+				t.Errorf("invalid configuration must fail before launch: exit=%d error=%v", result.ExitCode, err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Errorf("invalid configuration launched Git: marker error=%v", err)
+			}
+		})
+	}
+}
