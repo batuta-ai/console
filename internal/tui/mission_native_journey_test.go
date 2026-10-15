@@ -25,7 +25,7 @@ import (
 func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.49", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
+	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
 	if raw, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("frozen public Core build: %s %v", raw, err)
 	}
@@ -49,7 +49,7 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 			}
 			nativeModel := map[string]string{"codex": "qa-native", "claude": "sonnet"}[provider]
 			version := map[string]string{"codex": "codex-cli 0.160.0", "claude": "2.1.289 (Claude Code)"}[provider]
-			write(filepath.Join(bin, provider), "#!/bin/sh\nif [ -n \"$OPENAI_API_KEY\" ] || [ -n \"$ANTHROPIC_API_KEY\" ]; then exit 90; fi\ncase \"$1\" in\n--version) printf '%s\\n' '"+version+"';exit 0;;\ndebug) printf '{\"models\":[{\"slug\":\"qa-native\"}]}\\n';exit 0;;\ndoctor|plugin) printf '{}\\n';exit 0;;\n--verify) printf 'TASK 1: DONE\\n';exit 0;;\nesac\nprintf 'BATUTA-QUESTION: exact native question?\\n'\n")
+			write(filepath.Join(bin, provider), nativeJourneyProviderScript(version))
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+filepath.Dir(git)+string(os.PathListSeparator)+"/bin")
 			skills := filepath.Join(home, "skills")
 			for _, name := range []string{"batuta", "batuta-loop", "batuta-review"} {
@@ -229,5 +229,64 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 				t.Fatal("original opening not displayed")
 			}
 		})
+	}
+}
+
+func nativeJourneyProviderScript(version string) string {
+	return "#!/bin/sh\nif [ -n \"$OPENAI_API_KEY\" ] || [ -n \"$ANTHROPIC_API_KEY\" ]; then exit 90; fi\ncase \"$1\" in\n--version) printf '%s\\n' '" + version + "';exit 0;;\ndebug) printf '{\"models\":[{\"slug\":\"qa-native\"}]}\\n';exit 0;;\ndoctor|plugin) printf '{}\\n';exit 0;;\n--verify) printf 'TASK 1: DONE\\n';exit 0;;\nesac\nif [ \"$#\" -eq 3 ] && [ \"$1\" = \"--model\" ] && [ \"$3\" = 'Run the shell command `git rev-parse HEAD` in the current directory. Do not create, edit or delete any file. When the command has run, print BATUTA-CAPABLE <sha> on a line of its own, replacing <sha> with the command'\"'\"'s output, and stop.' ]; then\n  sha=$(git rev-parse HEAD) || exit 1\n  printf 'BATUTA-CAPABLE %s\\n' \"$sha\"\n  exit 0\nfi\nprintf 'BATUTA-QUESTION: exact native question?\\n'\n"
+}
+
+func TestNativeJourneyProviderCapability(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	home, root := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	cli := filepath.Join(t.TempDir(), "provider")
+	if err := os.WriteFile(cli, []byte(nativeJourneyProviderScript("fixture-version")), 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = root
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "fixture")
+	prompt := "Run the shell command `git rev-parse HEAD` in the current directory. Do not create, edit or delete any file. When the command has run, print BATUTA-CAPABLE <sha> on a line of its own, replacing <sha> with the command's output, and stop."
+	for range 2 {
+		git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "next HEAD")
+		c := exec.Command(cli, "--model", "qa-native", prompt)
+		c.Dir = root
+		out, err := c.CombinedOutput()
+		if err != nil || string(out) != "BATUTA-CAPABLE "+git("rev-parse", "HEAD")+"\n" {
+			t.Fatalf("capability: %s %v", out, err)
+		}
+		if git("status", "--porcelain") != "" {
+			t.Fatal("probe changed tree")
+		}
+		if _, err := os.Stat(filepath.Join(home, "native-launches")); !os.IsNotExist(err) {
+			t.Fatal("probe launched task", err)
+		}
+	}
+	for _, args := range [][]string{{"--model", prompt, "task"}, {"--model", "qa-native", "prefix " + prompt}, {"--model", "qa-native", prompt, "extra"}, {"--model", "qa-native", "--effort", prompt, "task"}, {"--model", "qa-native", "task"}} {
+		c := exec.Command(cli, args...)
+		c.Dir = root
+		out, err := c.CombinedOutput()
+		if err != nil || !strings.HasPrefix(string(out), "BATUTA-QUESTION:") || strings.Contains(string(out), "BATUTA-CAPABLE") {
+			t.Fatalf("ordinary invocation %q: %s %v", args, out, err)
+		}
+	}
+	c := exec.Command(cli, "--model", "qa-native", prompt)
+	c.Dir = t.TempDir()
+	out, err := c.CombinedOutput()
+	if err == nil || strings.Contains(string(out), "BATUTA-CAPABLE") || !strings.Contains(string(out), "fatal:") {
+		t.Fatalf("git failure hidden: %s %v", out, err)
 	}
 }
