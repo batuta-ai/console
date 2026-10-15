@@ -51,7 +51,7 @@ function Invoke-TempBinary([string]$Binary, [string[]]$Arguments, [string]$Prefi
         }
         foreach ($task in @($outTask, $errTask)) {
             if ($null -ne $task) {
-                try { $task.GetAwaiter().GetResult() } catch { $failures.Add($_) }
+                try { $null = $task.GetAwaiter().GetResult() } catch { $failures.Add($_) }
             }
         }
         foreach ($stream in @($stdout, $stderr)) {
