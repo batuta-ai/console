@@ -137,7 +137,17 @@ try {
     $env:GOTOOLCHAIN = 'local'
     $env:GOFLAGS = '-mod=readonly'
     $env:GOWORK = 'off'
+    if ($env:GOSUMDB -cne 'sum.golang.org' -or $env:GOPRIVATE -or $env:GONOSUMDB) { throw 'Public checksum database required for frozen module preparation' }
+    & go mod download 1> (Join-Path $Evidence 'mod-download.stdout') 2> (Join-Path $Evidence 'mod-download.stderr')
+    $downloadExit = $LASTEXITCODE
+    $downloadExit | Set-Content (Join-Path $Evidence 'mod-download.exit')
+    if ($downloadExit -ne 0) { throw 'Frozen module graph download failed' }
+    & go mod verify 1> (Join-Path $Evidence 'mod-verify.stdout') 2> (Join-Path $Evidence 'mod-verify.stderr')
+    $verifyExit = $LASTEXITCODE
+    $verifyExit | Set-Content (Join-Path $Evidence 'mod-verify.exit')
+    if ($verifyExit -ne 0) { throw 'Frozen module graph verification failed' }
     $env:GOPROXY = 'off'
+    $env:GOSUMDB = 'off'
     $baselineRef = 'e506fe1b358eeabc9db3142a0caee2859c115735:internal/testfixture/command_windows.go'
     $baselineHelper = Join-Path $Evidence 'baseline-command_windows.go'
     $extract = [Diagnostics.ProcessStartInfo]::new((Get-Command git -CommandType Application | Select-Object -First 1).Source)
