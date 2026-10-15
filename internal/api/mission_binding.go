@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,9 @@ func (s *Server) bindMission(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "binding_request", "invalid binding request")
 		return
 	}
-	m, err := s.Svc.BindMission(r.PathValue("id"), req)
+	m, err := s.Svc.BindMissionContext(r.Context(), r.PathValue("id"), req)
 	if err != nil {
-		writeBindingError(w, err)
+		writeBindingObservationError(w, r, err)
 		return
 	}
 	writeJSON(w, m)
@@ -44,16 +45,25 @@ func (s *Server) writeMissionWatch(w http.ResponseWriter, r *http.Request, id st
 		writeBindingError(w, domain.ErrInvalidReference)
 		return
 	}
-	view, err := s.Svc.WatchMission(id, r.URL.Query().Get("workspace"), r.URL.Query().Get("delivery"))
+	view, err := s.Svc.WatchMissionContext(r.Context(), id, r.URL.Query().Get("workspace"), r.URL.Query().Get("delivery"))
 	if err != nil {
-		writeBindingError(w, err)
+		writeBindingObservationError(w, r, err)
 		return
 	}
 	writeJSON(w, view)
 }
 
+func writeBindingObservationError(w http.ResponseWriter, r *http.Request, err error) {
+	if cause := context.Cause(r.Context()); cause != nil && errors.Is(err, cause) {
+		err = errors.Join(r.Context().Err(), err)
+	}
+	writeBindingError(w, err)
+}
+
 func writeBindingError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		writeErr(w, 408, "binding_canceled", "binding observation canceled")
 	case errors.Is(err, domain.ErrInvalidReference):
 		writeErr(w, 400, "binding_reference", "invalid mission, workspace or artifact reference")
 	case errors.Is(err, domain.ErrBindingConflict):

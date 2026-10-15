@@ -152,6 +152,10 @@ func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 // readJournalSnapshot binds Core's capture to an anchored, read-only descriptor.
 // Ownership and the descriptor are released before projection or other locks.
 func readJournalSnapshot(ctx context.Context, workspace, delivery string) (snapshot journal.Snapshot, resultErr error) {
+	// Compatibility observers have no caller context; every capture must still
+	// release its descriptor when a writer retains journal ownership.
+	ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Second, ErrArtifactIO)
+	defer cancel()
 	if !journal.ValidDeliveryID(delivery) {
 		return journal.Snapshot{}, domain.ErrInvalidReference
 	}
@@ -173,7 +177,7 @@ func readJournalSnapshot(ctx context.Context, workspace, delivery string) (snaps
 	snapshot, err = journal.ReadSnapshot(ctx, f)
 	if err != nil {
 		var pathErr *os.PathError
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (context.Cause(ctx) != nil && errors.Is(err, context.Cause(ctx))) {
 			return journal.Snapshot{}, err
 		}
 		if errors.As(err, &pathErr) {
@@ -240,8 +244,8 @@ func deliverySnapshot(ctx context.Context, workspace string, b domain.MissionBin
 	return snapshot, nil
 }
 
-func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Record, error) {
-	snapshot, err := deliverySnapshot(context.Background(), workspace, b)
+func deliveryRecords(ctx context.Context, workspace string, b domain.MissionBinding) ([]journal.Record, error) {
+	snapshot, err := deliverySnapshot(ctx, workspace, b)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +253,11 @@ func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Recor
 }
 
 func ValidateDelivery(workspace string, b domain.MissionBinding) (string, error) {
-	records, err := deliveryRecords(workspace, b)
+	return ValidateDeliveryContext(context.Background(), workspace, b)
+}
+
+func ValidateDeliveryContext(ctx context.Context, workspace string, b domain.MissionBinding) (string, error) {
+	records, err := deliveryRecords(ctx, workspace, b)
 	if err != nil {
 		return "", err
 	}
@@ -257,6 +265,10 @@ func ValidateDelivery(workspace string, b domain.MissionBinding) (string, error)
 }
 
 func ProjectMission(workspace string, b domain.MissionBinding) (domain.WatchView, error) {
+	return ProjectMissionContext(context.Background(), workspace, b)
+}
+
+func ProjectMissionContext(ctx context.Context, workspace string, b domain.MissionBinding) (domain.WatchView, error) {
 	out := domain.WatchView{API: API, Workspace: workspace, Delivery: b.DeliveryID, Source: domain.SourceUnavailable}
 	plan, err := ExactPlan(workspace, b.PlanPath)
 	if err != nil {
@@ -270,7 +282,7 @@ func ProjectMission(workspace string, b domain.MissionBinding) (domain.WatchView
 		out.Message = "delivery_unassigned"
 		return out, nil
 	}
-	records, err := deliveryRecords(workspace, b)
+	records, err := deliveryRecords(ctx, workspace, b)
 	if err != nil {
 		return out, err
 	}

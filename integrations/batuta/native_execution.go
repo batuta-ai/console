@@ -46,7 +46,11 @@ func DeliveryEvidenceExists(workspace, delivery string) (bool, error) {
 }
 
 func DeliveryApprovalReference(workspace string, b domain.MissionBinding) (DeliveryApproval, error) {
-	records, err := deliveryRecords(workspace, b)
+	return DeliveryApprovalReferenceContext(context.Background(), workspace, b)
+}
+
+func DeliveryApprovalReferenceContext(ctx context.Context, workspace string, b domain.MissionBinding) (DeliveryApproval, error) {
+	records, err := deliveryRecords(ctx, workspace, b)
 	if err != nil {
 		return DeliveryApproval{}, err
 	}
@@ -89,7 +93,11 @@ func approvedDeliverySnapshot(ctx context.Context, workspace string, b domain.Mi
 }
 
 func ValidateApprovedDelivery(workspace string, b domain.MissionBinding, a domain.PlanApproval) (string, error) {
-	_, snapshot, err := approvedDeliverySnapshot(context.Background(), workspace, b, a)
+	return ValidateApprovedDeliveryContext(context.Background(), workspace, b, a)
+}
+
+func ValidateApprovedDeliveryContext(ctx context.Context, workspace string, b domain.MissionBinding, a domain.PlanApproval) (string, error) {
+	_, snapshot, err := approvedDeliverySnapshot(ctx, workspace, b, a)
 	if err != nil {
 		return "", err
 	}
@@ -99,8 +107,14 @@ func ValidateApprovedDelivery(workspace string, b domain.MissionBinding, a domai
 // Native projection uses the original receipt and chain, independently of the
 // editable plan path. Core owns both task state and supervision progression.
 func ProjectApprovedMission(workspace string, b domain.MissionBinding, a domain.PlanApproval) (domain.WatchView, error) {
+	return ProjectApprovedMissionContext(context.Background(), workspace, b, a)
+}
+
+func ProjectApprovedMissionContext(ctx context.Context, workspace string, b domain.MissionBinding, a domain.PlanApproval) (domain.WatchView, error) {
+	// One budget covers capture and current supervision evidence, including Git.
+	ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Second, ErrArtifactIO)
+	defer cancel()
 	out := domain.WatchView{API: API, Workspace: workspace, Delivery: b.DeliveryID, Source: domain.SourceUnavailable}
-	ctx := context.Background()
 	p, snapshot, err := approvedDeliverySnapshot(ctx, workspace, b, a)
 	if err != nil {
 		return out, err
@@ -116,6 +130,9 @@ func projectApprovedSnapshot(ctx context.Context, workspace string, b domain.Mis
 	out := dto(workspace, b.DeliveryID, view)
 	gate, err := loop.CheckSupervisionGateSnapshot(ctx, loop.SupervisionOptions{Workspace: workspace, Delivery: b.DeliveryID}, snapshot)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil && (errors.Is(err, cause) || errors.Is(err, ctx.Err())) {
+			return domain.WatchView{Source: domain.SourceUnavailable}, cause
+		}
 		return domain.WatchView{Source: domain.SourceUnavailable}, artifactError(err)
 	}
 	out.Progression = &domain.ExecutionGate{Required: gate.Required, Cleared: gate.Cleared, Delivery: gate.Delivery, ReviewID: gate.ReviewID, EvidenceDigest: gate.EvidenceDigest, Reason: gate.Reason}

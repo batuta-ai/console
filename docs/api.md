@@ -257,7 +257,9 @@ as a renderer or native-platform qualification.
 
 `GET /v0/watch?workspace={id}&delivery={id}` is a legacy
 workspace projection. The workspace selector is a catalog ID, not a filesystem
-root; an empty delivery does not adopt the latest journal. Mission clients use the mission
+root; an empty delivery does not adopt the latest journal. Projection I/O
+unavailability returns 503 `binding_io`, cancellation returns 408 `binding_canceled`,
+and other projection errors return 400 `watch`. Mission clients use the mission
 watch endpoint and validate `scope`, `mission_id`, `workspace_id`, `delivery`,
 `source` and current evidence. An unassigned mission or missing/changed artifact
 can produce a 200 unavailable projection; do not treat it as empty success.
@@ -289,7 +291,7 @@ result envelopes above. Preserve those effects even when HTTP is non-2xx.
 | Family | Important statuses / codes |
 |---|---|
 | Readiness | 409 for account/CLI/authentication guards; 503 for provider unavailable/invalid/forbidden, cancelled or failed/unavailable probes |
-| Binding | 400 `binding_request`/`binding_reference`; 404 `binding_missing`; 409 `binding_conflict`; 422 `binding_artifact`; 503 `binding_io`; 500 `binding_store` |
+| Binding | 400 `binding_request`/`binding_reference`; 408 `binding_canceled`; 404 `binding_missing`; 409 `binding_conflict`; 422 `binding_artifact`; 503 `binding_io`; 500 `binding_store` |
 | Plan | 400 `plan_request`/`plan_reference`; 408 `plan_canceled`; 409 `plan_stale`/`plan_binding`/`plan_transition`; 404 `plan_missing`; 422 `plan_artifact`; 503 `plan_io`/`plan_uncertain`; 500 `plan_store` |
 | Execution | 409 `execution_approval_required`/`execution_exists`/`execution_owned`; 503 `execution_unavailable`/`execution_closing`/`execution_uncertain`; 408 `execution_canceled`; strict request/reference 400; other plan errors as above |
 | Answer | 400 `answer_request`/`answer_reference`/`answer_target`; 409 `answer_stale`/`answer_owned`; 408 `answer_canceled`; 404 `answer_missing`; 422 `answer_artifact`; 503 `answer_io`/`answer_uncertain`; 500 `answer_store`/`answer_recorded_error` |

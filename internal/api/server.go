@@ -695,9 +695,13 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		s.writeMissionWatch(w, r, r.URL.Query().Get("mission"))
 		return
 	}
-	view, err := s.Svc.Watch(r.URL.Query().Get("workspace"), r.URL.Query().Get("delivery"))
+	view, err := s.Svc.WatchContext(r.Context(), r.URL.Query().Get("workspace"), r.URL.Query().Get("delivery"))
 	if err != nil {
-		writeErr(w, 400, "watch", err.Error())
+		if errors.Is(err, batuta.ErrArtifactIO) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (context.Cause(r.Context()) != nil && errors.Is(err, context.Cause(r.Context()))) {
+			writeBindingObservationError(w, r, err)
+		} else {
+			writeErr(w, 400, "watch", err.Error())
+		}
 		return
 	}
 	writeJSON(w, view)

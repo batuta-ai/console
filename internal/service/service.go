@@ -787,6 +787,10 @@ func (s *Service) initCLI(ctx context.Context, prompt, accountID string) (adapte
 }
 
 func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) {
+	return s.WatchContext(context.Background(), workspaceID, delivery)
+}
+
+func (s *Service) WatchContext(ctx context.Context, workspaceID, delivery string) (domain.WatchView, error) {
 	root := ""
 	if workspaceID != "" {
 		ws, err := s.Store.GetWorkspace(workspaceID)
@@ -800,7 +804,7 @@ func (s *Service) Watch(workspaceID, delivery string) (domain.WatchView, error) 
 	if root == "" {
 		return domain.WatchView{API: "v0", Message: "workspace root required"}, nil
 	}
-	view, err := batuta.Project(root, delivery)
+	view, err := batuta.ProjectContext(ctx, root, delivery)
 	if err != nil {
 		return view, err
 	}
