@@ -302,11 +302,6 @@ func (p *ownedProcess) sealAdmission() error {
 	limits.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
 	limits.BasicLimitInformation.ActiveProcessLimit = 0
 	requested := limits
-	// Reapplying JOB_TIME would restart the existing job time allowance.
-	if requested.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_TIME != 0 {
-		requested.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_JOB_TIME
-		requested.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME
-	}
 	if err := setWindowsJob(p.job, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&requested), uint32(unsafe.Sizeof(requested))); err != nil {
 		return fmt.Errorf("seal owned Windows job admission: %w", err)
 	}
