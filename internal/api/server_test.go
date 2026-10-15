@@ -179,11 +179,14 @@ func TestTwoCodexAccountsIndependent(t *testing.T) {
 	a2 := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Home", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": a1["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "account output's")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	f1 := filepath.ToSlash(filepath.Join(dir, "home1"))
 	f2 := filepath.ToSlash(filepath.Join(dir, "home2"))
-	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f1 + "; sleep 4"}), "owner": "tui", "client": "c1"}, 200)
-	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f2 + "; sleep 4"}), "owner": "web", "client": "c2"}, 200)
+	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + "'" + strings.ReplaceAll(f1, "'", "'\"'\"'") + "'; sleep 4"}), "owner": "tui", "client": "c1"}, 200)
+	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + "'" + strings.ReplaceAll(f2, "'", "'\"'\"'") + "'; sleep 4"}), "owner": "web", "client": "c2"}, 200)
 	if s1["process"] != "running" || s2["process"] != "running" {
 		t.Fatalf("both accounts must run: %v %v", s1, s2)
 	}
