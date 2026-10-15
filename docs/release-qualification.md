@@ -698,3 +698,126 @@ full-suite failure predates it; macOS inspection cannot establish PowerShell
 parsing, the new controlled negative/positive result, ordinary-account runtime
 success or a complete Windows pass. Those checks remain pending on Windows CI.
 Task44 provider operation and release readiness remain open.
+
+## Bounded Windows artifact qualification
+
+`scripts/qualify-release.ps1` is a **source candidate; native proof is pending**.
+It consumes the existing combined Windows amd64 ZIP and a separately trusted
+`checksums.txt`. It never builds Console or downloads tools. The checksum proves
+agreement with that manifest, not publisher identity: obtain both through the
+release producer's trusted artifact channel. The existing `verify-packages.mjs`
+contract remains unchanged. ZIP production and native CI wiring are a later task.
+
+Run in a fresh native Windows x64 PowerShell 7.4+ process. Use an existing trusted
+local NTFS staging parent and a new evidence target; do not change existing ACLs,
+accounts, privileges or environment to make this check pass. Paths must be
+canonical absolute drive paths, without UNC/device syntax, ADS, reparse points,
+untrusted mutation rights or hard-linked input files. Parent owners may be the
+current user, SYSTEM, Administrators or TrustedInstaller. The script creates
+only its new directories with protected current-user-only DACLs. It refuses
+unsupported ownership/NT query behavior rather than switching to PID-only kills.
+No administrator bootstrap or ordinary-user qualification is included.
+
+Example invocation (replace the artifact paths, version and full revision with
+the exact producer inputs; `C:\ConsoleQualification\run-001` must not exist):
+
+```powershell
+pwsh.exe -NoProfile -NonInteractive -File .\scripts\qualify-release.ps1 `
+  -Archive 'C:\ConsoleArtifacts\console_0.0.0-clean-install_windows_amd64.zip' `
+  -Checksums 'C:\ConsoleArtifacts\checksums.txt' `
+  -ExpectedVersion '0.0.0-clean-install' `
+  -ExpectedRevision 'd80b7ab289adf08091c131cfc748e3564593c4a6' `
+  -Evidence 'C:\ConsoleQualification\run-001'
+```
+
+Before starting a runtime, the consumer checks SHA256 and exactly one each of
+`console.exe`, `consoled.exe`, `LICENSE`, `README.md` and `THIRD_PARTY_NOTICES`,
+with no directory, link, duplicate, extra or renamed entry. It requires amd64 PE
+images and both public `-version` diagnostics: exact release version/revision,
+matching observed revision, explicitly unmodified source, actual `go1.27.2`
+from `runtime.Version`, and unreplaced Core `v1.1.0-beta.49` in consoled. Console
+may truthfully report that Core is not linked. The diagnostics are the executable's
+reported provenance; this consumer does not independently parse Go module build
+records with an SDK or qualify every transitive dependency. Package-wide build
+record verification remains the producer's existing gate.
+
+The real packaged Console runs three times with separate `-home <directory>`
+and `-listen 127.0.0.1:<port>` arguments and redirected input/output. Its supported
+nonTTY route must exit zero, emit no stderr and render the BATUTA Home navigation
+and empty-workspace snapshot. The extraction directory contains spaces; the CWD
+is a different empty owned directory. Each child receives a cleared environment,
+an empty owned PATH, empty private profile/config/cache/temp locations, English
+locale and `TERM=dumb`. Caller environment is untouched. No Go, Node, npm, Core
+CLI or official provider is on that PATH; provider capability observations must
+also report missing installations. No personal credential/config files are read.
+
+The lock only locates a candidate process. Binding requires a retained process
+handle, kernel image path, extracted executable hash, exact decoded argv, native
+parent PID and creation time inside the original Console creator's lifetime.
+Creator handles remain open through cleanup. Native process information is read
+through those handles; [Microsoft documents the native parent query as subject
+to Windows-version changes](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess).
+The bounded NT command-line query must work on the target host; failure leaves
+the process unqualified and forbids termination through its lock PID.
+
+For each daemon generation, loopback-only HTTP checks require missing and wrong
+Bearer tokens to return 401 on both capabilities and catalog routes. The correct
+token must return the expected capabilities/provenance and the same fresh empty
+workspace catalog. `/` must contain the production Console HTML, and its local
+JavaScript and CSS references must serve substantive content with matching MIME
+types. External font links are not fetched. No browser, `-web`, provider execution,
+login or session is involved. The token is read only from the private owned runtime
+and used in memory in authorization headers; it is never placed in a URL, command,
+report or token hash.
+
+Reinvocation must leave the original bound daemon object alive. The script then
+terminates that idle object directly through its original handle, joins it, starts
+Console again, and binds a newer daemon against the same home/listen/catalog and
+unchanged secret. This is **direct termination / crash-restart, not graceful
+shutdown**. Cleanup uses only retained Console objects and independently bound
+daemon objects. It never kills a PID from a lock, process tree, name or unrelated
+service. A child that cannot be bound is retained and reported as a cleanup
+failure. Primary failure stage/type/location are retained separately from cleanup
+errors; raw exception payloads are withheld because they may contain captured data.
+
+Limits are 180 seconds for the operation, with individual process waits of 15
+seconds, HTTP requests of 5 seconds, ordinary async waits of 10 seconds and
+hash/extraction waits of 30 seconds, all capped by the remaining budget. Cleanup
+adds at most 5 seconds per owned process join and 1 second per captured stream.
+Console stdout/stderr capture limits are 256/64 KiB; HTTP bodies are limited to
+4 MiB and headers to 16 KiB. Checksums are limited to 64 KiB, the ZIP and total
+expanded bytes to 512 MiB, each member to 256 MiB, and asset references to eight.
+The private daemon log is checked against 64 KiB at lifecycle observations; it
+is product-owned disk output, not a continuously enforced disk quota. Local OS
+filesystem/native calls are synchronous; the time budget is not a watchdog for
+an unresponsive kernel or filesystem. The released port reservation can race;
+any resulting discovery/readiness/ownership mismatch fails qualification.
+
+The only upload whitelist is:
+
+- `receipt.json` (at most 4 KiB): outcome, narrow scope, expected provenance,
+  source/artifact/member hashes, elapsed time and primary/cleanup diagnostics.
+- `observations.json`: child launches/exits, snapshot byte counts/hashes, explicit
+  provenance, isolation paths/DACL, bound process PID/creation/image/hash/argv,
+  same-object reuse and joined termination events; HTTP path/status/content type,
+  byte counts and content hashes, without response bodies or authorization values.
+
+Do **not** recursively upload the evidence directory. Its retained `runtime home`
+contains `auth.secret`, database and daemon logs; its other private subdirectories
+contain extracted binaries and isolated process state. Nothing deletes those
+roots automatically, even on failure. Dispose of the whole owned staging area
+only after inspecting cleanup results and confirming no unbound process remains.
+Neither raw process output nor HTTP payloads are public evidence.
+
+Before accepting this candidate, native CI must execute actual-ZIP negative
+controls for checksum, missing/duplicate/extra/renamed/traversal members, unsafe
+paths and mismatched executable version/revision/Go/Core provenance, then the
+positive against the unchanged original ZIP. Archive mutations must have updated
+checksums so member rejection is actually reached. Provenance negatives must
+reach the provenance check; a bad checksum is not that proof. Retain exact commands,
+exit codes and the whitelisted receipts, and verify both daemon generations,
+reuse, 401 controls and cleanup. Source inspection on macOS and the missing-script
+red/sourceguard green do not establish parsing or behavioral TDD success. All
+native negative/positive controls remain pending; no PowerShell was installed or
+Windows bootstrap executed locally. This is only a Task38 artifact-consumer slice,
+not interactive TUI, provider/council, Task43, full Task38 or release completion.
