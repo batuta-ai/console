@@ -72,6 +72,7 @@ $primary = $null
 $suiteExit = $null
 $keeper = $null
 $beforeHashes = $null
+$consoleEncoding = [Console]::OutputEncoding
 $stable = $env:TEMP
 $shell = Join-Path (Split-Path (Split-Path $Git)) 'usr/bin/sh.exe'
 $utilities = Split-Path $shell
@@ -306,6 +307,7 @@ function Invoke-Retirement([string]$Arm, [string]$Backing, [string]$Identity) {
 }
 
 try {
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     if (-not $stable -or $env:TMP -ine $stable -or $env:LOCALAPPDATA -ine $stable) { throw 'Caller-owned stable TEMP/TMP/LOCALAPPDATA required' }
     $stableIdentity = [MsysOwnerNative]::DirectoryIdentity($stable)
     $stableAcl = (Get-Acl -LiteralPath $stable).Sddl
@@ -318,7 +320,9 @@ try {
     if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.2 windows/amd64') { throw 'Pinned native compiler required' }
     $goroot = & $Go env GOROOT
     if ($LASTEXITCODE -ne 0) { throw 'GOROOT unavailable' }
-    $test2json = Join-Path $goroot 'pkg/tool/windows_amd64/test2json.exe'
+    $test2json = & $Go tool -n test2json
+    if ($LASTEXITCODE -ne 0 -or @($test2json).Count -ne 1 -or -not [IO.Path]::IsPathFullyQualified($test2json) -or
+        -not [IO.File]::Exists($test2json)) { throw 'Pinned compiler test2json tool unavailable' }
     if ($ExpectedSources) {
         # The credentialed actor reads the parent's hash-bound inventory, avoiding
         # repository ownership exceptions or any safe.directory configuration.
@@ -386,6 +390,7 @@ try {
         if (@($owned | Where-Object { $_.Started -and (-not $_.Joined -or -not $_.Drained) }).Count) { throw 'Owned processes not drained; retaining roots' }
         foreach ($root in $roots) { if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $false) } }
     } catch { $cleanupErrors.Add("Final guards: $_") }
+    try { [Console]::OutputEncoding = $consoleEncoding } catch { $cleanupErrors.Add("Console encoding restore: $_") }
     try { Save-Json 'msys-observations.json' @($observations.ToArray()) } catch { $cleanupErrors.Add("Observation evidence: $_") }
     try {
         Save-Json 'msys-result.json' @{ primary = [string]$primary; cleanup = @($cleanupErrors.ToArray()); suiteExit = $suiteExit;
