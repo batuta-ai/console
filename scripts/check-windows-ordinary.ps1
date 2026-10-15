@@ -23,6 +23,8 @@ $stage = $null
 $files = @()
 $hashesBefore = $null
 $proofPassed = $false
+$executionError = $null
+$finalErrors = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 $cleanup = @{ created = $false; drained = $false; removed = $false }
 function Record-Source([string]$Name) {
     $status = & git -C $source status --porcelain --untracked-files=all
@@ -114,6 +116,11 @@ try {
     $sourceFiles = @($tracked | ForEach-Object { Join-Path $source $_ })
     $sourceHashes = @($sourceFiles | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash)
     $sourceHashes | ConvertTo-Json | Set-Content (Join-Path $Evidence 'source-manifest.json')
+    $helperPath = [IO.Path]::GetFullPath($helper.Replace('/', '\'))
+    $helperSources = @($sourceHashes | Where-Object {
+        [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath($_.Path.Replace('/', '\')), $helperPath)
+    })
+    if ($helperSources.Count -ne 1) { throw 'Exactly one tracked helper source required' }
     $stage = Join-Path $env:SystemDrive ('co-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     $binary = Join-Path $stage 'service.test.exe'
@@ -173,13 +180,23 @@ try {
         if ($pairCompileExit -ne 0) { throw "TEMP compilation failed: $variant" }
         $pairHashes[$variant] = (Get-FileHash -Algorithm SHA256 -LiteralPath $pairBinary).Hash
         Copy-Item -LiteralPath $pairBinary -Destination $Evidence
-        $effectiveSources = @($sourceHashes | ForEach-Object {
-            $hash = $_.Hash
-            if ($variant -ceq 'baseline' -and $_.Path -ceq $helper) { $hash = $baselineHelperHash }
-            [pscustomobject]@{ Path = $_.Path; Hash = $hash }
+        $replacementCount = 0
+        $expectedReplacements = 0
+        if ($variant -ceq 'baseline') { $expectedReplacements = 1 }
+        $effectiveSources = @(foreach ($entry in $sourceHashes) {
+            $hash = $entry.Hash
+            if ($variant -ceq 'baseline' -and
+                [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath($entry.Path.Replace('/', '\')), $helperPath)) {
+                if ($hash -ine '50231d30408b7c65192522f274162d6825ad9c60c54813e8f4dc9b46f5be1116' -or $hash -ieq $baselineHelperHash) { throw 'Helper substitution source hash differs' }
+                $hash = $baselineHelperHash
+                $replacementCount++
+            }
+            [pscustomobject]@{ Path = $entry.Path; Hash = $hash }
         })
+        if ($replacementCount -ne $expectedReplacements) { throw "Helper substitution count differs: $variant" }
         @{ revision = $revision; variant = $variant; go = $version; flags = $flags; package = './internal/testfixture';
             baselineBlob = $baselineRef; baselineHelperSHA256 = $baselineHelperHash; binarySHA256 = $pairHashes[$variant];
+            helperSourceMatchCount = $helperSources.Count; sourceReplacementCount = $replacementCount;
             source = $effectiveSources; goenv = $env:GOENV; gotoolchain = $env:GOTOOLCHAIN; goflags = $env:GOFLAGS;
             gowork = $env:GOWORK; goproxy = $env:GOPROXY; gosumdb = $env:GOSUMDB } |
             ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Evidence "$prefix-manifest.json")
@@ -285,30 +302,48 @@ try {
             $pairActor.baseline -cne $pairHashes.baseline -or $pairActor.candidate -cne $pairHashes.candidate) { throw 'TEMP actor/binary hash binding differs' }
     }
     $proofPassed = $true
-} finally {
+} catch { $executionError = $_ } finally {
     try {
         Record-Source 'source-after.log'
+    } catch { $finalErrors.Add($_) }
+    try {
         if ($null -ne $hashesBefore) {
             $files | ForEach-Object { Get-FileHash -Algorithm SHA256 -LiteralPath $_ } | Select-Object Path, Hash | ConvertTo-Json | Set-Content (Join-Path $Evidence 'hashes-after.json')
             if ((Get-Content (Join-Path $Evidence 'hashes-before.json') -Raw) -cne (Get-Content (Join-Path $Evidence 'hashes-after.json') -Raw)) { throw 'Source/tool/binary hashes changed' }
         }
-        if ($proofPassed) { 'Exact three skills PASS; TEMP baseline exact causal FAIL and candidate exact PASS; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log') }
-    } finally {
-        $cleanup.drained = $drained
-        $cleanup.stage = $stage
-        $cleanup.launchAttempted = $launchAttempted
-        try {
-            if ($account) {
-                if (-not $drained -and $launchAttempted) { throw 'Owned process not drained; refusing account removal' }
-                $current = Get-LocalUser -Name $account.Name
-                if ($current.SID.Value -cne $account.SID.Value) { throw 'Cleanup SID mismatch; refusing account removal' }
-                Remove-LocalUser -SID $account.SID
-                if (Get-LocalUser -SID $account.SID -ErrorAction SilentlyContinue) { throw 'Owned account removal failed' }
-                $cleanup.removed = $true
-            }
-        } finally {
-            $cleanup | ConvertTo-Json | Set-Content (Join-Path $Evidence 'cleanup.json')
-            if ($secret) { $secret.Dispose() }
+    } catch { $finalErrors.Add($_) }
+    $cleanup.drained = $drained
+    $cleanup.stage = $stage
+    $cleanup.launchAttempted = $launchAttempted
+    try {
+        if ($account) {
+            if (-not $drained -and $launchAttempted) { throw 'Owned process not drained; refusing account removal' }
+            $current = Get-LocalUser -Name $account.Name
+            if ($current.SID.Value -cne $account.SID.Value) { throw 'Cleanup SID mismatch; refusing account removal' }
+            Remove-LocalUser -SID $account.SID
+            if (Get-LocalUser -SID $account.SID -ErrorAction SilentlyContinue) { throw 'Owned account removal failed' }
+            $cleanup.removed = $true
         }
-    }
+    } catch { $finalErrors.Add($_) }
+    try {
+        $cleanup | ConvertTo-Json | Set-Content (Join-Path $Evidence 'cleanup.json')
+    } catch { $finalErrors.Add($_) }
+    try {
+        if ($secret) { $secret.Dispose() }
+    } catch { $finalErrors.Add($_) }
 }
+if ($executionError -or $finalErrors.Count -ne 0) {
+    $diagnostics = @(
+        if ($executionError) { "Execution: $executionError`n$($executionError.ScriptStackTrace)" }
+        foreach ($failure in $finalErrors) { "Finalization: $failure`n$($failure.ScriptStackTrace)" }
+    )
+    foreach ($diagnostic in $diagnostics) { [Console]::Error.WriteLine($diagnostic) }
+    try {
+        $diagnostics | Set-Content (Join-Path $Evidence 'failure-errors.log')
+    } catch {
+        [Console]::Error.WriteLine("Failure diagnostics could not be saved: $_")
+    }
+    if ($executionError) { throw $executionError }
+    throw $finalErrors[0]
+}
+if ($proofPassed) { 'Exact three skills PASS; TEMP baseline exact causal FAIL and candidate exact PASS; genuine created-account primary actor' | Set-Content (Join-Path $Evidence 'summary.log') }

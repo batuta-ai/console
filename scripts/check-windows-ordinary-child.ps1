@@ -21,25 +21,62 @@ function Invoke-TempBinary([string]$Binary, [string[]]$Arguments, [string]$Prefi
     $start.WorkingDirectory = $fixture
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    # No credentials or token substitution: inherit the verified ordinary primary actor.
-    $native = [Diagnostics.Process]::Start($start)
-    $stdout = [IO.File]::Create((Join-Path $fixture "$Prefix.stdout"))
-    $stderr = [IO.File]::Create((Join-Path $fixture "$Prefix.stderr"))
+    $native = $null
+    $stdout = $stderr = $outTask = $errTask = $null
+    $started = $false
+    $timedOut = $false
+    $exitCode = $null
+    $failures = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
+        $stdout = [IO.File]::Create((Join-Path $fixture "$Prefix.stdout"))
+        $stderr = [IO.File]::Create((Join-Path $fixture "$Prefix.stderr"))
+        # No credentials or token substitution: inherit the verified ordinary primary actor.
+        $native = [Diagnostics.Process]::new()
+        $native.StartInfo = $start
+        $started = $native.Start()
+        if (-not $started) { throw "TEMP native process did not start: $Prefix" }
         $outTask = $native.StandardOutput.BaseStream.CopyToAsync($stdout)
         $errTask = $native.StandardError.BaseStream.CopyToAsync($stderr)
         $timedOut = -not $native.WaitForExit($TimeoutMilliseconds)
-        if ($timedOut) { $native.Kill($true) }
-        $native.WaitForExit()
-        $outTask.GetAwaiter().GetResult()
-        $errTask.GetAwaiter().GetResult()
-        $stdout.Dispose()
-        $stderr.Dispose()
-        Publish-Text "$Prefix.exit" ([string]$native.ExitCode)
-        Publish-Text "$Prefix.timeout" ([string]$timedOut)
-        foreach ($stream in @('stdout', 'stderr')) { Publish-Evidence "$Prefix.$stream" ([IO.File]::ReadAllBytes((Join-Path $fixture "$Prefix.$stream"))) }
         if ($timedOut) { throw "TEMP native process timed out: $Prefix" }
-    } finally { $stdout.Dispose(); $stderr.Dispose(); $native.Dispose() }
+    } catch { $failures.Add($_) } finally {
+        if ($started) {
+            try {
+                if (-not $native.HasExited) { $native.Kill() }
+            } catch { $failures.Add($_) }
+            try {
+                $native.WaitForExit()
+                $exitCode = $native.ExitCode
+            } catch { $failures.Add($_) }
+        }
+        foreach ($task in @($outTask, $errTask)) {
+            if ($null -ne $task) {
+                try { $task.GetAwaiter().GetResult() } catch { $failures.Add($_) }
+            }
+        }
+        foreach ($stream in @($stdout, $stderr)) {
+            if ($null -ne $stream) {
+                try { $stream.Dispose() } catch { $failures.Add($_) }
+            }
+        }
+        if ($null -ne $native) {
+            try { $native.Dispose() } catch { $failures.Add($_) }
+        }
+    }
+    try {
+        if ($null -ne $exitCode) { Publish-Text "$Prefix.exit" ([string]$exitCode) }
+        if ($started) { Publish-Text "$Prefix.timeout" ([string]$timedOut) }
+    } catch { $failures.Add($_) }
+    foreach ($name in @('stdout', 'stderr')) {
+        try {
+            $path = Join-Path $fixture "$Prefix.$name"
+            if (Test-Path -LiteralPath $path) { Publish-Evidence "$Prefix.$name" ([IO.File]::ReadAllBytes($path)) }
+        } catch { $failures.Add($_) }
+    }
+    if ($failures.Count -ne 0) {
+        foreach ($failure in $failures) { [Console]::Error.WriteLine("TEMP native process ${Prefix}: $failure") }
+        throw $failures[0]
+    }
 }
 function Publish-TempHashes([string]$Name) {
     $baseline = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'temp-baseline.test.exe')).Hash
