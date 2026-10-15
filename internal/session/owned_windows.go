@@ -294,10 +294,37 @@ func startOwnedCommand(cmd *exec.Cmd) (*ownedProcess, error) {
 	return p, nil
 }
 
+func (p *ownedProcess) sealAdmission() error {
+	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	if err := queryWindowsJob(p.job, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&limits), uint32(unsafe.Sizeof(limits))); err != nil {
+		return fmt.Errorf("query owned Windows job admission limits: %w", err)
+	}
+	limits.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+	limits.BasicLimitInformation.ActiveProcessLimit = 0
+	requested := limits
+	// Reapplying JOB_TIME would restart the existing job time allowance.
+	if requested.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_JOB_TIME != 0 {
+		requested.BasicLimitInformation.LimitFlags &^= windows.JOB_OBJECT_LIMIT_JOB_TIME
+		requested.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME
+	}
+	if err := setWindowsJob(p.job, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&requested), uint32(unsafe.Sizeof(requested))); err != nil {
+		return fmt.Errorf("seal owned Windows job admission: %w", err)
+	}
+	var observed windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	if err := queryWindowsJob(p.job, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&observed), uint32(unsafe.Sizeof(observed))); err != nil {
+		return fmt.Errorf("verify owned Windows job admission limits: %w", err)
+	}
+	if observed.BasicLimitInformation != limits.BasicLimitInformation || observed.ProcessMemoryLimit != limits.ProcessMemoryLimit || observed.JobMemoryLimit != limits.JobMemoryLimit {
+		return fmt.Errorf("owned Windows job admission limits differ: requested=%+v observed=%+v", limits, observed)
+	}
+	return nil
+}
+
 func (p *ownedProcess) signalLocked() error {
 	if p.retired || p.signaled {
 		return p.err
 	}
+	p.err = errors.Join(p.err, p.sealAdmission())
 	if !p.terminationObserved {
 		p.terminationObserved = true
 		p.err = errors.Join(p.err, p.observeTermination())
