@@ -1,6 +1,7 @@
 package batuta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -148,52 +149,67 @@ func ExactPlanContent(workspace, path string) (routing.Plan, []byte, error) {
 	return plan, body, nil
 }
 
-// readJournal uses core's chain verifier on an anchored, bounded descriptor.
-// Unlike journal.Open it has no directory-creation side effect.
-func readJournal(workspace, delivery string) ([]journal.Record, error) {
+// readJournalSnapshot binds Core's capture to an anchored, read-only descriptor.
+// Ownership and the descriptor are released before projection or other locks.
+func readJournalSnapshot(ctx context.Context, workspace, delivery string) (snapshot journal.Snapshot, resultErr error) {
 	if !journal.ValidDeliveryID(delivery) {
-		return nil, domain.ErrInvalidReference
+		return journal.Snapshot{}, domain.ErrInvalidReference
 	}
 	root, err := os.OpenRoot(workspace)
 	if err != nil {
-		return nil, artifactError(err)
+		return journal.Snapshot{}, artifactError(err)
 	}
 	defer root.Close()
-	const limit = 256 << 20
-	f, err := openArtifact(root, journal.Dir+"/"+delivery+".jsonl", limit)
+	f, err := openArtifact(root, journal.Dir+"/"+delivery+".jsonl", 256<<20)
 	if err != nil {
-		return nil, err
+		return journal.Snapshot{}, err
 	}
-	defer f.Close()
-	reader := &io.LimitedReader{R: f, N: limit + 1}
-	records, err := journal.Decode(reader)
+	defer func() {
+		if err := f.Close(); err != nil {
+			snapshot = journal.Snapshot{}
+			resultErr = errors.Join(resultErr, ErrArtifactIO)
+		}
+	}()
+	snapshot, err = journal.ReadSnapshot(ctx, f)
 	if err != nil {
 		var pathErr *os.PathError
-		if errors.As(err, &pathErr) {
-			return nil, ErrArtifactIO
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return journal.Snapshot{}, err
 		}
-		return nil, ErrArtifactInvalid
+		if errors.As(err, &pathErr) {
+			return journal.Snapshot{}, ErrArtifactIO
+		}
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
-	if reader.N <= 0 {
-		return nil, ErrArtifactInvalid
+	if len(snapshot.Records()) == 0 {
+		return journal.Snapshot{}, ErrArtifactMissing
 	}
-	if len(records) == 0 {
-		return nil, ErrArtifactMissing
+	if !snapshot.Complete() {
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
-	return records, nil
+	return snapshot, nil
 }
 
-func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Record, error) {
-	records, err := readJournal(workspace, b.DeliveryID)
+func readJournal(workspace, delivery string) ([]journal.Record, error) {
+	snapshot, err := readJournalSnapshot(context.Background(), workspace, delivery)
 	if err != nil {
 		return nil, err
 	}
+	return snapshot.Records(), nil
+}
+
+func deliverySnapshot(ctx context.Context, workspace string, b domain.MissionBinding) (journal.Snapshot, error) {
+	snapshot, err := readJournalSnapshot(ctx, workspace, b.DeliveryID)
+	if err != nil {
+		return journal.Snapshot{}, err
+	}
+	records := snapshot.Records()
 	if records[0].Kind != loop.KindOpened {
-		return nil, ErrArtifactInvalid
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
 	for _, record := range records[1:] {
 		if record.Kind == loop.KindOpened {
-			return nil, ErrArtifactInvalid
+			return journal.Snapshot{}, ErrArtifactInvalid
 		}
 	}
 	var opened struct {
@@ -203,7 +219,7 @@ func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Recor
 		Workspace  string `json:"workspace"`
 	}
 	if json.Unmarshal(records[0].Detail, &opened) != nil {
-		return nil, ErrArtifactInvalid
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
 	pathMatches := opened.PlanPath == b.PlanPath
 	if IsArchivedPlanPath(b.PlanPath, b.PlanSlug) {
@@ -212,16 +228,24 @@ func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Recor
 		}
 	}
 	if opened.Slug != b.PlanSlug || opened.PlanDigest != b.PlanDigest || opened.Workspace != workspace || !pathMatches {
-		return nil, ErrArtifactInvalid
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
 	if b.OpenedDigest != "" && b.OpenedDigest != records[0].Digest {
-		return nil, ErrArtifactInvalid
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
 	var graph routing.DeliveryGraph
 	if len(records[len(records)-1].Graph) == 0 || string(records[len(records)-1].Graph) == "null" || json.Unmarshal(records[len(records)-1].Graph, &graph) != nil {
-		return nil, ErrArtifactInvalid
+		return journal.Snapshot{}, ErrArtifactInvalid
 	}
-	return records, nil
+	return snapshot, nil
+}
+
+func deliveryRecords(workspace string, b domain.MissionBinding) ([]journal.Record, error) {
+	snapshot, err := deliverySnapshot(context.Background(), workspace, b)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Records(), nil
 }
 
 func ValidateDelivery(workspace string, b domain.MissionBinding) (string, error) {

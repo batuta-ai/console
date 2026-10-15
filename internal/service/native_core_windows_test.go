@@ -140,7 +140,7 @@ func task43CoreHello(r io.Reader) (windows.Handle, error) {
 	if err := json.Unmarshal(frame["hello"], &h); err != nil {
 		return 0, err
 	}
-	if h.Protocol != 1 || h.CorePath != "github.com/batuta-ai/core" || h.CoreVersion != "v1.1.0-beta.49" || h.CoreSum != "h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=" || h.CoreReplaced || h.PID == 0 || h.Created == 0 {
+	if h.Protocol != 1 || h.CorePath != "github.com/batuta-ai/core" || h.CoreVersion != "v1.1.0-beta.55" || h.CoreSum != "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=" || h.CoreReplaced || h.PID == 0 || h.Created == 0 {
 		return 0, fmt.Errorf("unqualified actual linked Core hello %+v", h)
 	}
 	witness, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, h.PID)

@@ -46,7 +46,7 @@ func actualNativeCoreHello() (nativeCoreHello, error) {
 }
 
 func (h nativeCoreHello) qualified() bool {
-	return h.Protocol == 1 && h.CorePath == "github.com/batuta-ai/core" && h.CoreVersion == "v1.1.0-beta.49" && h.CoreSum == "h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=" && !h.CoreReplaced && h.PID != 0 && h.Created != 0
+	return h.Protocol == 1 && h.CorePath == "github.com/batuta-ai/core" && h.CoreVersion == "v1.1.0-beta.55" && h.CoreSum == "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=" && !h.CoreReplaced && h.PID != 0 && h.Created != 0
 }
 
 func (s nativeCoreStart) validate() error {

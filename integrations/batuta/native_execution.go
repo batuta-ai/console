@@ -71,41 +71,50 @@ func approvedPlan(b domain.MissionBinding, a domain.PlanApproval) (routing.Plan,
 	return p, nil
 }
 
-func ValidateApprovedDelivery(workspace string, b domain.MissionBinding, a domain.PlanApproval) (string, error) {
-	if _, err := approvedPlan(b, a); err != nil {
-		return "", err
+func approvedDeliverySnapshot(ctx context.Context, workspace string, b domain.MissionBinding, a domain.PlanApproval) (routing.Plan, journal.Snapshot, error) {
+	p, err := approvedPlan(b, a)
+	if err != nil {
+		return routing.Plan{}, journal.Snapshot{}, err
 	}
-	records, err := deliveryRecords(workspace, b)
+	snapshot, err := deliverySnapshot(ctx, workspace, b)
+	if err != nil {
+		return routing.Plan{}, journal.Snapshot{}, err
+	}
+	records := snapshot.Records()
+	var approval DeliveryApproval
+	if json.Unmarshal(records[0].Detail, &approval) != nil || approval.ReceiptID != a.ID || approval.Version != a.Identity.Version {
+		return routing.Plan{}, journal.Snapshot{}, ErrArtifactInvalid
+	}
+	return p, snapshot, nil
+}
+
+func ValidateApprovedDelivery(workspace string, b domain.MissionBinding, a domain.PlanApproval) (string, error) {
+	_, snapshot, err := approvedDeliverySnapshot(context.Background(), workspace, b, a)
 	if err != nil {
 		return "", err
 	}
-	var approval DeliveryApproval
-	if json.Unmarshal(records[0].Detail, &approval) != nil || approval.ReceiptID != a.ID || approval.Version != a.Identity.Version {
-		return "", ErrArtifactInvalid
-	}
-	return records[0].Digest, nil
+	return snapshot.Records()[0].Digest, nil
 }
 
 // Native projection uses the original receipt and chain, independently of the
-// editable plan path. PanelModel remains the only task/gate status authority.
+// editable plan path. Core owns both task state and supervision progression.
 func ProjectApprovedMission(workspace string, b domain.MissionBinding, a domain.PlanApproval) (domain.WatchView, error) {
 	out := domain.WatchView{API: API, Workspace: workspace, Delivery: b.DeliveryID, Source: domain.SourceUnavailable}
-	p, err := approvedPlan(b, a)
+	ctx := context.Background()
+	p, snapshot, err := approvedDeliverySnapshot(ctx, workspace, b, a)
 	if err != nil {
 		return out, err
 	}
-	if _, err := ValidateApprovedDelivery(workspace, b, a); err != nil {
-		return out, err
-	}
-	records, err := deliveryRecords(workspace, b)
-	if err != nil {
-		return out, err
-	}
+	return projectApprovedSnapshot(ctx, workspace, b, p, snapshot)
+}
+
+func projectApprovedSnapshot(ctx context.Context, workspace string, b domain.MissionBinding, p routing.Plan, snapshot journal.Snapshot) (domain.WatchView, error) {
+	records := snapshot.Records()
 	now := time.Now().UTC()
 	view := loop.PanelModel(records, now, "")
 	view.Header.Presence, view.Header.Loops = loop.Presence(workspace, b.DeliveryID, now)
-	out = dto(workspace, b.DeliveryID, view)
-	gate, err := loop.CheckSupervisionGate(context.Background(), loop.SupervisionOptions{Workspace: workspace, Delivery: b.DeliveryID})
+	out := dto(workspace, b.DeliveryID, view)
+	gate, err := loop.CheckSupervisionGateSnapshot(ctx, loop.SupervisionOptions{Workspace: workspace, Delivery: b.DeliveryID}, snapshot)
 	if err != nil {
 		return domain.WatchView{Source: domain.SourceUnavailable}, artifactError(err)
 	}

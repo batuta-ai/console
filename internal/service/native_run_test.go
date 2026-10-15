@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/batuta-ai/console/internal/store"
 	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
+	"github.com/batuta-ai/core/publication"
 	"github.com/batuta-ai/core/routing"
 )
 
@@ -31,7 +33,7 @@ func nativeRunFixture(t *testing.T) (*Service, domain.PlanApproval, string) {
 		t.Fatal(err)
 	}
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.49", "-o", core, "./cmd/batuta")
+	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55", "-o", core, "./cmd/batuta")
 	build.Dir = strings.TrimSpace(string(raw))
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("public Core build: %s %v", output, err)
@@ -59,6 +61,15 @@ debug) printf '{"models":[{"slug":"qa-native"}]}\n';exit 0;;
 doctor|plugin) printf '{}\n';exit 0;;
 --verify) printf 'TASK 1: DONE\n';exit 0;;
 esac
+if [ "$1" = "--model" ] && { [ "$#" -eq 3 ] || { [ "$#" -eq 5 ] && [ "$3" = "--effort" ]; }; }; then
+argument=$3
+if [ "$#" -eq 5 ]; then argument=$5; fi
+if [ "$argument" = "Run the shell command `+"\\`git rev-parse HEAD\\`"+` in the current directory. Do not create, edit or delete any file. When the command has run, print BATUTA-CAPABLE <sha> on a line of its own, replacing <sha> with the command's output, and stop." ]; then
+  sha=$(git rev-parse HEAD) || exit 1
+  printf 'BATUTA-CAPABLE %s\n' "$sha"
+  exit 0
+fi
+fi
 printf 'submission\n' >> "$HOME/native-launches"
 printf 'BATUTA-QUESTION: which approved output?\n'
 `)
@@ -230,5 +241,32 @@ func TestNativeRunStartsExactApprovedDeliveryAndParksQuestion(t *testing.T) {
 	}
 	if _, err := svc.StartExecution(ctx, domain.ExecutionRequest{Target: a.Identity, ApprovalID: a.ID}); err == nil {
 		t.Fatal("native delivery was duplicated")
+	}
+}
+
+type nativeVersionCapabilities struct{ version string }
+
+func (r nativeVersionCapabilities) Run(context.Context, publication.Command) (publication.CommandResult, error) {
+	return publication.CommandResult{Stdout: []byte(`{"version":"` + r.version + `","commands":["loop","review","inventory"]}`)}, nil
+}
+
+func TestNativeCoreRequiresPublishedBeta55(t *testing.T) {
+	image, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{CoreExecutable: image}
+	for _, version := range []string{"v1.1.0-beta.55", "1.1.0-beta.55", "v1.1.0-beta.49", "v1.1.0-beta.54", "v1.1.0-beta.56", "v1.1.0"} {
+		t.Run(version, func(t *testing.T) {
+			got, err := svc.qualifiedNativeCore(context.Background(), nativeVersionCapabilities{version: version})
+			want := version == "v1.1.0-beta.55" || version == "1.1.0-beta.55"
+			if want {
+				if err != nil || got != image {
+					t.Fatalf("published CLI rejected: %q %v", got, err)
+				}
+			} else if got != "" || !errors.Is(err, domain.ErrExecutionUnavailable) {
+				t.Fatalf("unqualified CLI accepted: %q %v", got, err)
+			}
+		})
 	}
 }

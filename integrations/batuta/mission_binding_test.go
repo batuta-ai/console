@@ -1,6 +1,7 @@
 package batuta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -133,5 +134,135 @@ func TestMissionBindingExactLegacyAndArchivedPlans(t *testing.T) {
 	}
 	if _, err := ExactPlan(root, ".batuta/plans/done/alpha.md"); err != nil {
 		t.Fatalf("archive must retain exact selection %v", err)
+	}
+}
+
+func TestJournalObservationRejectsUnpublishedSuffix(t *testing.T) {
+	for _, suffix := range []string{"missing-newline", "truncated-record", "malformed-record"} {
+		t.Run(suffix, func(t *testing.T) {
+			root, b, a := approvedProjectionFixture(t)
+			path := filepath.Join(root, journal.Dir, b.DeliveryID+".jsonl")
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch suffix {
+			case "missing-newline":
+				body = body[:len(body)-1]
+			case "truncated-record":
+				body = append(body, []byte(`{"seq":2,"kind":"dispatch_intent"`)...)
+			case "malformed-record":
+				body = append(body, []byte("not-json\n")...)
+			}
+			if err := os.WriteFile(path, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			checks := map[string]func() error{
+				"journal":  func() error { _, err := readJournal(root, b.DeliveryID); return err },
+				"binding":  func() error { _, err := ValidateDelivery(root, b); return err },
+				"approval": func() error { _, err := ValidateApprovedDelivery(root, b, a); return err },
+				"mission":  func() error { _, err := ProjectMission(root, b); return err },
+				"native":   func() error { _, err := ProjectApprovedMission(root, b, a); return err },
+			}
+			for name, check := range checks {
+				if err := check(); !errors.Is(err, ErrArtifactInvalid) {
+					t.Errorf("%s accepted %s: %v", name, suffix, err)
+				}
+			}
+		})
+	}
+}
+
+func TestBindingSnapshotPreservesStrictChainAndGraphValidation(t *testing.T) {
+	for _, change := range []string{"duplicate-opening", "missing-opening", "null-graph", "invalid-graph", "changed-digest", "broken-chain"} {
+		t.Run(change, func(t *testing.T) {
+			root, b, a := approvedProjectionFixture(t)
+			js, err := journal.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "duplicate-opening":
+				records, err := js.Read(b.DeliveryID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := js.Append(b.DeliveryID, records[0]); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-opening", "null-graph", "invalid-graph":
+				b = rewriteProjectionOpening(t, root, b, func(record *journal.Record) {
+					switch change {
+					case "missing-opening":
+						record.Kind = loop.KindStarted
+					case "null-graph":
+						record.Graph = json.RawMessage(`null`)
+					case "invalid-graph":
+						record.Graph = json.RawMessage(`{"tasks":"wrong-type"}`)
+					}
+				})
+			case "changed-digest", "broken-chain":
+				records, err := js.Read(b.DeliveryID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if change == "changed-digest" {
+					records[0].Digest = "foreign"
+				} else {
+					records[0].Seq = 2
+				}
+				body, err := json.Marshal(records[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(js.Path(b.DeliveryID), append(body, '\n'), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ValidateDelivery(root, b); !errors.Is(err, ErrArtifactInvalid) {
+				t.Fatalf("validated %s: %v", change, err)
+			}
+			if view, err := ProjectMission(root, b); !errors.Is(err, ErrArtifactInvalid) || view.Available {
+				t.Fatalf("projected %s: %+v, %v", change, view, err)
+			}
+			if view, err := ProjectApprovedMission(root, b, a); !errors.Is(err, ErrArtifactInvalid) || view.Available {
+				t.Fatalf("native projected %s: %+v, %v", change, view, err)
+			}
+		})
+	}
+}
+
+func TestJournalSnapshotCompatibilityAndCancellation(t *testing.T) {
+	root, b, _ := approvedProjectionFixture(t)
+	path := filepath.Join(root, journal.Dir, b.DeliveryID+".jsonl")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := deliverySnapshot(context.Background(), root, b)
+	if err != nil || !snapshot.Complete() || len(snapshot.Records()) != 1 {
+		t.Fatalf("blank-line compatibility: %+v, %v", snapshot, err)
+	}
+	records := snapshot.Records()
+	records[0].Detail[0], records[0].Graph[0], records[0].Digest = '!', '!', "foreign"
+	if fresh := snapshot.Records(); fresh[0].Detail[0] != '{' || fresh[0].Graph[0] != '{' || fresh[0].Digest != b.OpenedDigest {
+		t.Fatal("record copy mutated authoritative capture")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if captured, err := deliverySnapshot(ctx, root, b); !errors.Is(err, context.Canceled) || captured.Complete() || len(captured.Records()) != 0 {
+		t.Fatalf("canceled capture: %+v, %v", captured, err)
+	}
+	if _, err := ValidateDelivery(root, b); err != nil {
+		t.Fatalf("cancellation retained ownership: %v", err)
+	}
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readJournal(root, b.DeliveryID); !errors.Is(err, ErrArtifactMissing) {
+		t.Fatalf("empty journal: %v", err)
 	}
 }
