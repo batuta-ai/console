@@ -51,7 +51,7 @@ test("two rendered immutable mission snapshots survive an owned daemon restart",
         await expect(page.getByText(`${mission.id} · 0/2 journal tasks · no live session`, { exact: true })).toBeVisible();
         await expect(page.getByText(mission.brief, { exact: true })).toBeVisible();
         for (const member of mission.squad_snapshot.members) {
-          await page.getByRole("button", { name: new RegExp(member.role) }).click();
+          await page.getByRole("button").filter({ has: page.getByText(member.role, { exact: true }) }).click();
           await expect(page.getByText(`${member.cli} · ${member.model}`, { exact: true })).toBeVisible();
         }
         console.log(JSON.stringify({ phase, mission: mission.id, title: mission.title, brief: mission.brief, squadVersion: mission.squad_snapshot.version }));
