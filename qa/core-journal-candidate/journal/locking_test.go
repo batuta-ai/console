@@ -22,7 +22,7 @@ func TestAppendWaitsForJournalOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := os.OpenFile(a.Path(delivery), os.O_WRONLY|os.O_APPEND, 0)
+	owner, err := os.OpenFile(a.Path(delivery), os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

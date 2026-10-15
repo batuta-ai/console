@@ -32,7 +32,7 @@ func TestReadWaitsForOwnedPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := os.OpenFile(store.Path(delivery), os.O_WRONLY|os.O_APPEND, 0)
+	owner, err := os.OpenFile(store.Path(delivery), os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

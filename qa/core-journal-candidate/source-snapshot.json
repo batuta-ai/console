@@ -1,17 +1,17 @@
 {
   "upstream_repository": "https://github.com/batuta-ai/core",
-  "upstream_head": "823b81e4f78150327b504c19ed883d4ded0a6d2e",
+  "upstream_head": "455010a8dd96d9c53da26fe779cb2597a19b2d6c",
   "sha256": {
     "go.mod": "4226d301ed946b447c57162e78c098fe284beae45701bed136182c88212b708a",
     "go.sum": "81fdf46325093450e5eb03dca7fa9b5f4e696c07fbd7e550165494f381a87d79",
     "LICENSE": "93b385ee7864f2b824200b2209b70c283c1de09a098c16465cdb70e2d0db86a2",
-    "journal/concurrency_test.go": "ddb2ea9ec68d04add49e20f56a5aaf902f70a05cc4816ec268d51da9d4d3d806",
+    "journal/concurrency_test.go": "eb24bfed4a8638d146c830cedefb0428e5e5ecd380268118facd01d7db75c186",
     "journal/concurrency_unix_test.go": "c76ae04c73b37f0e8be93eb0b62e50a955f44241281518d69d4f5465cda1f20c",
     "journal/concurrency_windows_test.go": "141a7c545b041479c52bbc0031383f5bf5c52edc21cf2c2fc9f068f086a1bbaf",
     "journal/journal.go": "ea42529f4e7517d7ebf772eb97a022b27a011b12d8b2b9d846e40574303509b5",
     "journal/journal_test.go": "c88818088587ef63dfd38ee206cd0a10f3064b625c89057eb64dd131ac29c343",
     "journal/locking.go": "d4de5476df9c6800d6faaa9ac04d6d7c1b3eb3b203c659d32e472c1546cb7d1b",
-    "journal/locking_test.go": "63618888598d068f8cc69e0c12bba89b46bb7d8d60702c973cfecd924ddae96b",
+    "journal/locking_test.go": "d237158205444c07a414e1cf9fad71a966c3cc5badd53ace62c9702ee5be83aa",
     "journal/locking_unix.go": "ac90399ca2fadadd69eecff21582bd32877a65d1d0f4ca510cbda16d7b3964dc",
     "journal/locking_windows.go": "93a9cba86f0b9fda575b1a9ca73efa74764aaf320bf9b64587f2e54bae3e7880"
   }

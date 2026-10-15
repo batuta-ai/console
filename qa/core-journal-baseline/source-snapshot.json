@@ -1,0 +1,23 @@
+{
+  "upstream_repository": "https://github.com/batuta-ai/core",
+  "production_base": "6549ad53b2a1ebc96c788f99f8bfa136e82f40b6",
+  "tests_source": "455010a8dd96d9c53da26fe779cb2597a19b2d6c",
+  "description": "Mixed baseline: original production and journal_test.go plus four unchanged candidate witness files.",
+  "test_witness_files": [
+    "journal/concurrency_test.go",
+    "journal/concurrency_unix_test.go",
+    "journal/concurrency_windows_test.go",
+    "journal/locking_test.go"
+  ],
+  "sha256": {
+    "go.mod": "4226d301ed946b447c57162e78c098fe284beae45701bed136182c88212b708a",
+    "go.sum": "81fdf46325093450e5eb03dca7fa9b5f4e696c07fbd7e550165494f381a87d79",
+    "LICENSE": "93b385ee7864f2b824200b2209b70c283c1de09a098c16465cdb70e2d0db86a2",
+    "journal/journal.go": "8382b61b71448a7bd006f64f0539e5360dccda673773a6d026b64c0051597e81",
+    "journal/journal_test.go": "c88818088587ef63dfd38ee206cd0a10f3064b625c89057eb64dd131ac29c343",
+    "journal/concurrency_test.go": "eb24bfed4a8638d146c830cedefb0428e5e5ecd380268118facd01d7db75c186",
+    "journal/concurrency_unix_test.go": "c76ae04c73b37f0e8be93eb0b62e50a955f44241281518d69d4f5465cda1f20c",
+    "journal/concurrency_windows_test.go": "141a7c545b041479c52bbc0031383f5bf5c52edc21cf2c2fc9f068f086a1bbaf",
+    "journal/locking_test.go": "d237158205444c07a414e1cf9fad71a966c3cc5badd53ace62c9702ee5be83aa"
+  }
+}
