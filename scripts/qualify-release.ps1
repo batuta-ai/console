@@ -120,7 +120,7 @@ public static class BundleNative {
         } finally { Marshal.FreeHGlobal(buffer); }
     }
     public static void Stop(Process process, int milliseconds) {
-        if (Alive(process) && !TerminateProcess(process.SafeHandle, 71))
+        if (Alive(process) && !TerminateProcess(process.SafeHandle, 71) && WaitForSingleObject(process.SafeHandle, 0) != 0)
             throw new InvalidOperationException("Owned termination failed");
         if (WaitForSingleObject(process.SafeHandle, (uint)milliseconds) != 0)
             throw new TimeoutException("Owned termination did not join");
@@ -144,6 +144,8 @@ $trusted = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 $trustedOwners = $trusted + 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $cancel = [Threading.CancellationTokenSource]::new(180000)
+$operationCancel = $cancel
+$deadlineMs = 180000L
 $actors = [Collections.Generic.List[object]]::new()
 $daemons = [Collections.Generic.List[object]]::new()
 $files = [Collections.Generic.List[object]]::new()
@@ -159,9 +161,9 @@ $hashes = @{}
 $token = $null
 
 function Remaining([int]$Maximum = 10000) {
-    $left = 180000 - [int]$clock.ElapsedMilliseconds
-    if ($left -le 0) { throw 'Total operation deadline exceeded' }
-    return [Math]::Min($left, $Maximum)
+    $left = $deadlineMs - $clock.ElapsedMilliseconds
+    if ($left -le 0) { throw 'Current phase deadline exceeded' }
+    return [int][Math]::Min($left, $Maximum)
 }
 function Await($Task, [int]$Maximum = 10000) {
     if (-not $Task.Wait((Remaining $Maximum))) { throw 'Operation deadline exceeded' }
@@ -259,7 +261,7 @@ function Start-ConsoleProcess([string]$Executable, [string[]]$Arguments) {
     $actor.Out = [BundleNative]::Read($actor.Process.StandardOutput.BaseStream, 262144, $cancel.Token)
     $actor.Err = [BundleNative]::Read($actor.Process.StandardError.BaseStream, 65536, $cancel.Token)
     $actor.Process.StandardInput.Close()
-    $events.Add(@{ event = 'launch'; pid = $actor.Process.Id; created = [BundleNative]::Times($actor.Process)[0]; image = [BundleNative]::Image($actor.Process); argv = $Arguments })
+    $events.Add(@{ event = 'launch'; pid = $actor.Process.Id; created = [BundleNative]::Times($actor.Process)[0]; requestedImage = $Executable; argv = $Arguments })
     return $actor
 }
 function Finish-ConsoleProcess($Actor, [bool]$Snapshot = $false) {
@@ -493,12 +495,15 @@ try {
     # Exception payloads can contain captured process/HTTP data; export only location/type.
     $primary = @{ stage = $stage; type = $_.Exception.GetType().FullName; line = $_.InvocationInfo.ScriptLineNumber }
 } finally {
+    $operationElapsedMs = $clock.ElapsedMilliseconds
+    $cancel = [Threading.CancellationTokenSource]::new(20000)
+    $deadlineMs = $clock.ElapsedMilliseconds + 20000
     # First retire Console launchers, then bind any still-unbound child using the
     # retained original creator handles. A lock PID alone never grants kill authority.
     foreach ($actor in $actors) {
         if (-not $actor.Started) { continue }
         try {
-            [BundleNative]::Stop($actor.Process, 5000)
+            [BundleNative]::Stop($actor.Process, (Remaining 5000))
             $events.Add(@{ event = 'console-cleanup'; pid = $actor.Process.Id; exit = $actor.Process.ExitCode; originalObjectJoined = $true })
         }
         catch { $cleanup.Add("console join: $($_.Exception.GetType().Name)") }
@@ -507,17 +512,23 @@ try {
         if ($readyEvidence -and (Test-Path -LiteralPath (Join-Path $runtimeHome 'consoled.lock'))) {
             $boundLive = @($daemons | Where-Object { [BundleNative]::Alive($_) })
             if ($boundLive.Count -eq 0 -and $stage -ne 'complete') {
-                foreach ($actor in $actors) {
+                $recovered = $false
+                $recoveryErrors = [Collections.Generic.List[string]]::new()
+                for ($i = $actors.Count - 1; $i -ge 0; $i--) {
+                    $actor = $actors[$i]
                     if (-not $actor.Started -or $actor.Process.StartInfo.ArgumentList.Count -ne 4) { continue }
-                    try { $daemon = Bind-Daemon $actor; break }
-                    catch { $cleanup.Add("unbound child retained for inspection: $($_.Exception.GetType().Name)") }
+                    try { $daemon = Bind-Daemon $actor; $recovered = $true; break }
+                    catch { $recoveryErrors.Add("creator ${i}: $($_.Exception.GetType().Name)") }
+                }
+                if (-not $recovered) {
+                    $cleanup.Add("unbound child retained for inspection; eligible bindings failed ($($recoveryErrors.Count)): $($recoveryErrors -join '; ')")
                 }
             }
         }
     } catch { $cleanup.Add("child recovery: $($_.Exception.GetType().Name)") }
     foreach ($process in $daemons) {
         try {
-            [BundleNative]::Stop($process, 5000)
+            [BundleNative]::Stop($process, (Remaining 5000))
             $events.Add(@{ event = 'cleanup'; pid = $process.Id; created = [BundleNative]::Times($process)[0]; exited = [BundleNative]::Times($process)[1]; exit = $process.ExitCode; originalObjectJoined = $true })
         } catch { $cleanup.Add("daemon join: $($_.Exception.GetType().Name)") }
     }
@@ -528,13 +539,13 @@ try {
         if ($actor.Started) {
             foreach ($task in @($actor.Out, $actor.Err)) {
                 if ($null -eq $task) { continue }
-                try { if (-not $task.Wait(1000)) { throw 'Stream drain deadline' }; $null = $task.GetAwaiter().GetResult() }
+                try { if (-not $task.Wait((Remaining 1000))) { throw 'Stream drain deadline' }; $null = $task.GetAwaiter().GetResult() }
                 catch { $cleanup.Add("stream drain: $($_.Exception.GetType().Name)") }
             }
         }
         try { $actor.Process.Dispose() } catch { $cleanup.Add("console handle close: $($_.Exception.GetType().Name)") }
     }
-    foreach ($resource in @($daemons.ToArray()) + @($files.ToArray()) + @($client, $cancel)) {
+    foreach ($resource in @($daemons.ToArray()) + @($files.ToArray()) + @($client, $operationCancel, $cancel)) {
         if ($null -ne $resource) {
             try { $resource.Dispose() } catch { $cleanup.Add("resource close: $($_.Exception.GetType().Name)") }
         }
@@ -549,7 +560,8 @@ try {
             $receipt = @{ native = $(if ($null -eq $primary -and $cleanup.Count -eq 0) { 'passed' } else { 'failed' }); stage = $stage;
                 scope = 'artifact-only nonTTY, authenticated web, direct crash-restart; not graceful/interactive/provider/Task43';
                 version = $ExpectedVersion; revision = $ExpectedRevision; hashes = $hashes; primary = $primary; cleanup = $cleanup.ToArray();
-                elapsedMs = $clock.ElapsedMilliseconds; observations = 'observations.json'; privateRuntimeRetained = $true } | ConvertTo-Json -Depth 5
+                elapsedMs = $clock.ElapsedMilliseconds; operationElapsedMs = $operationElapsedMs; cleanupElapsedMs = $clock.ElapsedMilliseconds - $operationElapsedMs;
+                operationBudgetMs = 180000; cleanupBudgetMs = 20000; observations = 'observations.json'; privateRuntimeRetained = $true } | ConvertTo-Json -Depth 5
             if ([Text.Encoding]::UTF8.GetByteCount($receipt) -gt 4096) { throw 'Receipt exceeds 4 KiB' }
             $receipt | Set-Content -LiteralPath (Join-Path $Evidence 'receipt.json')
         } catch { $cleanup.Add("evidence write: $($_.Exception.GetType().Name)") }

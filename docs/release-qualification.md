@@ -719,15 +719,20 @@ unsupported ownership/NT query behavior rather than switching to PID-only kills.
 No administrator bootstrap or ordinary-user qualification is included.
 
 Example invocation (replace the artifact paths, version and full revision with
-the exact producer inputs; `C:\ConsoleQualification\run-001` must not exist):
+the exact producer inputs). The profile-local `ConsoleArtifacts` and
+`ConsoleQualification` parents must already exist and be already trusted under
+the path checks above; trust is not guaranteed by their location. The `run-001`
+target must not exist. Any staging path with untrusted mutation rights is rejected,
+including a child of `C:\` that inherits such rights; do not change ambient ACLs
+to accommodate the qualifier.
 
 ```powershell
 pwsh.exe -NoProfile -NonInteractive -File .\scripts\qualify-release.ps1 `
-  -Archive 'C:\ConsoleArtifacts\console_0.0.0-clean-install_windows_amd64.zip' `
-  -Checksums 'C:\ConsoleArtifacts\checksums.txt' `
+  -Archive "$env:USERPROFILE\ConsoleArtifacts\console_0.0.0-clean-install_windows_amd64.zip" `
+  -Checksums "$env:USERPROFILE\ConsoleArtifacts\checksums.txt" `
   -ExpectedVersion '0.0.0-clean-install' `
   -ExpectedRevision 'd80b7ab289adf08091c131cfc748e3564593c4a6' `
-  -Evidence 'C:\ConsoleQualification\run-001'
+  -Evidence "$env:USERPROFILE\ConsoleQualification\run-001"
 ```
 
 Before starting a runtime, the consumer checks SHA256 and exactly one each of
@@ -754,6 +759,9 @@ also report missing installations. No personal credential/config files are read.
 The lock only locates a candidate process. Binding requires a retained process
 handle, kernel image path, extracted executable hash, exact decoded argv, native
 parent PID and creation time inside the original Console creator's lifetime.
+Launch events label the already-hashed executable path as `requestedImage`, not
+as a kernel observation: short-lived diagnostic processes may already have exited.
+The live daemon's bound event retains the kernel image and hash proof.
 Creator handles remain open through cleanup. Native process information is read
 through those handles; [Microsoft documents the native parent query as subject
 to Windows-version changes](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess).
@@ -776,14 +784,21 @@ Console again, and binds a newer daemon against the same home/listen/catalog and
 unchanged secret. This is **direct termination / crash-restart, not graceful
 shutdown**. Cleanup uses only retained Console objects and independently bound
 daemon objects. It never kills a PID from a lock, process tree, name or unrelated
-service. A child that cannot be bound is retained and reported as a cleanup
-failure. Primary failure stage/type/location are retained separately from cleanup
+service. Recovery tries eligible original creator handles newest-first; a child
+is reported as retained only after all eligible bindings fail, with those errors
+preserved. A failed termination is tolerated only when the same original handle
+confirms exit; a still-live failure remains an error.
+Primary failure stage/type/location are retained separately from cleanup
 errors; raw exception payloads are withheld because they may contain captured data.
 
 Limits are 180 seconds for the operation, with individual process waits of 15
 seconds, HTTP requests of 5 seconds, ordinary async waits of 10 seconds and
 hash/extraction waits of 30 seconds, all capped by the remaining budget. Cleanup
-adds at most 5 seconds per owned process join and 1 second per captured stream.
+has a separate 20-second deadline and cancellation token, including recovery reads
+and hashes even after the operation budget expires. Its joins and stream drains
+are capped at 5 seconds and 1 second respectively and by the remaining cleanup
+budget. Both cancellation sources are disposed. The receipt records both phase
+budgets and elapsed times; these timings end before the receipt is written.
 Console stdout/stderr capture limits are 256/64 KiB; HTTP bodies are limited to
 4 MiB and headers to 16 KiB. Checksums are limited to 64 KiB, the ZIP and total
 expanded bytes to 512 MiB, each member to 256 MiB, and asset references to eight.
