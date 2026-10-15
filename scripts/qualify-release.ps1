@@ -503,7 +503,7 @@ try {
     foreach ($actor in $actors) {
         if (-not $actor.Started) { continue }
         try {
-            [BundleNative]::Stop($actor.Process, (Remaining 5000))
+            [BundleNative]::Stop($actor.Process, [int][Math]::Max(0, [Math]::Min(5000, $deadlineMs - $clock.ElapsedMilliseconds)))
             $events.Add(@{ event = 'console-cleanup'; pid = $actor.Process.Id; exit = $actor.Process.ExitCode; originalObjectJoined = $true })
         }
         catch { $cleanup.Add("console join: $($_.Exception.GetType().Name)") }
@@ -521,14 +521,14 @@ try {
                     catch { $recoveryErrors.Add("creator ${i}: $($_.Exception.GetType().Name)") }
                 }
                 if (-not $recovered) {
-                    $cleanup.Add("unbound child retained for inspection; eligible bindings failed ($($recoveryErrors.Count)): $($recoveryErrors -join '; ')")
+                    $cleanup.Add("no child bound for cleanup; lock may be stale; inspection required; eligible bindings failed ($($recoveryErrors.Count)): $($recoveryErrors -join '; ')")
                 }
             }
         }
     } catch { $cleanup.Add("child recovery: $($_.Exception.GetType().Name)") }
     foreach ($process in $daemons) {
         try {
-            [BundleNative]::Stop($process, (Remaining 5000))
+            [BundleNative]::Stop($process, [int][Math]::Max(0, [Math]::Min(5000, $deadlineMs - $clock.ElapsedMilliseconds)))
             $events.Add(@{ event = 'cleanup'; pid = $process.Id; created = [BundleNative]::Times($process)[0]; exited = [BundleNative]::Times($process)[1]; exit = $process.ExitCode; originalObjectJoined = $true })
         } catch { $cleanup.Add("daemon join: $($_.Exception.GetType().Name)") }
     }

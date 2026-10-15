@@ -784,9 +784,10 @@ Console again, and binds a newer daemon against the same home/listen/catalog and
 unchanged secret. This is **direct termination / crash-restart, not graceful
 shutdown**. Cleanup uses only retained Console objects and independently bound
 daemon objects. It never kills a PID from a lock, process tree, name or unrelated
-service. Recovery tries eligible original creator handles newest-first; a child
-is reported as retained only after all eligible bindings fail, with those errors
-preserved. A failed termination is tolerated only when the same original handle
+service. Recovery tries eligible original creator handles newest-first; when all
+eligible bindings fail, it reports that no child was bound and that the lock may
+be stale, with those errors preserved for inspection. A failed termination is
+tolerated only when the same original handle
 confirms exit; a still-live failure remains an error.
 Primary failure stage/type/location are retained separately from cleanup
 errors; raw exception payloads are withheld because they may contain captured data.
@@ -797,7 +798,10 @@ hash/extraction waits of 30 seconds, all capped by the remaining budget. Cleanup
 has a separate 20-second deadline and cancellation token, including recovery reads
 and hashes even after the operation budget expires. Its joins and stream drains
 are capped at 5 seconds and 1 second respectively and by the remaining cleanup
-budget. Both cancellation sources are disposed. The receipt records both phase
+budget. Termination is still requested through each original owned handle after
+that budget expires, with a zero-length join wait; a process not yet joined is
+reported as a cleanup failure. Both cancellation sources are disposed. The
+receipt records both phase
 budgets and elapsed times; these timings end before the receipt is written.
 Console stdout/stderr capture limits are 256/64 KiB; HTTP bodies are limited to
 4 MiB and headers to 16 KiB. Checksums are limited to 64 KiB, the ZIP and total
