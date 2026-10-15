@@ -49,7 +49,7 @@ func supervisionSnapshot(t *testing.T, store *journal.Store, opts SupervisionOpt
 
 func supervisionJournalOwner(t *testing.T, path string) (*os.File, func() error) {
 	t.Helper()
-	owner, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+	owner, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

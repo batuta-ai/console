@@ -310,7 +310,7 @@ jobs:
           evidence=$(mktemp -d "${RUNNER_TEMP}/core-observation.XXXXXXXX")
           if [ "$RUNNER_OS" = Windows ]; then evidence=$(cygpath -m "$evidence"); fi
           echo "OBSERVATION_EVIDENCE=$evidence" >> "$GITHUB_ENV"
-          printf '%s\n' 'TEMPORARY DIAGNOSTIC ONLY: native normal journal and focused gate tests. No race, whole-Core, ordinary-user Windows, full Console proof, SDK adoption or release. Baseline gate failure must remain nonzero. Expected test events (not repeat counts): journal 42 Unix / 41 Windows pass both variants; baseline gate 15 fail + 5 pass; candidate gate 20 pass.' > "$evidence/scope.log"
+          printf '%s\n' 'TEMPORARY DIAGNOSTIC ONLY: native normal journal and focused gate tests. No race, whole-Core, ordinary-user Windows, full Console proof, SDK adoption or release. Baseline gate failure must remain nonzero. Expected test events (not repeat counts): journal 42 Unix / 41 Windows pass both variants; baseline gate 16 fail + 5 pass; candidate gate 21 pass.' > "$evidence/scope.log"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         env:
           GIT_CONFIG_COUNT: '1'
@@ -370,7 +370,7 @@ jobs:
           go test -json -count=1 -timeout=2m ./journal > "$OBSERVATION_EVIDENCE/journal.stdout" 2> "$OBSERVATION_EVIDENCE/journal.stderr"
           journal_exit=$?
           printf '%s\n' "$journal_exit" > "$OBSERVATION_EVIDENCE/journal.exit"
-          go test -json -count=1 -timeout=3m -run '^(TestSupervisionGateWaitsForJournalPublication|TestSupervisionGateCancellationWhileJournalOwned|TestSupervisionGatePreCancelledLegacyOpening|TestSupervisionJudgeReadsCurrentJournalAfterSnapshotCapture|TestSupervisionGateSnapshotStates|TestSupervisionGateSnapshotPreCancelledLegacyOpening|TestSupervisionGateSnapshotUsesCapturedJournalWithoutReacquiring|TestSupervisionGateEvidenceAndJudgment)$' ./loop > "$OBSERVATION_EVIDENCE/gate.stdout" 2> "$OBSERVATION_EVIDENCE/gate.stderr"
+          go test -json -count=1 -timeout=3m -run '^(TestSupervisionGateWaitsForJournalPublication|TestSupervisionGateCancellationWhileJournalOwned|TestSupervisionGatePreCancelledLegacyOpening|TestSupervisionJudgeReadsCurrentJournalAfterSnapshotCapture|TestSupervisionGateSnapshotStates|TestSupervisionGateSnapshotPreCancelledLegacyOpening|TestSupervisionGateSnapshotUsesCapturedJournalWithoutReacquiring|TestSupervisionGateEvidenceAndJudgment|TestSupervisionGateSnapshotBindsCapturedTipAndCurrentEvidence)$' ./loop > "$OBSERVATION_EVIDENCE/gate.stdout" 2> "$OBSERVATION_EVIDENCE/gate.stderr"
           gate_exit=$?
           printf '%s\n' "$gate_exit" > "$OBSERVATION_EVIDENCE/gate.exit"
           git status --porcelain --untracked-files=all --ignored -- . > "$OBSERVATION_EVIDENCE/source-after.log"

@@ -1,10 +1,10 @@
 {
   "upstream_repository": "https://github.com/batuta-ai/core",
-  "exact_head": "fb883cdb9fd4bcd067fd771ce1330181ca546b63",
-  "diagnostic_scope": "TEMPORARY DIAGNOSTIC ONLY: native Go 1.27.2 CGO=0 journal package and focused supervision gate normal tests; no race, whole-Core, ordinary-user, Console proof, SDK adoption or release. Event counts are not repeat counts.",
+  "exact_head": "2d245eee478519387e5c7969daf5131075f691c6",
+  "diagnostic_scope": "TEMPORARY DIAGNOSTIC ONLY: native Go 1.27.2 CGO=0 journal package and focused supervision gate normal tests; no race, whole-Core, ordinary-user, Console proof, SDK adoption or release. Event counts are not repeat counts. Baseline intentionally lacks the coherent gate implementation and includes the new API stub. Both variants contain identical tests, including the corrected owned test publisher and captured-tip/current-evidence test.",
   "pair_heads": {
-    "baseline": "db05a5d18dcf45f7e3aed778f0becdd94ba28256",
-    "candidate": "fb883cdb9fd4bcd067fd771ce1330181ca546b63"
+    "baseline": "9c0315a0ad6730671a03272265da2c870dc2d715",
+    "candidate": "2d245eee478519387e5c7969daf5131075f691c6"
   },
   "pair_only_source_differences": [
     "loop/supervision_gate.go",
@@ -23,6 +23,7 @@
     "classify/v3_packet.go": "42ba1e78d32f8512301dadd3e512e09564f42760b9d139bddce5505a12134788",
     "classify/v3_packet_test.go": "936bba10842805a578f9f87fbd3a9e28dec4f278376df9109111e2b362ba677c",
     "classify/v3_test.go": "e75376ca02d5ff810b3961132b32237d48f2c317060933fe2202bce4acb1d747",
+    "cmd/batuta/cancellation_cause_unix_test.go": "5e691ca88f5f4b529d2f8a713ffca006e53305fd6ed2a18ac293aa16d057bc1e",
     "cmd/batuta/council.go": "cc3c3ac88b1741d15b87361fea0257e28d112a0438bb6737ce717707139f822f",
     "cmd/batuta/council_test.go": "431db63361c4227c4c32220df332b3ad2158107604d1af01320cff25503efb07",
     "cmd/batuta/gate.go": "fc1f9f0a0e5ebc005442f5bf032cf452f3da822acb95e5901f3c3bae179017d7",
@@ -41,7 +42,7 @@
     "cmd/batuta/judge_questions_bench_test.go": "f061d43a9dd93f4c3301d38b0f9c0a35e9d03ead7f3d5df10a747044245dc111",
     "cmd/batuta/judge_questions_test.go": "7cd33aa0b7fdf7dc5902eb4f439c348afba51337650e8c0ff1a1ea94e0c39e90",
     "cmd/batuta/judge_test.go": "4d3cff450be2867c6f4f5ff2a86f0a5065a3637964f2a98cb4f94f45b094c7df",
-    "cmd/batuta/main.go": "3271f0bc71cbbcdfea4bbca906b4697a0659236d1b850d369094f70faf41911c",
+    "cmd/batuta/main.go": "fac5d8a69ab9429243c3e499f3f66a80e1495e1d5628b664c40958eafbb75ebb",
     "cmd/batuta/main_test.go": "c5a866b11e56e27e29606b24a67c01936f435fa0ea9f1492f13e621333c3f01f",
     "cmd/batuta/main_unix_test.go": "728278714e23daf5814e1195359d8601e57d9c949a78d2b922f7130524c0c576",
     "cmd/batuta/testdata/questions/plan.md": "bc60beb6c45cecaf4eb3f0ea8c85d00dd3b94ae737ceafcc0c23f3c487f380cc",
@@ -173,7 +174,7 @@
     "journal/concurrency_test.go": "eb24bfed4a8638d146c830cedefb0428e5e5ecd380268118facd01d7db75c186",
     "journal/concurrency_unix_test.go": "c76ae04c73b37f0e8be93eb0b62e50a955f44241281518d69d4f5465cda1f20c",
     "journal/concurrency_windows_test.go": "141a7c545b041479c52bbc0031383f5bf5c52edc21cf2c2fc9f068f086a1bbaf",
-    "journal/journal.go": "3a163493540dc131143115ca810c964f364f97eb30710bf8f017156dc8e0e27f",
+    "journal/journal.go": "e84b10f33ffda5b5718d5571c7b0611a8251e04b5579af119811adf6dcab20b1",
     "journal/journal_test.go": "c88818088587ef63dfd38ee206cd0a10f3064b625c89057eb64dd131ac29c343",
     "journal/locking.go": "45517e2d4b0ab70e914136bb7ed877f06cf03a92510e409673e66eaf4511b0ff",
     "journal/locking_test.go": "d237158205444c07a414e1cf9fad71a966c3cc5badd53ace62c9702ee5be83aa",
@@ -261,7 +262,8 @@
     "loop/supervision_run.go": "285a4834c0988f48eb33b1f338f16f0d9082eb191eaab650d860d01ab53cbd0c",
     "loop/supervision_run_test.go": "945c57c7e5994b4f71883d9f5d813bfaf92c9c2db6e4b4b183c9b4c2ceed73cf",
     "loop/supervision_snapshot.go": "f431235787d03842b038e07025760f9965c3cdb00f1ee1929837f832a59dd1b0",
-    "loop/supervision_snapshot_test.go": "4ba3ec9096e29c798e9d17f98fdd7d3328e97068ba4b053961f2b6924967d73c",
+    "loop/supervision_snapshot_evidence_test.go": "dc21e0ebc5bc478132a29e62f4f436d3bf9810e1948999a2acdae5b75016fb5f",
+    "loop/supervision_snapshot_test.go": "7a4ca4619fa41c66bb5060d604aa8365d8382eac3fa61368710ca4d41dbab26d",
     "loop/supervision_test.go": "7af91372da45c1ecd521e05d01487a0ec02cf9c95059a35b292d32d5179b69d1",
     "loop/testdata/mock-blocked-120.txt": "3cbab4337b80a12d63a4fccfa42eb364c3d08cf0df7c7932f1a56d16474a2f28",
     "loop/testdata/mock-blocked-60.txt": "42f0ec48406c59228092000ccd9ca608936fb9b9ac079611eb7c68995a1f9b84",

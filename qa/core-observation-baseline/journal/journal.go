@@ -97,6 +97,8 @@ func ValidDeliveryID(id string) bool {
 // it with Seq, At, Prev and Digest filled. The file is opened in append mode
 // and synced before returning, so a crash right after Append leaves a
 // complete line behind.
+// An error can follow durable publication. Reconcile the journal before
+// retrying an append that returned an error.
 func (s *Store) Append(deliveryID string, record Record) (appended Record, resultErr error) {
 	if !ValidDeliveryID(deliveryID) {
 		return Record{}, ErrUnknownDelivery
