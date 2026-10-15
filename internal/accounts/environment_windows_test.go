@@ -149,3 +149,75 @@ func TestTask43WindowsSessionRefusesWritableCacheParent(t *testing.T) {
 		t.Fatal("refusal created private artifacts", err)
 	}
 }
+
+func TestWindowsSessionCanonicalHome(t *testing.T) {
+	profile := task43AccountHome(t)
+	local := filepath.Join(profile, "AppData", "Local")
+	if err := consoleruntime.EnsurePrivateDirectory(local); err != nil {
+		t.Fatal(err)
+	}
+	local, err := filepath.EvalSymlinks(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(local, "batuta", "console", "session-homes")
+	if err := consoleruntime.EnsurePrivateDirectory(parent); err != nil {
+		t.Fatal(err)
+	}
+	task43AccountACL(t, local)
+	task43AccountACL(t, parent)
+	constructed := filepath.Join(local, "Batuta", "Console", "session-homes")
+	canonical, err := filepath.EvalSymlinks(constructed)
+	if err != nil || canonical != parent || canonical == constructed {
+		t.Fatalf("fixture must resolve the case alias: constructed=%q canonical=%q parent=%q err=%v", constructed, canonical, parent, err)
+	}
+	t.Setenv("LOCALAPPDATA", local)
+	t.Setenv("USERPROFILE", profile)
+	env, home, err := SessionEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(home)
+	canonical, err = filepath.EvalSymlinks(home)
+	if err != nil || home != canonical {
+		t.Errorf("session HOME is not exactly canonical: home=%q canonical=%q err=%v", home, canonical, err)
+	}
+	if filepath.Dir(home) != parent {
+		t.Errorf("session parent=%q want=%q", filepath.Dir(home), parent)
+	}
+	paths := map[string]string{}
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		paths[key] = value
+	}
+	for key, want := range map[string]string{
+		"HOME": home, "USERPROFILE": home,
+		"APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "AppData", "Local"),
+		"TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp"), "TMPDIR": filepath.Join(home, "tmp"),
+		"XDG_CONFIG_HOME": filepath.Join(home, ".config"), "XDG_DATA_HOME": filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME": filepath.Join(home, ".cache"), "XDG_STATE_HOME": filepath.Join(home, ".local", "state"),
+		"CODEX_HOME": filepath.Join(home, ".codex"), "CLAUDE_CONFIG_DIR": filepath.Join(home, ".claude"), "CURSOR_CONFIG_DIR": filepath.Join(home, ".cursor"),
+	} {
+		path := paths[key]
+		if path != want {
+			t.Errorf("%s=%q want=%q", key, path, want)
+		}
+		canonical, err := filepath.EvalSymlinks(path)
+		if err != nil || path != canonical {
+			t.Errorf("%s is not exactly canonical: path=%q canonical=%q err=%v", key, path, canonical, err)
+		}
+		task43AccountACL(t, path)
+		dir, err := consoleruntime.OpenPrivateDirectory(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := dir.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, want := range map[string]string{"HOMEDRIVE": filepath.VolumeName(home), "HOMEPATH": strings.TrimPrefix(home, filepath.VolumeName(home))} {
+		if paths[key] != want {
+			t.Errorf("%s=%q want=%q", key, paths[key], want)
+		}
+	}
+}

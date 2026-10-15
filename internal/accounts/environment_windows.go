@@ -47,6 +47,16 @@ func newSessionHome() (string, error) {
 	if err := consoleruntime.EnsurePrivateDirectory(parent); err != nil {
 		return "", err
 	}
+	// Resolve filesystem spelling after private validation; NewPrivateTemp
+	// revalidates the canonical parent before creating the owned home.
+	parent, err = filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+	prospective = filepath.Join(parent, "session-"+strings.Repeat("0", 32), "tmp")
+	if err := windowsTemporaryPathLength(prospective); err != nil {
+		return "", err
+	}
 	return consoleruntime.NewPrivateTemp(parent, "session-")
 }
 func createIdentityDirectory(path string) error { return consoleruntime.EnsurePrivateDirectory(path) }
