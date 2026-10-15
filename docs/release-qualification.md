@@ -885,8 +885,13 @@ time against the retained launching process object, and token type/elevation
 fields against the required ordinary values. Separately, the wrapper rejects
 Administrators group membership and SeCreateSymbolicLinkPrivilege; groups and
 privileges are not compared with the launcher or actor. The
-consumer remains byte-identical (SHA256
+consumer remained byte-identical as of that Core49 qualification (SHA256
 `98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c4643937b3`).
+The current Core55 qualifier, `scripts/qualify-release.ps1`, has SHA256
+`6f2d94507a2714764fc95035a12e64465a57e5b1ad768b851110e4ef4edc62d5`,
+matching the frozen-consumer constant in `scripts/qualify-release.test.ps1`.
+This digest identifies the qualifier, not the test harness, and does not establish
+completion of the current native ordinary-account qualification.
 
 The native case order is counterfactual, checksum, missing, duplicate, extra,
 renamed, traversal, relative path, ADS, dot-dot path, wrong PE machine, wrong
