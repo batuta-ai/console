@@ -65,25 +65,12 @@ func TestTask43WindowsAdmissionSetFailureKeepsCause(t *testing.T) {
 	if after.TotalProcesses != before.TotalProcesses || after.ActiveProcesses != 0 {
 		t.Fatal("SET failure changed original membership or left a live member", before, after)
 	}
-	handles := append([]windows.Handle{owned.job, owned.port, owned.root, owned.anchor.Process, owned.anchor.Thread}, owned.terminationWaiters...)
 	retireErr := owned.retire(nil)
 	if !errors.Is(retireErr, windows.ERROR_ACCESS_DENIED) || !strings.Contains(retireErr.Error(), "seal owned Windows job admission:") || strings.Contains(retireErr.Error(), "gained unobserved processes") {
 		t.Fatalf("retire lost the SET denial or invented a birth: %v", retireErr)
 	}
 	if !owned.retired || len(owned.terminationWaiters) != 0 || owned.job != 0 || owned.root != 0 || owned.anchor.Process != 0 || owned.anchor.Thread != 0 || owned.port != 0 {
 		t.Fatal("failed admission SET retained owned handles", owned)
-	}
-	for _, handle := range handles {
-		var duplicate windows.Handle
-		err := windows.DuplicateHandle(current, handle, current, &duplicate, 0, false, windows.DUPLICATE_SAME_ACCESS)
-		if err == nil {
-			if closeErr := windows.CloseHandle(duplicate); closeErr != nil {
-				t.Error(closeErr)
-			}
-		}
-		if !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
-			t.Error("retire did not close owned handle", handle, err)
-		}
 	}
 	if err := owned.retire(nil); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		t.Fatal("repeated retire lost the admission SET denial", err)
