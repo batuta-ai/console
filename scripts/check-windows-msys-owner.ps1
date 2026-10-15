@@ -261,7 +261,46 @@ function Assert-Events([string]$Name, [string[]]$Required, [bool]$Negative = $fa
     if ($Negative) {
         # Require the original final assertion after successful compile/launch/exit44.
         # Compare Go's exact %q arrays; only the observed stderr may differ.
-        $diagnostics = @($events | Where-Object { $_.Action -ceq 'output' -and $_.Output -cmatch '^\s+\w+\.go:\d+: ' })
+        $diagnosticEvents = [Collections.Generic.List[object]]::new()
+        $pendingError = $null
+        foreach ($record in $events) {
+            $outputType = ''
+            if ($record.PSObject.Properties['OutputType']) {
+                if ($record.OutputType -isnot [string]) { throw 'Malformed negative output type' }
+                $outputType = $record.OutputType
+            }
+            if ($null -ne $pendingError) {
+                if ($record.Action -cne 'output' -or ($outputType -cne 'error-continue' -and
+                    ($outputType -cne '' -or -not $record.PSObject.Properties['Output'] -or $record.Output -cne "`n")) -or
+                    -not $record.PSObject.Properties['Package'] -or $record.Package -isnot [string] -or
+                    -not $record.PSObject.Properties['Test'] -or $record.Test -isnot [string] -or
+                    $record.Package -cne $pendingError.Package -or $record.Test -cne $pendingError.Test -or
+                    -not $record.PSObject.Properties['Output'] -or $record.Output -isnot [string] -or $record.Output.Length -eq 0) {
+                    throw 'Interrupted negative error continuation'
+                }
+                $pendingError.Output += $record.Output
+            } else {
+                if ($outputType -ceq 'error-continue') { throw 'Orphan negative error continuation' }
+                if ($outputType -cnotin @('', 'frame', 'error') -or
+                    ($outputType -cne '' -and $record.Action -cne 'output')) { throw 'Unknown negative output framing' }
+                if ($outputType -cne 'error') { $diagnosticEvents.Add($record); continue }
+                if (-not $record.PSObject.Properties['Package'] -or $record.Package -isnot [string] -or $record.Package.Length -eq 0 -or
+                    -not $record.PSObject.Properties['Test'] -or $record.Test -isnot [string] -or $record.Test.Length -eq 0 -or
+                    -not $record.PSObject.Properties['Output'] -or $record.Output -isnot [string] -or $record.Output.Length -eq 0) {
+                    throw 'Malformed negative error start'
+                }
+                $pendingError = [pscustomobject]@{ Action = 'output'; Package = $record.Package; Test = $record.Test; Output = $record.Output }
+            }
+            # This collector admits one exact single-line assertion, never a multi-line error.
+            $newline = $pendingError.Output.IndexOf("`n")
+            if ($newline -ge 0) {
+                if ($newline -ne $pendingError.Output.Length - 1) { throw 'Mixed negative error lines' }
+                $diagnosticEvents.Add($pendingError)
+                $pendingError = $null
+            }
+        }
+        if ($null -ne $pendingError) { throw 'Incomplete negative error continuation' }
+        $diagnostics = @($diagnosticEvents | Where-Object { $_.Action -ceq 'output' -and $_.Output -cmatch '^\s+\w+\.go:\d+: ' })
         $cause = @($diagnostics | Where-Object { $_.Output -cmatch '^\s+script_windows_test\.go:56: actual argv/stdin/home=' })
         $image = @($diagnostics | Where-Object { $_.Output -cmatch '^\s+script_windows_test\.go:38: actual native fixture image=' })
         if ($diagnostics.Count -ne 2 -or $cause.Count -ne 1 -or $image.Count -ne 1) { throw 'Negative has an unrelated original diagnostic' }
