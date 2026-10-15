@@ -859,6 +859,10 @@ job requires successful producer outputs, downloads that exact same-run ID with
 `digest-mismatch: error`, and checks labels against its own checked-out revision.
 A failed producer fails the ordinary job explicitly; it cannot silently select
 another artifact or yield a successful qualification through a skipped job.
+Run-attempt binding requires re-running the full producer and consumer flow.
+GitHub's "Re-run failed jobs" cannot reuse a successful producer from an earlier
+attempt: its labels intentionally fail the ordinary job's attempt check. Use a
+full workflow re-run; do not relax the binding or retry unchanged for green.
 
 The existing disposable hosted-Windows account bootstrap stages these inputs
 alongside the original source test binaries. Its before/after source and staged
@@ -876,8 +880,11 @@ its own private fixture and verifies copy hashes and ownership. It invokes:
 This is an internal invocation inside the existing actor, not a second account
 bootstrap. Never run `check-windows-ordinary.ps1` locally. Each qualifier child
 inherits that primary token without credentials, elevation or privilege changes;
-self-reported SID, PID, creation time, primary/elevation fields, groups and
-privileges are checked against the retained launching process object. The
+the harness checks self-reported SID against the ordinary actor, PID and creation
+time against the retained launching process object, and token type/elevation
+fields against the required ordinary values. Separately, the wrapper rejects
+Administrators group membership and SeCreateSymbolicLinkPrivilege; groups and
+privileges are not compared with the launcher or actor. The
 consumer remains byte-identical (SHA256
 `98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c4643937b3`).
 
@@ -903,7 +910,14 @@ positive uses byte-exact original ZIP/checksums and requires complete provenance
 two bound daemon generations, reuse, direct crash, eight HTTP 401 observations,
 closed logs and joined daemon cleanup. Each qualifier is limited to 220 seconds,
 with bounded join/drain waits and 64 KiB captured streams. The existing 20-minute
-ordinary job timeout remains unchanged.
+ordinary job timeout remains unchanged. On an outer timeout or capture error,
+the harness attempts to stop only the retained original PowerShell process object
+and waits at most five seconds for that process. It preserves the primary error
+and records cleanup failures and stream drain status separately in the summary.
+Descendant cleanup is explicitly unverified/incomplete on that path; joining the
+PowerShell process does not prove daemon cleanup or artifact qualification.
+Cancellation/disposal errors cannot replace the original error. Root must inspect
+actual native case timings against the unchanged job budget before approval.
 
 Additional public evidence names are an explicit finite whitelist:
 `bundle-sourcebridge.json`, `bundle-copy-before.json`, `bundle-copy-after.json`,

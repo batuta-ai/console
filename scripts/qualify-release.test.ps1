@@ -41,6 +41,7 @@ if ($original -cne '98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c46439
 $null = New-Item -ItemType Directory -Path $Evidence
 $cases = @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')
 $results = [Collections.Generic.List[object]]::new()
+$caseFailure=$null
 $wrapper = Join-Path $root 'invoke-qualifier.ps1'
 @'
 param($Qualifier,$Archive,$Checksums,$ExpectedVersion,$ExpectedRevision,$Evidence,$Actor,$ExpectedSid)
@@ -161,21 +162,56 @@ try {
         $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
         $process=[Diagnostics.Process]::new(); $process.StartInfo=$start
         $out=$err=$null; $started=$false; $exitCode=$null
+        $primaryError=$null; $failureStage='Qualifier did not start'
+        $cleanupErrors=[Collections.Generic.List[string]]::new()
+        $stopAttempted=$false; $originalJoined=$false
         $cancel=[Threading.CancellationTokenSource]::new(230000)
         try {
             $started=$process.Start()
             if (-not $started) { throw 'Qualifier did not start' }
+            $failureStage='Qualifier capture setup failed'
             $created=$process.StartTime.ToFileTimeUtc(); $childPid=$process.Id
             $out=[BundleCaseStreams]::Read($process.StandardOutput.BaseStream,$cancel.Token)
             $err=[BundleCaseStreams]::Read($process.StandardError.BaseStream,$cancel.Token)
+            $failureStage='Qualifier deadline exceeded'
             if (-not $process.WaitForExit(220000)) { throw 'Qualifier deadline exceeded' }
+            $failureStage='Qualifier streams did not drain'
             if (-not $out.Wait(5000) -or -not $err.Wait(5000)) { throw 'Qualifier streams did not drain' }
+            $failureStage='Qualifier capture persistence failed'
             $exitCode=$process.ExitCode
             [IO.File]::WriteAllText((Join-Path $dir 'stdout.private'),$out.Result)
             [IO.File]::WriteAllText((Join-Path $dir 'stderr.private'),$err.Result)
-        } finally {
-            if ($started -and -not $process.HasExited) { $process.Kill($true); if (-not $process.WaitForExit(5000)) { throw 'Qualifier tree failed to join' } }
-            $cancel.Cancel(); $cancel.Dispose(); $process.Dispose()
+        } catch { $primaryError=$_ } finally {
+            try {
+                if ($started) {
+                    $originalJoined=$process.HasExited
+                    if (-not $originalJoined) {
+                        $stopAttempted=$true
+                        $process.Kill()
+                        $originalJoined=$process.WaitForExit(5000)
+                        if (-not $originalJoined) { $cleanupErrors.Add('Original process failed to join') }
+                    }
+                }
+            } catch { $cleanupErrors.Add('Original process stop/join failed') }
+            try { $cancel.Cancel() } catch { $cleanupErrors.Add('Stream cancellation failed') }
+            $stdoutDrained=($null -ne $out -and $out.IsCompletedSuccessfully)
+            $stderrDrained=($null -ne $err -and $err.IsCompletedSuccessfully)
+            try { $cancel.Dispose() } catch { $cleanupErrors.Add('Stream cancellation disposal failed') }
+            try { $process.Dispose() } catch { $cleanupErrors.Add('Original process disposal failed') }
+        }
+        if ($null -ne $primaryError -or $cleanupErrors.Count -ne 0) {
+            if ($null -eq $primaryError) { $failureStage='Qualifier cleanup failed' }
+            $caseFailure=@{ case=$case; primary=$failureStage; cleanup=$cleanupErrors.ToArray();
+                originalProcessStopAttempted=$stopAttempted; originalProcessJoined=$originalJoined;
+                stdoutDrained=$stdoutDrained; stderrDrained=$stderrDrained;
+                descendants='descendant cleanup unverified/incomplete' }
+            $message="$failureStage; original process stop attempted=$stopAttempted; original process joined=$originalJoined; descendant cleanup unverified/incomplete"
+            if ($cleanupErrors.Count -ne 0) { $message+='; cleanup: '+($cleanupErrors -join '; ') }
+            if ($null -ne $primaryError) {
+                $primaryError.ErrorDetails=[Management.Automation.ErrorDetails]::new($message)
+                throw $primaryError
+            }
+            throw $message
         }
         $actor=Get-Content -LiteralPath $actorPath -Raw | ConvertFrom-Json
         if ($actor.sid -cne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -or $actor.pid -ne $childPid -or
@@ -224,6 +260,6 @@ try {
     }
 } finally {
     @{ cases=$results.ToArray(); expected=$cases; complete=($results.Count -eq $cases.Count); qualifierSHA256=(Digest $qualifier);
-        archiveSHA256=(Digest $archive); checksumsSHA256=(Digest $checksums); native='PENDING until complete and independently inspected' } |
+        archiveSHA256=(Digest $archive); checksumsSHA256=(Digest $checksums); failure=$caseFailure; native='PENDING until complete and independently inspected' } |
         ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Evidence 'bundle-summary.json')
 }
