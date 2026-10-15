@@ -938,9 +938,17 @@ and retrieve proof (replace the explicit placeholders):
 ```sh
 gh run list --workflow ci.yml --commit <candidate-sha> --json databaseId,headSha,status,conclusion
 gh run watch <run-id> --exit-status
-gh run download <run-id> --name console-snapshot-<run-id>-<attempt> --dir <owned-public-evidence>/producer
-gh run download <run-id> --name windows-ordinary-skills-<run-id>-<attempt> --dir <owned-public-evidence>/ordinary
+gh run download <run-id> --name console-snapshot-<run-id>-<attempt>-event-ref --dir <owned-public-evidence>/producer
+gh run download <run-id> --name windows-ordinary-skills-<run-id>-<attempt>-event-ref --dir <owned-public-evidence>/ordinary
 ```
+
+These commands use the `event-ref` phase for push/PR defaults and reusable
+callers without `inputs.ref`. A release callee with nonempty `inputs.ref` uses
+`requested-ref`; replace the suffix in both download commands for that phase.
+The three upload names (including `windows-source`) distinguish these two
+phases within the same run/attempt even when both resolve to the same commit.
+This covers the current two-call release contract; multiple callers in the
+same phase are not guaranteed unique names.
 
 Check all original source jobs and assertions, producer five-archive contract
 logs/metadata, download digest outcome, source bridge and before/after hashes,

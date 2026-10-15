@@ -235,7 +235,7 @@ jobs:
         if: always() && env.WINDOWS_EVIDENCE != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-source-${{ github.run_id }}-${{ github.run_attempt }}
+          name: windows-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
           path: |
             ${{ env.WINDOWS_EVIDENCE }}/*.log
             ${{ env.WINDOWS_EVIDENCE }}/*.json
@@ -303,7 +303,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload
         with:
-          name: console-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+          name: console-snapshot-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -381,6 +381,6 @@ jobs:
         if: always() && env.ORDINARY_EVIDENCE != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-ordinary-skills-${{ github.run_id }}-${{ github.run_attempt }}
+          name: windows-ordinary-skills-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
           path: ${{ env.ORDINARY_EVIDENCE }}/*
           if-no-files-found: error
