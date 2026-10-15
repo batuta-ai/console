@@ -110,6 +110,7 @@ func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
 			svc, a, skills, env, values := task43CoreApprovedFixture(t)
 			svc.NativeExecutorExecutable = image
 			home := accounts.ExplicitHome(values["codex"].Environment)
+			task43CoreReviewFailureDiagnostic(t, a, home)
 			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), test.mode)
 			state, err, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
 			if err != nil || !active || state != test.state {
@@ -567,6 +568,7 @@ func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
 	authorized.Members = append(authorized.Members, domain.Member{ID: "reviewer", CLI: "codex", Model: "qa-native", Effort: "high", AccountID: "selected"})
 	values["codex"] = authorized
 	home := accounts.ExplicitHome(authorized.Environment)
+	task43CoreReviewFailureDiagnostic(t, a, home)
 	task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), "effort")
 	state, err, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
 	if err != nil || !active || state != loop.StateDone {
