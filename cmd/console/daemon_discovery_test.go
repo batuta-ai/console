@@ -75,10 +75,7 @@ func main() {
 	pathDaemon := filepath.Join(pathDir, testfixture.ExecutableName("consoled"))
 	for _, mode := range []string{"sibling", "read-failure", "path"} {
 		t.Run(mode, func(t *testing.T) {
-			home, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			home := t.TempDir()
 			childPath := pathDir
 			expected := daemon
 			if mode == "path" {
