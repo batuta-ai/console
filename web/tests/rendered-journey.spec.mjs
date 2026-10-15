@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { test as base, expect, chromium } from "@playwright/test";
 
 const test = base.extend({
-  journey: [async ({}, use) => {
-    const fixture = await createJourney();
+  journey: [async ({ viewport }, use) => {
+    const fixture = await createJourney(viewport);
     try { await use(fixture); }
     finally { await fixture.close(); }
   }, { timeout: 180000 }],
@@ -38,7 +38,7 @@ test("two rendered immutable mission snapshots survive an owned daemon restart",
       page.setDefaultTimeout(10000);
       page.setDefaultNavigationTimeout(10000);
       await page.goto(fixture.origin, { waitUntil: "domcontentloaded" });
-      await page.getByRole("button", { name: new RegExp(workspace.name) })
+      await page.getByRole("main").getByRole("button", { name: new RegExp(workspace.name) })
         .filter({ has: page.getByText(workspace.root, { exact: true }) }).click();
       for (const mission of [second, first]) {
         await page.getByRole("button", { name: "Missions", exact: true }).click();
@@ -77,7 +77,7 @@ async function bounded(promise, milliseconds, label) {
   } finally { clearTimeout(timer); }
 }
 
-async function createJourney() {
+async function createJourney(viewport) {
   const repository = fileURLToPath(new URL("../../", import.meta.url));
   const temporaryRoot = await realpath(os.tmpdir());
   // Reject a custom TMPDIR inside any checkout, including a Git worktree.
@@ -108,6 +108,7 @@ async function createJourney() {
   let seeded;
   let cleaning;
   let interrupted;
+  let buildCompletionUnverified = false;
 
   const stop = async () => {
     if (!owned || owned.joined) return;
@@ -131,6 +132,9 @@ async function createJourney() {
 
   const close = () => cleaning ??= (async () => {
     const errors = [];
+    if (buildCompletionUnverified) {
+      errors.push(new Error("Go build completion unverified; compiler children may remain; owned runtime retained"));
+    }
     if (browser) {
       try { await bounded(browser.close(), 10000, "browser close"); }
       catch (error) { errors.push(error); }
@@ -177,7 +181,9 @@ async function createJourney() {
         GOCACHE: process.env.GOCACHE, GOENV: "off", GOTOOLCHAIN: "local", GOWORK: "off",
         GOFLAGS: "-mod=readonly", GOPROXY: "off", GOSUMDB: "off", CGO_ENABLED: "0" },
     });
-    assert.equal(build.status, 0, build.error?.message || build.stderr);
+    buildCompletionUnverified = Boolean(build.error || build.signal);
+    if (build.error) throw build.error;
+    assert.equal(build.status, 0, build.stderr || `Go build terminated by ${build.signal}`);
   } catch (error) {
     try { await close(); }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], "Build/setup and cleanup failed"); }
@@ -217,7 +223,7 @@ async function createJourney() {
     },
     async openContext() {
       browser ??= await chromium.launch({ headless: true, env: environment, timeout: 20000 });
-      const context = await browser.newContext({ locale: "en-US", serviceWorkers: "block" });
+      const context = await browser.newContext({ viewport, locale: "en-US", serviceWorkers: "block" });
       try {
         await context.addInitScript(({ origin: allowedOrigin, credential }) => {
           if (location.origin === allowedOrigin) localStorage.setItem("bt-token", credential);

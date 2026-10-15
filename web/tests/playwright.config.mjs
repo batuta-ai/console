@@ -10,6 +10,6 @@ export default defineConfig({
   expect: { timeout: 10000 },
   reporter: "line",
   outputDir: "../../.batuta/runs/rendered-browser/results",
-  use: { browserName: "chromium", trace: "off", screenshot: "off", video: "off" },
+  use: { browserName: "chromium", viewport: { width: 1280, height: 720 }, trace: "off", screenshot: "off", video: "off" },
   projects: [{ name: "chromium" }],
 });

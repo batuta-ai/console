@@ -104,11 +104,12 @@ The single spec builds real consoled with its committed embedded production
 assets; it does not run Vite or regenerate assets. Public APIs seed a disposable
 workspace, two clearly labeled fixture accounts (no login, `cli_missing`), a
 custom squad and its revision, and two missions with immutable snapshots.
-The real UI opens the workspace card, selects each mission from Missions, and
-checks its exact ID, title, objective, snapshot name and member models in Room.
-Squad versions and complete mission identities are also checked through the
-public catalog. No provider execution, route interception or substituted App
-is involved. A missing workspace profile is intentional; this slice navigates
+At a fixed 1280×720 desktop viewport, the real UI opens the workspace card
+inside the main landmark. In Missions, it checks each mission row’s exact ID,
+title, objective and snapshot name before selection. In Room, it checks the
+selected mission’s exact ID, title, objective and member models. Squad versions
+and complete mission identities are checked through the public catalog. No
+provider execution, route interception or substituted App is involved. A missing workspace profile is intentional; this slice navigates
 existing missions and does not qualify workspace initialization.
 
 The owned daemon must close and join with exit 0 before another process opens
@@ -131,12 +132,11 @@ Forced daemon cleanup is a failure. If joining or cleanup cannot be established,
 the private runtime is retained instead of being deleted under a live process.
 
 Native rendered proof is **PENDING until Root runs the actual browser command**.
-The worker sandbox denies loopback and browser acquisition was still pending at
-candidate preparation. Listing or syntax checks are not rendered proof. The
-existing unit command locally passed 159 tests and failed six redirect tests
-with `listen EPERM`; Root must rerun the unchanged gate outside that sandbox.
-Behavioral RED/GREEN for this new journey is also pending there; assertions were
-written before the fixture, without claiming missing tooling as a behavioral RED.
+The worker sandbox denies loopback. Listing or syntax checks are not rendered
+proof; Root must run the rendered journey and rerun the unchanged unit and type
+gates outside that sandbox. A prior Root browser run exposed an ambiguous
+workspace selector; successful rendered qualification remains pending. This
+desktop slice makes no responsive-layout qualification claim.
 
 This is bounded catalog/navigation/restart coverage, not full Task38, native
 execution, question/answer, resume, execution stop, provider qualification or a
