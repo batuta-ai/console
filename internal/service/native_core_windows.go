@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -122,8 +123,10 @@ func (r nativeCoreCommands) Run(ctx context.Context, command publication.Command
 		if base == "codex" || base == "codex.exe" || base == "codex.cmd" || base == "claude" || base == "claude.exe" || base == "claude.cmd" {
 			return failed, domain.ErrInvalidReference
 		}
-		if base == "git" || base == "git.exe" {
-			command.Args = append([]string{"-c", "core.longpaths=true"}, command.Args...)
+		var err error
+		command.Environment, err = nativeCoreGitEnvironment(command.Environment)
+		if err != nil {
+			return failed, err
 		}
 	}
 	if r.active.Load() {
@@ -136,6 +139,30 @@ func (r nativeCoreCommands) Run(ctx context.Context, command publication.Command
 		return (session.NativeRunner{Manager: r.selected.manager, Environment: selected.env}).Run(ctx, command)
 	}
 	return r.other.Run(ctx, command)
+}
+
+func nativeCoreGitEnvironment(env []string) ([]string, error) {
+	// Validate the original pairs before adding an entry, so inherited or
+	// missing configuration cannot be hidden by the controlled setting.
+	validated, err := session.NativeEnvironment(nil, env)
+	if err != nil {
+		return nil, err
+	}
+	count := 0
+	for _, entry := range validated {
+		if value, ok := strings.CutPrefix(entry, "GIT_CONFIG_COUNT="); ok {
+			count, err = strconv.Atoi(value)
+			if err != nil || count >= 256 {
+				return nil, errors.New("native Git configuration has no room for long paths")
+			}
+		}
+	}
+	// Only command-local entries cross this boundary. The validated environment
+	// also contains runtime inheritance and must not become command-local input.
+	return append(append([]string{}, env...),
+		"GIT_CONFIG_COUNT="+strconv.Itoa(count+1),
+		"GIT_CONFIG_KEY_"+strconv.Itoa(count)+"=core.longpaths",
+		"GIT_CONFIG_VALUE_"+strconv.Itoa(count)+"=true"), nil
 }
 
 // RunNativeCore is the private consoled stdio entry point. The caller launches
@@ -167,7 +194,7 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 	}
 	// Public Core review also invokes Git directly. Scope long-path support to
 	// this contained image; injected commands still close inherited Git config
-	// and receive the same setting as an explicit native Git argument.
+	// and receive the same setting in their command-local environment.
 	for key, value := range map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths", "GIT_CONFIG_VALUE_0": "true"} {
 		if err := os.Setenv(key, value); err != nil {
 			return err
