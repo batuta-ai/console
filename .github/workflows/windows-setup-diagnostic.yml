@@ -1,0 +1,170 @@
+name: Temporary Windows setup Stop diagnostic
+on:
+  push:
+    branches: [batuta/windows-setup-ci-stress]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  setup-stop:
+    if: github.ref == 'refs/heads/batuta/windows-setup-ci-stress'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
+    steps:
+      - name: Create evidence before checkout
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP ('setup-stop-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          'Diagnostic only; source-runner actor, not ordinary-user qualification.' | Set-Content (Join-Path $evidence 'purpose.log')
+          "WINDOWS_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Repeat original test and preserve source and failure evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          Start-Transcript -Path (Join-Path $env:WINDOWS_EVIDENCE 'controller.log')
+          $base = '0db947a5dad4489d934c8b4a7ba3b4a6eb69ae91'
+          $workflow = '.github/workflows/windows-setup-diagnostic.yml'
+          function Save-SourceManifest([string]$name) {
+            $entries = @(git ls-tree -r --full-tree HEAD)
+            $manifest = foreach ($entry in $entries) {
+              if ($entry -cnotmatch '^100[0-7]{3} blob ([a-f0-9]{40})	(.+)$') { throw "Unexpected tracked entry: $entry" }
+              $blob = $Matches[1]
+              $path = $Matches[2]
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing tracked file: $path" }
+              $actualBlob = git -c core.autocrlf=false hash-object -- $path
+              if ($actualBlob -cne $blob) { throw "Modified tracked file: $path" }
+              "$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant())  $path"
+            }
+            $manifest | Set-Content (Join-Path $env:WINDOWS_EVIDENCE $name)
+            git diff --exit-code HEAD --
+          }
+          try {
+            [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+            [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+            "logical-cpu=$([Environment]::ProcessorCount)"
+            Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
+            whoami /all
+            git rev-parse HEAD 'HEAD^{tree}'
+            if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Checkout does not match event SHA' }
+            git diff --exit-code $base HEAD -- . ":(exclude)$workflow"
+            git ls-tree -r --full-tree HEAD | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'checkout-tree.log')
+            git --version
+            $PSVersionTable | Out-String
+            foreach ($tool in @('go', 'git', 'sh', 'pwsh')) {
+              Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object Name, Source, Version
+            }
+            if (Get-Command sh -CommandType Application -ErrorAction SilentlyContinue) { sh --version }
+            go version
+            if ((go version) -cne 'go version go1.27.2 windows/amd64') { throw 'Unexpected Go toolchain' }
+            if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Native Windows amd64 required' }
+            Save-SourceManifest 'source-before.log'
+            $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $userProfilePath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+            if (-not $userProfilePath -or -not (Test-Path -LiteralPath $userProfilePath -PathType Container)) { throw 'Current-user profile directory required' }
+            $ancestorLog = Join-Path $env:WINDOWS_EVIDENCE 'ancestor-acls.log'
+            @("current-user-sid=$($sid.Value)", "user-profile=$userProfilePath", "runner-temp=$env:RUNNER_TEMP") | Set-Content $ancestorLog
+            $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($rootPath in @($env:RUNNER_TEMP, $userProfilePath)) {
+              $ancestor = [System.IO.DirectoryInfo]::new($rootPath)
+              while ($null -ne $ancestor) {
+                if ($seenPaths.Add($ancestor.FullName)) {
+                  $ancestorAcl = Get-Acl -LiteralPath $ancestor.FullName
+                  @("path=$($ancestor.FullName)",
+                    "owner-sid=$($ancestorAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)",
+                    "dacl=$($ancestorAcl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access))") | Add-Content $ancestorLog
+                }
+                $ancestor = $ancestor.Parent
+              }
+            }
+            $env:GOCACHE = Join-Path $env:RUNNER_TEMP ("console-windows-go-cache-" + [guid]::NewGuid())
+            New-Item -ItemType Directory -Path $env:GOCACHE | Out-Null
+            # Only this new empty fixture directory receives a protected current-user ACL.
+            $fixture = Join-Path $userProfilePath ("cw-" + [guid]::NewGuid().ToString('N').Substring(0, 12))
+            New-Item -ItemType Directory -Path $fixture | Out-Null
+            @("fixture=$fixture", "go-cache=$env:GOCACHE", "evidence=$env:WINDOWS_EVIDENCE") | Add-Content $ancestorLog
+            $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+            $acl.SetOwner($sid)
+            $acl.SetAccessRuleProtection($true, $false)
+            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+              $sid, [System.Security.AccessControl.FileSystemRights]::FullControl,
+              [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+              [System.Security.AccessControl.PropagationFlags]::None,
+              [System.Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+            Set-Acl -LiteralPath $fixture -AclObject $acl
+            $actual = Get-Acl -LiteralPath $fixture
+            $rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+            $actual.Sddl | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'fixture-acl.log')
+            if ($actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or
+                -not $actual.AreAccessRulesProtected -or $rules.Count -ne 1 -or
+                $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].IsInherited -or
+                $rules[0].FileSystemRights -ne $rule.FileSystemRights -or
+                $rules[0].InheritanceFlags -ne $rule.InheritanceFlags -or
+                $rules[0].PropagationFlags -ne $rule.PropagationFlags -or
+                $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Fixture owner/ACL verification failed' }
+            $env:TEMP = $fixture
+            $env:TMP = $fixture
+            $env:LOCALAPPDATA = $fixture
+            go env -json | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-env.json')
+            "GOMAXPROCS=$env:GOMAXPROCS; effective default when unset=logical CPU count" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'cpu.log')
+            go mod download
+            go mod verify
+            '' | Set-Content -NoNewline (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stdout')
+            $PSNativeCommandUseErrorActionPreference = $false
+            go test -json -run '^TestSetupConcurrentOwnedExitNeverInterrupted$' -count=20 -failfast -timeout=30m ./internal/service 1> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') 2> (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stderr')
+            $testExit = $LASTEXITCODE
+            $testExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.exit')
+            $passes = $runs = $failures = $skips = $packagePasses = 0
+            Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
+              $event = $_ | ConvertFrom-Json -ErrorAction Stop
+              if ($event.Action -eq 'output') { $event.Output | Add-Content -NoNewline (Join-Path $env:WINDOWS_EVIDENCE 'go-test.stdout') }
+              if ($event.Action -eq 'fail') { $failures++ }
+              if ($event.Action -eq 'skip') { $skips++ }
+              if ($event.Test -ceq 'TestSetupConcurrentOwnedExitNeverInterrupted') {
+                if ($event.Action -eq 'pass') { $passes++ }
+                if ($event.Action -eq 'run') { $runs++ }
+              }
+              if ($event.Action -eq 'pass' -and -not $event.Test) { $packagePasses++ }
+            }
+            "exit=$testExit runs=$runs named-passes=$passes failures=$failures skips=$skips package-passes=$packagePasses" | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'summary.log')
+            if ($testExit -ne 0 -or $runs -ne 20 -or $passes -ne 20 -or $failures -ne 0 -or $skips -ne 0 -or $packagePasses -ne 1) { throw 'Diagnostic test failed, skipped, or had incorrect counts; inspect evidence' }
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $true
+            try {
+              Save-SourceManifest 'source-after.log'
+              if (Compare-Object (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-before.log')) (Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'source-after.log'))) { throw 'Tracked source digests changed' }
+            } finally { Stop-Transcript }
+          }
+      - name: Retain diagnostic evidence on success or failure
+        if: always() && env.WINDOWS_EVIDENCE != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-setup-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.WINDOWS_EVIDENCE }}/*
+          if-no-files-found: error
