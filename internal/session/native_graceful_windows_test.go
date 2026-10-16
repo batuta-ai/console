@@ -29,7 +29,7 @@ func TestTask43WindowsGracefulEngineFixture(t *testing.T) {
 	argv := task43ProbeArgv(t, "hold")
 	child := exec.Command(argv[0], argv[1:]...)
 	child.Env, child.Stdout, child.Stderr = os.Environ(), os.Stdout, os.Stderr
-	child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS}
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
