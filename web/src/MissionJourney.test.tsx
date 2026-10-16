@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider } from "@lyra-ds/react/theme-provider";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { MissionJourney } from "./MissionJourney";
+import { setLang } from "./i18n";
 import type { ExecutionState, Member, Mission, PlanApproval, PlanDetail, Session, Watch } from "./lib";
 
 afterEach(() => vi.useRealTimers());
@@ -137,8 +139,9 @@ function nativeAPI(bound = true) {
     }
     if (path === "/v0/missions/m1/execution?workspace_id=w1&approval_id=receipt-1") return Response.json(state);
     if (path === "/v0/missions/m1/execution" || path.endsWith("/execution/resume")) {
+      if (state.active) state.run_id = path.endsWith("/resume") ? "b".repeat(64) : "a".repeat(64);
       Object.assign(state, { bound: true, opened_digest: "opened-1", watch, gate: watch.progression });
-      return Response.json({ target: identity, approval_id: receipt.id, effect: "started", delivery: state.delivery, opened_digest: state.opened_digest }, { status: 202 });
+      return Response.json({ target: identity, approval_id: receipt.id, effect: "started", run_id: path.endsWith("/resume") ? "b".repeat(64) : "a".repeat(64), delivery: state.delivery, opened_digest: state.opened_digest }, { status: 202 });
     }
     if (path === "/v0/watch/answer") {
       delete watch.pending_question;
@@ -208,6 +211,7 @@ test("native journey uses receipt and identified question, then explicitly resum
   expect(mutations(requests).filter(r => r.path.endsWith("/resume"))).toHaveLength(0);
   await waitFor(() => expect(screen.getByRole("button", { name: "Resume this delivery" })).toBeEnabled());
   state.active = true;
+  state.run_id = "a".repeat(64);
   await user.click(screen.getByRole("button", { name: "Resume this delivery" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Resume this delivery" })).toBeDisabled());
   expect(mutations(requests).map(r => [r.path, JSON.parse(String(r.init?.body))])).toEqual([
@@ -574,7 +578,7 @@ test("a cached approval cannot make a deleted source eligible for first executio
 
 function openedLive(api: ReturnType<typeof nativeAPI>) {
   api.plan.approval = api.receipt;
-  Object.assign(api.state, { active: true, bound: true, opened_digest: "opened-1", watch: api.watch, gate: api.watch.progression });
+  Object.assign(api.state, { run_id: "a".repeat(64), active: true, bound: true, opened_digest: "opened-1", watch: api.watch, gate: api.watch.progression });
   delete api.watch.pending_question;
   api.watch.header = { state: "running" };
   vi.stubGlobal("crypto", { subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => {
@@ -613,6 +617,7 @@ test("live journal polling updates exact questions and gates without catalog eve
   expect(screen.getByText("External review gate")).toBeVisible();
   expect(screen.getByLabelText("Mission execution status")).not.toHaveTextContent("Completed");
   api.state.active = false;
+  delete api.state.run_id;
   await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
   expect(screen.getByLabelText("Mission execution status")).toHaveTextContent("Review blocked");
   api.state.gate.cleared = true;
@@ -815,6 +820,7 @@ test("a timed out submission stays uncertain through polling and late completion
   const api = nativeAPI();
   openedLive(api);
   api.state.active = false;
+  delete api.state.run_id;
   api.state.bound = false;
   delete api.state.opened_digest;
   delete api.state.watch;
@@ -998,6 +1004,7 @@ test("native task identity survives reorder and never acquires a positional memb
 test("home retains catalog done missions until the exact Core gate clears", async () => {
   const api = nativeAPI(); openedLive(api);
   api.mission.status = "done"; api.state.active = false;
+  delete api.state.run_id;
   api.watch.header = { state: "done" }; api.state.gate = { delivery: "delivery-1", required: true, cleared: false };
   api.watch.progression = api.state.gate;
   const user = await openMission();
@@ -1060,6 +1067,7 @@ test("terminal attachment errors identify the selected session and reconnect onl
 test("home workspace counters distinguish a cleared selected mission from an unverified catalog completion", async () => {
   const api = nativeAPI(); openedLive(api);
   api.mission.status = "done"; api.state.active = false;
+  delete api.state.run_id;
   api.watch.header = { state: "done" }; api.state.gate = { delivery: "delivery-1", required: true, cleared: true };
   api.watch.progression = api.state.gate;
   api.missions.push({ id: "unverified", workspace_id: "w2", title: "Other catalog done", status: "done" });
@@ -1115,4 +1123,381 @@ test("a selected member becomes inert when its identity becomes ambiguous on ref
   expect(screen.queryByRole("button", { name: "Stop session" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Take control" })).toBeNull();
   expect(mutations(api.requests)).toHaveLength(0);
+});
+
+function stoppableAPI(preparing = true) {
+  const api = nativeAPI();
+  api.plan.approval = api.receipt;
+  api.state.active = true;
+  api.state.run_id = "a".repeat(64);
+  api.state.delivery = "console-" + createHash("sha256").update(`${api.receipt.id}\0m1\0w1`).digest("hex");
+  if (!preparing) {
+    api.state.bound = true;
+    api.state.opened_digest = "sha256:" + "d".repeat(64);
+    api.watch.delivery = api.state.delivery;
+    api.watch.header = { state: "running" };
+    delete api.watch.pending_question;
+    api.watch.progression = { required: true, cleared: false, delivery: api.state.delivery };
+    api.state.watch = api.watch;
+    api.state.gate = api.watch.progression;
+  }
+  return api;
+}
+const stopCalls = (api: ReturnType<typeof nativeAPI>) => api.requests.filter(r => r.path.endsWith("/execution/stop"));
+
+function pendingStop(init?: RequestInit) {
+  return Response.json({ ...JSON.parse(String(init?.body)), effect: "pending", finalized: false, durable: false }, { status: 202 });
+}
+
+test("Stop freezes preparing authority through confirmation, pending, and explicit observation", async () => {
+  const api = stoppableAPI();
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  api.state.run_id = "b".repeat(64);
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await user.dblClick(screen.getByRole("button", { name: "Confirm Stop" }));
+  expect(await screen.findByText("Native Stop pending finalization.")).toBeVisible();
+  expect(stopCalls(api)).toHaveLength(1);
+  const original = JSON.parse(String(stopCalls(api)[0].init?.body));
+  expect(original.run_id).toBe("a".repeat(64));
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  expect(stopCalls(api)).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Observe this Stop again" }));
+  expect(stopCalls(api)).toHaveLength(2);
+  expect(JSON.parse(String(stopCalls(api)[1].init?.body))).toEqual(original);
+  expect(screen.getByText("Native Stop pending finalization.")).toBeVisible();
+});
+
+test.each(["lost", "malformed", "uncertain"])("Stop %s stays observable and never replays on inspection or navigation", async kind => {
+  const api = stoppableAPI();
+  api.control.override = (path, init) => {
+    if (!path.endsWith("/execution/stop")) return undefined;
+    if (kind === "lost") return Promise.reject(Error("lost Stop reply"));
+    if (kind === "malformed") return new Response("{");
+    return Response.json({ ...JSON.parse(String(init?.body)), effect: "uncertain", finalized: true, durable: false, error: { code: "journal_failed", message: "journal unavailable" }, causes: ["cleanup failed"] }, { status: 503 });
+  };
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  expect(await screen.findByText("Native Stop outcome uncertain. Inspect this attempt.")).toBeVisible();
+  if (kind === "uncertain") expect(screen.getByText("cleanup failed")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  expect(screen.queryByRole("button", { name: "Observe this Stop again" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Confirm Stop" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop native attempt" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  await user.click(screen.getByRole("button", { name: /Exact journey/ }));
+  await screen.findByText("Exact plan");
+  expect(stopCalls(api)).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Stop native attempt" })).not.toBeInTheDocument();
+});
+
+test("verified active reference can Stop throughout review inspection failure", async () => {
+  const api = stoppableAPI(false);
+  const user = await openMission();
+  await screen.findByRole("button", { name: "Stop native attempt" });
+  api.control.override = (path, init) => path.includes("/execution?") ? new Response("journal I/O", { status: 503 }) : path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await screen.findByText("journal I/O");
+  await user.click(screen.getByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  expect(stopCalls(api)).toHaveLength(1);
+});
+
+test.each([undefined, "bad", "A".repeat(64)])("missing or invalid active RunID %s offers no Stop", async run => {
+  const api = stoppableAPI(); api.state.run_id = run;
+  await openMission();
+  await screen.findByText(/Mission source, identity or supervision gate could not be verified/);
+  expect(screen.queryByRole("button", { name: "Stop native attempt" })).not.toBeInTheDocument();
+  expect(stopCalls(api)).toHaveLength(0);
+});
+
+test("completed Stop displays actual canceled Core and preserves resume", async () => {
+  const api = stoppableAPI(false);
+  api.control.override = (path, init) => {
+    if (!path.endsWith("/execution/stop")) return undefined;
+    const exact = JSON.parse(String(init?.body));
+    api.state.active = false; delete api.state.run_id;
+    api.watch.header = { state: "canceled" };
+    return Response.json({ ...exact, effect: "completed", finalized: true, durable: true, core_state: "canceled", state: api.state, causes: ["context canceled"] });
+  };
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  expect(await screen.findByText("Native Stop finalized durably.")).toBeVisible();
+  expect(screen.getByText("Core state: canceled")).toBeVisible();
+  expect(screen.getByText("context canceled")).toBeVisible();
+  expect(screen.getByLabelText("Mission execution status")).not.toHaveTextContent("Completed");
+  expect(screen.getByRole("button", { name: "Resume this delivery" })).toBeEnabled();
+  expect(stopCalls(api)).toHaveLength(1);
+});
+
+test("historical pending completion cannot overwrite a newly observed admission", async () => {
+  const api = stoppableAPI();
+  let observations = 0;
+  api.control.override = (path, init) => {
+    if (!path.endsWith("/execution/stop")) return undefined;
+    if (++observations === 1) return pendingStop(init);
+    const exact = JSON.parse(String(init?.body));
+    return Response.json({ ...exact, effect: "completed", finalized: true, durable: true,
+      state: { target: api.identity, approval_id: api.receipt.id, delivery: api.state.delivery, active: false, bound: false } });
+  };
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  api.state.run_id = "b".repeat(64);
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await user.click(screen.getByRole("button", { name: "Observe this Stop again" }));
+  await screen.findByText("Native Stop finalized durably.");
+  expect(screen.getByLabelText("Mission execution status")).toHaveTextContent("Running");
+  expect(screen.getByRole("button", { name: "Start native execution" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Stop native attempt" })).toBeEnabled();
+  expect(stopCalls(api).every(r => JSON.parse(String(r.init?.body)).run_id === "a".repeat(64))).toBe(true);
+});
+
+test("navigation quarantines an outstanding Stop and ignores its late reply", async () => {
+  const api = stoppableAPI();
+  api.missions.push({ id: "m2", title: "Second mission", workspace_id: "w1", status: "open" });
+  let finish: (response: Response) => void = () => { throw Error("Stop not dispatched"); };
+  api.control.override = path => path.endsWith("/execution/stop") ? new Promise(resolve => { finish = resolve; }) : undefined;
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  await user.click(screen.getByRole("button", { name: /Second mission/ }));
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  api.state.run_id = "b".repeat(64);
+  await user.click(screen.getByRole("button", { name: /Exact journey/ }));
+  await screen.findByText("Native Stop outcome uncertain. Inspect this attempt.");
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await waitFor(() => expect(screen.getByLabelText("Mission execution status")).toHaveTextContent("Running"));
+  await act(async () => finish(pendingStop(stopCalls(api)[0].init)));
+  expect(screen.queryByText("Native Stop pending finalization.")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Mission execution status")).toHaveTextContent("Running");
+  expect(stopCalls(api)).toHaveLength(1);
+});
+
+test("polling and remount retain pending Stop without dispatch until explicit observation", async () => {
+  const api = stoppableAPI();
+  api.missions.push({ id: "m2", title: "Second mission", workspace_id: "w1", status: "open" });
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  const original = stopCalls(api)[0].init?.body;
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  await user.click(screen.getByRole("button", { name: /Second mission/ }));
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  api.state.run_id = "b".repeat(64);
+  await user.click(screen.getByRole("button", { name: /Exact journey/ }));
+  await screen.findByText("Native Stop pending finalization.");
+  expect(stopCalls(api)).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Observe this Stop again" }));
+  expect(stopCalls(api)).toHaveLength(2);
+  expect(stopCalls(api)[1].init?.body).toBe(original);
+});
+
+
+test("Portuguese native Stop controls name the same explicit action and pending outcome", async () => {
+  const api = stoppableAPI();
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  setLang("pt");
+  try {
+    const user = userEvent.setup();
+    render(<ThemeProvider defaultTheme="light"><MissionJourney mission={api.mission} refreshVersion={0} onWatch={() => {}} /></ThemeProvider>);
+    await user.click(await screen.findByRole("button", { name: "Parar tentativa nativa" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar parada" }));
+    expect(await screen.findByText("Parada nativa aguardando finalização.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Observar esta parada novamente" })).toBeEnabled();
+  } finally { setLang("en"); }
+});
+
+test("active RunID without the approval-derived delivery offers no Stop authority", async () => {
+  const api = stoppableAPI();
+  api.state.delivery = "foreign-delivery";
+  await openMission();
+  await screen.findByText("Exact plan");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Inspect mission state" })).toBeEnabled());
+  expect(screen.queryByRole("button", { name: "Stop native attempt" })).not.toBeInTheDocument();
+  expect(stopCalls(api)).toHaveLength(0);
+});
+
+test("verified started reference survives a failing first journal inspection", async () => {
+  const api = stoppableAPI();
+  api.state.active = false; delete api.state.run_id;
+  let started = false;
+  api.control.override = (path, init) => {
+    if (path === "/v0/missions/m1/execution") {
+      started = true;
+      return Response.json({ target: api.identity, approval_id: api.receipt.id, delivery: api.state.delivery, run_id: "c".repeat(64), opened_digest: "sha256:" + "d".repeat(64), effect: "started" }, { status: 202 });
+    }
+    if (started && path.includes("/execution?")) return new Response("first journal inspection failed", { status: 503 });
+    if (path.endsWith("/execution/stop")) return pendingStop(init);
+    return undefined;
+  };
+  const user = await openMission();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start native execution" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Start native execution" }));
+  await screen.findByText(/first journal inspection failed/);
+  await user.click(screen.getByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  expect(JSON.parse(String(stopCalls(api)[0].init?.body)).run_id).toBe("c".repeat(64));
+});
+
+test("pending Stop survives automatic polls and stays pending during explicit observation", async () => {
+  const api = stoppableAPI();
+  vi.stubGlobal("crypto", { subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer } });
+  let observe: (response: Response) => void = () => { throw Error("not observing"); };
+  let calls = 0;
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? ++calls === 1 ? pendingStop(init) : new Promise(resolve => { observe = resolve; }) : undefined;
+  await openLiveMission();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Stop native attempt" })));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Confirm Stop" })));
+  expect(screen.getByText("Native Stop pending finalization.")).toBeVisible();
+  api.state.run_id = "b".repeat(64);
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+  expect(stopCalls(api)).toHaveLength(1);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Observe this Stop again" })));
+  expect(screen.getByText("Native Stop pending finalization.")).toBeVisible();
+  await act(async () => observe(pendingStop(stopCalls(api)[1].init)));
+  expect(stopCalls(api).map(r => JSON.parse(String(r.init?.body)).run_id)).toEqual(["a".repeat(64), "a".repeat(64)]);
+});
+
+test("rejected Stop retains the typed failure without repeating after inspection", async () => {
+  const api = stoppableAPI();
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? Response.json({ ...JSON.parse(String(init?.body)), effect: "rejected", finalized: false, durable: false, error: { code: "stale_run", message: "Exact admission is no longer owned" } }, { status: 409 }) : undefined;
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  expect(await screen.findByText("Native Stop rejected.")).toBeVisible();
+  expect(screen.getByText("stale_run: Exact admission is no longer owned")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  expect(stopCalls(api)).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Confirm Stop" })).not.toBeInTheDocument();
+});
+
+test("parked question without an active RunID has no native Stop", async () => {
+  const api = nativeAPI();
+  const user = await openMission();
+  await approve(user);
+  await user.click(screen.getByRole("button", { name: "Start native execution" }));
+  await screen.findByText("Which exact output?");
+  expect(screen.queryByRole("button", { name: "Stop native attempt" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Answer this question" })).toBeEnabled();
+});
+
+test("Stop quarantine storage failure refuses dispatch and blocks ordinary mutations", async () => {
+  const api = stoppableAPI();
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  const original = Storage.prototype.setItem;
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function(this: Storage, key: string, value: string) {
+    if (key === "bt-journey:w1:m1") throw Error("quarantine storage unavailable");
+    original.call(this, key, value);
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+    await screen.findByText("quarantine storage unavailable");
+    expect(stopCalls(api)).toHaveLength(0);
+    expect(screen.getByLabelText("Mission execution status")).toHaveTextContent("Unavailable");
+  } finally { write.mockRestore(); }
+});
+
+test("historical Stop completion preserves a later Resume quarantine", async () => {
+  const api = stoppableAPI(false);
+  let observations = 0;
+  api.control.override = (path, init) => {
+    if (path.endsWith("/execution/resume")) {
+      api.state.active = true;
+      api.state.run_id = "b".repeat(64);
+      return Promise.reject(Error("resume reply lost"));
+    }
+    if (!path.endsWith("/execution/stop")) return undefined;
+    if (++observations === 1) return pendingStop(init);
+    return Response.json({ ...JSON.parse(String(init?.body)), effect: "completed", finalized: true, durable: true,
+      state: { target: api.identity, approval_id: api.receipt.id, delivery: api.state.delivery, active: false, bound: false } });
+  };
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  api.state.active = false;
+  delete api.state.run_id;
+  api.watch.header = { state: "canceled" };
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await user.click(screen.getByRole("button", { name: "Resume this delivery" }));
+  await screen.findByText(/resume reply lost/);
+  await user.click(screen.getByRole("button", { name: "Observe this Stop again" }));
+  await screen.findByText("Native Stop finalized durably.");
+  expect(sessionStorage.getItem("bt-journey:w1:m1")).toBe("inspect");
+  expect(screen.getByRole("button", { name: "Resume this delivery" })).toBeDisabled();
+  expect(stopCalls(api).map(r => JSON.parse(String(r.init?.body)).run_id)).toEqual(["a".repeat(64), "a".repeat(64)]);
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  await waitFor(() => expect(sessionStorage.getItem("bt-journey:w1:m1")).toBe("ready"));
+});
+
+test("a valid new receipt can inspect and select Stop after an older cached Stop", async () => {
+  const api = stoppableAPI();
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  const first = render(<MissionJourney mission={api.mission} refreshVersion={0} onWatch={() => {}} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  const original = sessionStorage.getItem("bt-journey:w1:m1:native-stop");
+  first.unmount();
+  api.receipt.id = "receipt-2";
+  api.state.approval_id = api.receipt.id;
+  api.state.run_id = "b".repeat(64);
+  api.state.delivery = "console-" + createHash("sha256").update(`${api.receipt.id}\0m1\0w1`).digest("hex");
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : path.includes("/plan/approvals/receipt-2?") ? Response.json(api.receipt) : path.includes("/execution?") ? Response.json(api.state) : undefined;
+  sessionStorage.setItem("bt-journey:w1:m1:approved", JSON.stringify(api.plan));
+  render(<MissionJourney mission={api.mission} refreshVersion={0} onWatch={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  expect(screen.getByLabelText("Mission execution status")).not.toHaveTextContent("Unavailable");
+  expect(screen.getByText("b".repeat(64), { exact: false })).toBeVisible();
+  expect(sessionStorage.getItem("bt-journey:w1:m1:native-stop:receipt-1")).toBe(original);
+  expect(stopCalls(api)).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  expect(stopCalls(api).map(r => JSON.parse(String(r.init?.body)).run_id)).toEqual(["a".repeat(64), "b".repeat(64)]);
+});
+
+test.each(["bt-journey:w1:m1", "bt-journey:w1:m1:native-stop"])("pre-dispatch storage failure at %s is not sent and explicitly retries the frozen reference", async failedKey => {
+  const api = stoppableAPI();
+  api.missions.push({ id: "m2", title: "Second mission", workspace_id: "w1", status: "open" });
+  api.control.override = (path, init) => path.endsWith("/execution/stop") ? pendingStop(init) : undefined;
+  const user = await openMission();
+  await user.click(await screen.findByRole("button", { name: "Stop native attempt" }));
+  const original = Storage.prototype.setItem;
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function(this: Storage, key: string, value: string) {
+    if (key === failedKey) throw Error("quota exhausted");
+    original.call(this, key, value);
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+    expect(await screen.findByText("Native Stop not sent. Confirm explicitly to try again.")).toBeVisible();
+    expect(screen.queryByText("Native Stop outcome uncertain. Inspect this attempt.")).not.toBeInTheDocument();
+    expect(stopCalls(api)).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Confirm Stop" })).toBeEnabled();
+  } finally { write.mockRestore(); }
+  api.state.run_id = "b".repeat(64);
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  await user.click(screen.getByRole("button", { name: /Second mission/ }));
+  await user.click(screen.getByRole("button", { name: /^Missions/ }));
+  await user.click(screen.getByRole("button", { name: /Exact journey/ }));
+  await screen.findByRole("button", { name: "Confirm Stop" });
+  await user.click(screen.getByRole("button", { name: "Inspect mission state" }));
+  expect(stopCalls(api)).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+  await screen.findByText("Native Stop pending finalization.");
+  expect(stopCalls(api)).toHaveLength(1);
+  expect(JSON.parse(String(stopCalls(api)[0].init?.body)).run_id).toBe("a".repeat(64));
 });

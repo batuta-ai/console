@@ -379,12 +379,14 @@ export type QuestionIdentity = {
 };
 export type ExecutionGate = { required: boolean; cleared: boolean; delivery: string; review_id?: string; evidence_digest?: string; reason?: string };
 export type ExecutionState = {
+  run_id?: string;
   target: PlanIdentity; approval_id: string; delivery: string; opened_digest?: string;
   active: boolean; bound: boolean; watch?: Watch; gate?: ExecutionGate;
 };
 export type JourneyFailure = { code: string; message: string };
 export type ApprovalResult = { target: PlanIdentity; effect: "recorded" | "rejected" | "uncertain"; receipt?: PlanApproval; error?: JourneyFailure };
 export type ExecutionResult = {
+  run_id?: string;
   target: PlanIdentity; approval_id: string; effect: "started" | "rejected" | "uncertain";
   delivery?: string; opened_digest?: string; error?: JourneyFailure;
 };
@@ -449,6 +451,7 @@ export async function verifyReceipt(receipt: PlanApproval, identity: PlanIdentit
 export function verifyExecution(state: ExecutionState, receipt: PlanApproval, previous?: ExecutionState | null): void {
   if (!state || !samePlan(state.target, receipt.identity) || state.approval_id !== receipt.id ||
       typeof state.delivery !== "string" || !state.delivery || typeof state.active !== "boolean" || typeof state.bound !== "boolean" ||
+      (state.active ? !validRunID(state.run_id) : state.run_id !== undefined && state.run_id !== "") ||
       (previous && (previous.delivery !== state.delivery || (previous.opened_digest && previous.opened_digest !== state.opened_digest)))) {
     throw new Error(T("journey_invalid_state"));
   }
@@ -479,4 +482,102 @@ export function executionLabel(state: ExecutionState | null, approved: boolean, 
   if (backend === "review_blocked") return T("journey_review_blocked");
   if (backend === "running" || backend === "executing") return T("status_running");
   return T("status_waiting");
+}
+
+export type ExecutionStopRequest = { target: PlanIdentity; approval_id: string; delivery: string; run_id: string };
+export type ExecutionStopResult = ExecutionStopRequest & {
+  effect: "pending" | "completed" | "uncertain" | "rejected";
+  finalized: boolean; durable: boolean; core_state?: string; state?: ExecutionState;
+  causes?: string[]; error?: JourneyFailure;
+};
+
+export class ExecutionStopError extends Error {
+  constructor(public result: ExecutionStopResult, public status: number, public cause?: unknown) {
+    super(result.error ? `${result.error.code}: ${result.error.message}` : cause instanceof Error ? cause.message : T("journey_invalid_state"));
+  }
+}
+
+export function validRunID(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+export async function executionDelivery(approval: string, target: PlanIdentity): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${approval}\0${target.mission_id}\0${target.binding.workspace_id}`));
+  return "console-" + Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, "0")).join("");
+}
+
+function onlyKeys(value: unknown, keys: string[]): boolean {
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every(key => keys.includes(key));
+}
+
+function stopIdentityShape(target: PlanIdentity): boolean {
+  return onlyKeys(target, ["mission_id", "binding", "version"]) && onlyKeys(target.binding, ["workspace_id", "workspace_root", "canonical_root", "plan_path", "plan_slug", "plan_digest", "delivery_id", "opened_digest"]);
+}
+
+function validStopProjection(state: ExecutionState, request: ExecutionStopRequest): boolean {
+  if (!onlyKeys(state, ["target", "approval_id", "delivery", "run_id", "active", "bound", "opened_digest", "watch", "gate"]) || !stopIdentityShape(state.target) || !samePlan(state.target, request.target) || state.approval_id !== request.approval_id || state.delivery !== request.delivery || state.active !== false || (state.run_id !== undefined && state.run_id !== "") || typeof state.bound !== "boolean") return false;
+  if (!state.opened_digest) return !state.watch && !state.bound && !state.gate;
+  const watch = state.watch, gate = state.gate, progression = watch?.progression;
+  const opening = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+  if (!opening(state.opened_digest) || !watch || !gate || !progression || watch.source !== "current" || watch.delivery !== request.delivery ||
+    watch.mission_id !== request.target.mission_id || watch.workspace_id !== request.target.binding.workspace_id || gate.required !== true || gate.delivery !== request.delivery ||
+    typeof gate.cleared !== "boolean" || ["required", "cleared", "delivery", "review_id", "evidence_digest", "reason"].some(key => Reflect.get(gate, key) !== Reflect.get(progression, key)) ||
+    (gate.evidence_digest && !opening(gate.evidence_digest)) || (gate.cleared && (!gate.review_id || !opening(gate.evidence_digest)))) return false;
+  return watch.header?.state !== "done" || gate.cleared;
+}
+
+export async function stopExecution(request: ExecutionStopRequest, signal?: AbortSignal): Promise<ExecutionStopResult> {
+  // Copy before the first await: callers cannot retarget an admitted request.
+  const exact = structuredClone(request);
+  let result: ExecutionStopResult = { ...exact, effect: "rejected", finalized: false, durable: false };
+  let status = 0;
+  try {
+    signal?.throwIfAborted();
+    const target = exact.target, b = target?.binding;
+    if (!onlyKeys(exact, ["target", "approval_id", "delivery", "run_id"]) || !b || !stopIdentityShape(target) || ![target.mission_id, b.workspace_id, b.workspace_root, b.canonical_root, b.plan_path, b.plan_slug, b.plan_digest, exact.approval_id].every(v => typeof v === "string" && !!v) ||
+      !validRunID(target.version) || b.delivery_id || b.opened_digest || !validRunID(exact.run_id) || exact.delivery !== await executionDelivery(exact.approval_id, target)) throw new Error(T("journey_invalid_state"));
+    signal?.throwIfAborted();
+    result = { ...result, effect: "uncertain" };
+    const response = await fetch(`/v0/missions/${encodeURIComponent(target.mission_id)}/execution/stop`, {
+      method: "POST", redirect: "error", signal, body: JSON.stringify(exact),
+      headers: { Authorization: `Bearer ${localStorage.getItem("bt-token") || ""}`, "Content-Type": "application/json" },
+    });
+    status = response.status;
+    signal?.throwIfAborted();
+    if (status === 401 || status === 403) {
+      result = { ...result, effect: "rejected" };
+      if (status === 401) localStorage.removeItem("bt-token");
+      throw new Error(T("err_token"));
+    }
+    const got: ExecutionStopResult = await response.json();
+    signal?.throwIfAborted();
+    let valid = onlyKeys(got, ["target", "approval_id", "delivery", "run_id", "effect", "finalized", "durable", "core_state", "state", "causes", "error"]) && stopIdentityShape(got.target) && samePlan(got.target, exact.target) && got.approval_id === exact.approval_id && got.delivery === exact.delivery && got.run_id === exact.run_id &&
+      typeof got.finalized === "boolean" && typeof got.durable === "boolean" && (got.core_state === undefined || typeof got.core_state === "string") && (got.causes == null || (Array.isArray(got.causes) && got.causes.every(c => typeof c === "string"))) &&
+      (got.state == null || onlyKeys(got.state, ["target", "approval_id", "delivery", "run_id", "active", "bound", "opened_digest", "watch", "gate"])) &&
+      (got.error == null || (onlyKeys(got.error, ["code", "message"]) && typeof got.error.code === "string" && typeof got.error.message === "string"));
+    const failure = got?.error && onlyKeys(got.error, ["code", "message"]) && typeof got.error.code === "string" && !!got.error.code && typeof got.error.message === "string";
+    const empty = !got?.state && !got?.core_state && !got?.causes?.length;
+    switch (got?.effect) {
+      case "pending": valid = valid && status === 202 && !got.finalized && !got.durable && !got.error && empty; break;
+      case "completed": valid = valid && status === 200 && got.finalized && got.durable && !got.error && !!got.state; break;
+      case "uncertain": valid = valid && status === 503 && got.finalized && !!failure; break;
+      case "rejected": valid = valid && status >= 400 && status < 600 && !got.finalized && !got.durable && !!failure && empty; break;
+      default: valid = false;
+    }
+    if (got?.durable && !got.state) valid = false;
+    if (got?.state) {
+      valid = valid && validStopProjection(got.state, exact);
+      if (got.durable) {
+        valid = valid && (got.state.opened_digest ? !!got.state.bound && ["done", "blocked", "waiting_input", "waiting_plan", "canceled", "abandoned"].includes(got.core_state || "") : !got.core_state);
+        if (got.effect === "completed" && got.state.opened_digest) valid = valid && got.state.watch?.header?.state === got.core_state;
+      }
+    }
+    if (!valid) throw new Error(T("journey_invalid_state"));
+    result = got;
+    if (got.error) throw new ExecutionStopError(result, status);
+    return result;
+  } catch (cause) {
+    if (cause instanceof ExecutionStopError) throw cause;
+    throw new ExecutionStopError(result, status, cause);
+  }
 }
