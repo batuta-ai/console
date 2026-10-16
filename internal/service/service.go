@@ -555,13 +555,27 @@ func (s *Service) ReconcileSession(sess domain.Session) (domain.Session, error) 
 var ErrSessionNotOwned = errors.New("session process is not owned by this daemon; former transport cannot be reattached or controlled; start a new session")
 
 func (s *Service) StopSession(id string) (domain.Session, error) {
-	live, err := s.Session.Stop(id)
+	return s.StopSessionContext(context.Background(), id)
+}
+
+func (s *Service) StopSessionContext(ctx context.Context, id string) (domain.Session, error) {
+	return s.Session.StopAndFinalize(ctx, id, s.finalizeStop)
+}
+
+func stopPersistenceError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return &session.StopPersistenceError{Cause: err}
+}
+
+func (s *Service) finalizeStop(id string, live domain.Session, err error) (domain.Session, error) {
 	if err != nil && err != os.ErrNotExist {
 		return live, err
 	}
 	stored, err := s.Store.GetSession(id)
 	if err != nil {
-		return live, err
+		return live, stopPersistenceError(err)
 	}
 	if live.ID != "" {
 		stored = live
@@ -571,12 +585,12 @@ func (s *Service) StopSession(id string) (domain.Session, error) {
 		}
 		stored, err = s.ReconcileSession(stored)
 		if err != nil {
-			return stored, err
+			return stored, stopPersistenceError(err)
 		}
 		return stored, ErrSessionNotOwned
 	}
 	if err := s.Store.PutSessionWithEvent(stored, "session.stopped", map[string]any{"id": id}); err != nil {
-		return stored, err
+		return stored, stopPersistenceError(err)
 	}
 	return stored, nil
 }

@@ -20,8 +20,8 @@ var ErrOwnedHostUnsupported = errors.New("host cannot verify owned process group
 var ErrInvalidControl = errors.New("control requires web, tui, or none and a client identity")
 
 // FinalizationPendingError means native cleanup has returned, but the exit
-// callback or final resource cleanup is still tracked by the manager. Any
-// native cleanup failure is joined separately; this error never implies success.
+// callback, stop catalog writes or resource cleanup is still tracked by the
+// manager. Native cleanup failures are joined separately; this never implies success.
 type FinalizationPendingError struct {
 	SessionID string
 	Cause     error
@@ -69,12 +69,15 @@ type Manager struct {
 	accounts        map[string]int
 	OnExit          func(domain.Session) error
 	closing         bool
+	draining        bool
 	active          sync.WaitGroup
 	shutdownOnce    sync.Once
 	shutdownDone    chan struct{}
 	shutdownErr     error
 	unresolvedErr   error
 	finalizationErr error
+	stops           map[string]*stopFinalization
+	stopFailures    map[string]stopFailure
 }
 
 func New(logs string) *Manager {
@@ -302,6 +305,10 @@ func (m *Manager) StopContext(ctx context.Context, id string) (domain.Session, e
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
 	}
+	return l.stopContext(ctx)
+}
+
+func (l *live) stopContext(ctx context.Context) (domain.Session, error) {
 	if err := context.Cause(ctx); err != nil {
 		select {
 		case <-l.nativeDone:
@@ -310,6 +317,14 @@ func (m *Manager) StopContext(ctx context.Context, id string) (domain.Session, e
 			return l.stopResult(err)
 		}
 	}
+	stopErr, complete := l.stopNative()
+	if !complete {
+		return l.stopResult(stopErr)
+	}
+	return l.awaitFinalization(ctx, stopErr)
+}
+
+func (l *live) stopNative() (error, bool) {
 	l.mu.Lock()
 	l.inputClosed = true
 	l.revokeTerminalInput()
@@ -323,10 +338,10 @@ func (m *Manager) StopContext(ctx context.Context, id string) (domain.Session, e
 		select {
 		case <-l.nativeDone:
 		default:
-			return l.stopResult(errors.Join(stopErr, fmt.Errorf("session %s termination did not complete", id)))
+			return errors.Join(stopErr, fmt.Errorf("session %s termination did not complete", l.sess.ID)), false
 		}
 	}
-	return l.awaitFinalization(ctx, stopErr)
+	return stopErr, true
 }
 
 func (l *live) awaitFinalization(ctx context.Context, stopErr error) (domain.Session, error) {
@@ -457,7 +472,11 @@ func (l *live) wait(m *Manager) {
 		l.recordFinalization(homeErr)
 		m.recordLiveCleanup(l, homeErr, homeErr)
 	}
+	snap, stopErr := l.stopResult(nil)
 	m.mu.Lock()
+	if stopErr != nil {
+		m.rememberStopFailure(snap, stopErr)
+	}
 	delete(m.live, snap.ID)
 	close(l.done)
 	m.mu.Unlock()
@@ -469,12 +488,13 @@ func logPath(dir, id string) string {
 }
 
 // Shutdown permanently closes admission and waits for all admitted starts,
-// readers and exit callbacks. A context bound does not cancel ongoing cleanup;
-// callers can wait again, but must keep callback resources alive until it ends.
+// readers, exit callbacks and stop finalizers. A context bound does not cancel
+// ongoing cleanup; callers must keep callback resources alive until it ends.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.shutdownOnce.Do(func() {
 		m.mu.Lock()
 		m.closing = true
+		m.draining = true
 		sessions := make([]*live, 0, len(m.live))
 		for _, l := range m.live {
 			sessions = append(sessions, l)

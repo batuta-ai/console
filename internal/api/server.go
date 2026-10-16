@@ -426,7 +426,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.Svc.StopSession(r.PathValue("id"))
+	sess, err := s.Svc.StopSessionContext(r.Context(), r.PathValue("id"))
 	if errors.Is(err, service.ErrSessionNotOwned) {
 		writeErr(w, 409, "session_not_owned", err.Error())
 		return
@@ -436,6 +436,11 @@ func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		var pending *session.FinalizationPendingError
+		if errors.As(err, &pending) {
+			writeErr(w, 503, "stop_pending", err.Error())
+			return
+		}
 		writeErr(w, 500, "stop_failed", err.Error())
 		return
 	}
