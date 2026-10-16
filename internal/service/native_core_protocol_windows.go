@@ -49,6 +49,7 @@ type nativeCoreGuard struct {
 type nativeCoreError struct {
 	Message       string   `json:"message"`
 	Canceled      bool     `json:"canceled,omitempty"`
+	OnlyCanceled  bool     `json:"only_canceled,omitempty"`
 	Deadline      bool     `json:"deadline,omitempty"`
 	Cleanup       bool     `json:"cleanup,omitempty"`
 	Uncertain     bool     `json:"uncertain,omitempty"`
@@ -63,6 +64,7 @@ func nativeCoreEncodeError(err error) *nativeCoreError {
 		return nil
 	}
 	out := &nativeCoreError{Message: err.Error(), Canceled: errors.Is(err, context.Canceled), Deadline: errors.Is(err, context.DeadlineExceeded), Cleanup: errors.Is(err, session.ErrNativeCleanupUnresolved), Uncertain: errors.Is(err, domain.ErrExecutionUncertain)}
+	out.OnlyCanceled = out.Canceled && onlyNativeCancellation(err)
 	out.Invalid = errors.Is(err, domain.ErrInvalidReference)
 	out.Binding = errors.Is(err, domain.ErrBindingConflict)
 	out.ReviewCleanup = errors.Is(err, publication.ErrReviewCleanupUnresolved)
@@ -89,9 +91,19 @@ func nativeCoreEncodeError(err error) *nativeCoreError {
 	return out
 }
 
+// The message is diagnostic; only the encoder's recursive classification can
+// establish that an error tree contains cancellation and no independent cause.
+type nativeCoreCancellation struct{ message string }
+
+func (e nativeCoreCancellation) Error() string { return e.message }
+func (nativeCoreCancellation) Unwrap() error   { return context.Canceled }
+
 func (e *nativeCoreError) cause() error {
 	if e == nil {
 		return nil
+	}
+	if e.OnlyCanceled && e.Canceled && !e.Deadline && !e.Cleanup && !e.Uncertain && !e.Invalid && !e.Binding && !e.ReviewCleanup && len(e.Kernel) == 0 {
+		return nativeCoreCancellation{message: e.Message}
 	}
 	causes := []error{errors.New(e.Message)}
 	if e.Canceled {

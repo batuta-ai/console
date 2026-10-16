@@ -92,7 +92,7 @@ func (s *Service) StartExecution(ctx context.Context, req domain.ExecutionReques
 	if s.native == nil || s.Session == nil {
 		return executionFailure(req, domain.ErrExecutionUnavailable), domain.ErrExecutionUnavailable
 	}
-	job, err := s.native.admit(req.Target.MissionID, req.Target.Binding.CanonicalRoot, batuta.ExecutionDelivery(receipt))
+	job, err := s.native.admitExecution(req, batuta.ExecutionDelivery(receipt))
 	if err != nil {
 		return executionFailure(req, err), err
 	}
@@ -102,7 +102,7 @@ func (s *Service) StartExecution(ctx context.Context, req domain.ExecutionReques
 		return outcome.result, outcome.err
 	case <-ctx.Done():
 		result := executionFailure(req, domain.ErrExecutionUncertain)
-		result.Delivery = job.delivery
+		result.Delivery, result.RunID = job.delivery, job.runID
 		return result, errors.Join(domain.ErrExecutionUncertain, ctx.Err())
 	}
 }
@@ -139,7 +139,11 @@ func (s *Service) ExecutionState(ctx context.Context, mission, workspace, approv
 	out = domain.ExecutionState{Target: receipt.Identity, ApprovalID: receipt.ID, Delivery: delivery, Bound: b.DeliveryID != ""}
 	if s.native != nil {
 		s.native.mu.Lock()
-		_, out.Active = s.native.jobs[delivery]
+		job, active := s.native.jobs[delivery]
+		out.Active = active
+		if active {
+			out.RunID = job.runID
+		}
 		s.native.mu.Unlock()
 	}
 	b.DeliveryID = delivery
@@ -194,7 +198,7 @@ func (s *Service) ResumeExecution(ctx context.Context, req domain.ResumeRequest)
 	if s.native == nil || s.Session == nil {
 		return reject(domain.ErrExecutionUnavailable)
 	}
-	job, err := s.native.admit(req.Target.MissionID, req.Target.Binding.CanonicalRoot, req.Delivery)
+	job, err := s.native.admitExecution(start, req.Delivery)
 	if err != nil {
 		return reject(err)
 	}
@@ -204,7 +208,7 @@ func (s *Service) ResumeExecution(ctx context.Context, req domain.ResumeRequest)
 		return outcome.result, outcome.err
 	case <-ctx.Done():
 		result := executionFailure(start, domain.ErrExecutionUncertain)
-		result.Delivery, result.OpenedDigest = req.Delivery, req.OpenedDigest
+		result.Delivery, result.OpenedDigest, result.RunID = req.Delivery, req.OpenedDigest, job.runID
 		return result, errors.Join(domain.ErrExecutionUncertain, ctx.Err())
 	}
 }
