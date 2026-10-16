@@ -176,7 +176,7 @@ func TestExplicitInitNativeHTTP(t *testing.T) {
 			}
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+			svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

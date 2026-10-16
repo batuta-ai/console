@@ -40,10 +40,12 @@ func New(st *store.Store, sess *session.Manager, lim *limits.Plugin) *Service {
 	s := &Service{Store: st, Session: sess, Quota: lim, native: newNativeExecutions()}
 	s.Readiness = adapters.NewReadinessChecker(s.diagnosticProbe(), nil)
 	if sess != nil {
-		sess.OnExit = func(live domain.Session) {
+		sess.OnExit = func(live domain.Session) error {
 			if err := s.Store.PutSessionWithEvent(live, "session.exited", map[string]any{"id": live.ID}); err != nil {
 				log.Printf("persist session %s exit: %v", live.ID, err)
+				return err
 			}
+			return nil
 		}
 	}
 	return s

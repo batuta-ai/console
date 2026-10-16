@@ -647,7 +647,7 @@ func TestPrivateHomeNaturalExitAndShutdown(t *testing.T) {
 			svc, ws, _, _, out, _ := isolationFixture(t, "codex")
 			observed := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(s domain.Session) { onExit(s); observed <- s }
+			svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); observed <- s; return err }
 			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("codex"))}}, nil, ws.Root)
 			if err != nil {
 				t.Fatal(err)

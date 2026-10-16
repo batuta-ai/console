@@ -190,7 +190,7 @@ func TestConcurrentStopAfterWaitAndCallbackDrain(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	defer once.Do(func() { close(release) })
-	m.OnExit = func(s domain.Session) { entered <- s; <-release }
+	m.OnExit = func(s domain.Session) error { entered <- s; <-release; return nil }
 	p, eof := groupFixture(t, m, "tree")
 	if _, err := m.Take("tree", "tui", "owner"); err != nil {
 		t.Fatal(err)
@@ -247,7 +247,7 @@ func TestConcurrentStopAfterWaitAndCallbackDrain(t *testing.T) {
 func TestStopRacesNaturalExit(t *testing.T) {
 	m := New(t.TempDir())
 	callbacks := make(chan domain.Session, 4)
-	m.OnExit = func(s domain.Session) { callbacks <- s }
+	m.OnExit = func(s domain.Session) error { callbacks <- s; return nil }
 	p, eof := groupFixture(t, m, "racing")
 	if _, err := m.Take("racing", "tui", "owner"); err != nil {
 		t.Fatal(err)

@@ -21,7 +21,7 @@ func TestExplicitInitLifecycle(t *testing.T) {
 			f, cli, out := commandFixture(t, adapter)
 			done := make(chan domain.Session, 1)
 			onExit := f.svc.Session.OnExit
-			f.svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+			f.svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 			input := confirmedFixtureInput(f.account.ID)
 			input.Config.Test = "literal test; $(do-not-run) `not-a-command`"
 			brief := "literal notes; $(never-run)\nsecond line"
@@ -122,7 +122,7 @@ func TestExplicitInitStopEventFailureRemainsUnknownAndRetryable(t *testing.T) {
 	f, _, _ := commandFixture(t, "codex")
 	done := make(chan domain.Session, 1)
 	onExit := f.svc.Session.OnExit
-	f.svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+	f.svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 	in := confirmedFixtureInput(f.account.ID)
 	live, err := f.svc.StartInit(f.workspace.ID, "notes", "web", "test", in)
 	if err != nil {
@@ -244,7 +244,7 @@ func TestSetupNativeTerminationEvidence(t *testing.T) {
 			}
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+			svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 			argv := []string{"/bin/cat"}
 			if outcome == "exit-zero" {
 				argv = []string{"/bin/sh", "-c", "exit 0"}

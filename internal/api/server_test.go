@@ -499,7 +499,7 @@ func TestSessionPersistenceBoundaries(t *testing.T) {
 				sess.Argv = testfixture.Argv(t, sess.Argv)
 				done := make(chan struct{})
 				onExit := svc.Session.OnExit
-				svc.Session.OnExit = func(s domain.Session) { onExit(s); close(done) }
+				svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); close(done); return err }
 				sess, err = svc.Session.Start(sess, nil, t.TempDir())
 				if err != nil {
 					t.Fatal(err)

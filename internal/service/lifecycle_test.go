@@ -28,7 +28,7 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 			defer log.SetOutput(previous)
 			done := make(chan domain.Session, 4)
 			onExit := f.svc.Session.OnExit
-			f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			live, err := f.start()
 			if err != nil {
 				t.Fatal(err)
@@ -79,7 +79,7 @@ func TestTerminatedPendingInitialPersistence(t *testing.T) {
 				f := admissionSetup(t, 1)
 				done := make(chan domain.Session, 1)
 				onExit := f.svc.Session.OnExit
-				f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+				f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 				if exitFailure {
 					sqlExec(t, f.db, `CREATE TRIGGER reject_exit BEFORE INSERT ON events WHEN NEW.kind='session.exited' BEGIN SELECT RAISE(ABORT,'exit rejected'); END`)
 				}
@@ -130,7 +130,7 @@ func TestImmediateExitStartPaths(t *testing.T) {
 			}
 			done := make(chan domain.Session, 1)
 			onExit := f.svc.Session.OnExit
-			f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			for range 10 {
 				var live domain.Session
 				var err error

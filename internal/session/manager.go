@@ -19,44 +19,62 @@ var ErrOwnedHostUnsupported = errors.New("host cannot verify owned process group
 
 var ErrInvalidControl = errors.New("control requires web, tui, or none and a client identity")
 
+// FinalizationPendingError means native cleanup has returned, but the exit
+// callback or final resource cleanup is still tracked by the manager. Any
+// native cleanup failure is joined separately; this error never implies success.
+type FinalizationPendingError struct {
+	SessionID string
+	Cause     error
+}
+
+func (e *FinalizationPendingError) Error() string {
+	return fmt.Sprintf("session %s finalization pending: %v", e.SessionID, e.Cause)
+}
+
+func (e *FinalizationPendingError) Unwrap() error { return e.Cause }
+
 type Subscriber func([]byte)
 
 type live struct {
-	sess         domain.Session
-	cmd          *exec.Cmd
-	pty          *os.File
-	terminal     terminalPTY
-	mu           sync.Mutex
-	terminalSubs map[int]*TerminalSubscription
-	inputErr     error
-	inputClosed  bool
-	inputRevoked chan struct{}
-	inputGate    chan struct{}
-	pendingInput int
-	next         int
-	log          *os.File
-	replay       []byte
-	done         chan struct{}
-	readDone     chan struct{}
-	owned        *ownedProcess
-	cleanupErr   error
-	privateHome  string
+	sess            domain.Session
+	cmd             *exec.Cmd
+	pty             *os.File
+	terminal        terminalPTY
+	mu              sync.Mutex
+	terminalSubs    map[int]*TerminalSubscription
+	inputErr        error
+	inputClosed     bool
+	inputRevoked    chan struct{}
+	inputGate       chan struct{}
+	pendingInput    int
+	next            int
+	log             *os.File
+	replay          []byte
+	done            chan struct{}
+	nativeDone      chan struct{}
+	readDone        chan struct{}
+	owned           *ownedProcess
+	nativeErr       error
+	finalizationErr error
+	cleanupErr      error // Guarded by Manager.mu until done closes.
+	privateHome     string
 }
 
 type Manager struct {
-	hostErr       error
-	mu            sync.Mutex
-	live          map[string]*live
-	probes        map[*ownedProcess]struct{}
-	logs          string
-	accounts      map[string]int
-	OnExit        func(domain.Session)
-	closing       bool
-	active        sync.WaitGroup
-	shutdownOnce  sync.Once
-	shutdownDone  chan struct{}
-	shutdownErr   error
-	unresolvedErr error
+	hostErr         error
+	mu              sync.Mutex
+	live            map[string]*live
+	probes          map[*ownedProcess]struct{}
+	logs            string
+	accounts        map[string]int
+	OnExit          func(domain.Session) error
+	closing         bool
+	active          sync.WaitGroup
+	shutdownOnce    sync.Once
+	shutdownDone    chan struct{}
+	shutdownErr     error
+	unresolvedErr   error
+	finalizationErr error
 }
 
 func New(logs string) *Manager {
@@ -175,7 +193,7 @@ func (m *Manager) StartPending(sess domain.Session, env []string, dir string, ca
 		return nil, errors.Join(err, cleanupErr)
 	}
 	pty, inputErr := prepareTerminalPTY(pty)
-	l := &live{sess: sess, cmd: cmd, pty: terminalFile(pty), terminal: pty, inputErr: inputErr, log: lf, done: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
+	l := &live{sess: sess, cmd: cmd, pty: terminalFile(pty), terminal: pty, inputErr: inputErr, log: lf, done: make(chan struct{}), nativeDone: make(chan struct{}), readDone: make(chan struct{}), owned: owned, privateHome: privateHome}
 	m.mu.Lock()
 	m.live[sess.ID] = l
 	closing := m.closing
@@ -273,24 +291,56 @@ func (m *Manager) Subscribe(id string, sub Subscriber) (func(), error) {
 }
 
 func (m *Manager) Stop(id string) (domain.Session, error) {
+	return m.StopContext(context.Background(), id)
+}
+
+// StopContext retains the native stop and resource wait budgets. Cancellation
+// only ends the foreground wait after native cleanup; required finalization
+// continues and Shutdown must finish before callback resources are closed.
+func (m *Manager) StopContext(ctx context.Context, id string) (domain.Session, error) {
 	l, ok := m.Live(id)
 	if !ok {
 		return domain.Session{}, os.ErrNotExist
+	}
+	if err := context.Cause(ctx); err != nil {
+		select {
+		case <-l.nativeDone:
+			return l.awaitFinalization(ctx, nil)
+		default:
+			return l.stopResult(err)
+		}
 	}
 	l.mu.Lock()
 	l.inputClosed = true
 	l.revokeTerminalInput()
 	l.mu.Unlock()
-	if err := l.owned.stop(); err != nil {
-		return l.copy(), err
-	}
+	stopErr := l.owned.stop()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	select {
-	case <-l.done:
-		return l.copy(), l.cleanupErr
+	case <-l.nativeDone:
 	case <-timer.C:
-		return l.copy(), fmt.Errorf("session %s termination did not complete", id)
+		select {
+		case <-l.nativeDone:
+		default:
+			return l.stopResult(errors.Join(stopErr, fmt.Errorf("session %s termination did not complete", id)))
+		}
+	}
+	return l.awaitFinalization(ctx, stopErr)
+}
+
+func (l *live) awaitFinalization(ctx context.Context, stopErr error) (domain.Session, error) {
+	select {
+	case <-l.done:
+		return l.stopResult(stopErr)
+	case <-ctx.Done():
+		// A completed result takes precedence over simultaneous cancellation.
+		select {
+		case <-l.done:
+			return l.stopResult(stopErr)
+		default:
+			return l.stopResult(errors.Join(stopErr, &FinalizationPendingError{SessionID: l.sess.ID, Cause: context.Cause(ctx)}))
+		}
 	}
 }
 
@@ -310,6 +360,18 @@ func (l *live) copy() domain.Session {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.sess
+}
+
+func (l *live) stopResult(err error) (domain.Session, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sess, errors.Join(err, l.nativeErr, l.finalizationErr)
+}
+
+func (l *live) recordFinalization(err error) {
+	l.mu.Lock()
+	l.finalizationErr = errors.Join(l.finalizationErr, err)
+	l.mu.Unlock()
 }
 
 func (l *live) readLoop(m *Manager) {
@@ -343,9 +405,10 @@ func (l *live) readLoop(m *Manager) {
 
 func (l *live) wait(m *Manager) {
 	ownershipErr := waitOwned(l.cmd, l.owned)
-	cleanupErr := ownershipErr
+	m.recordLiveCleanup(l, ownershipErr, ownershipErr)
 	now := time.Now().UTC()
 	l.mu.Lock()
+	l.nativeErr = ownershipErr
 	if ownedProcessExited(l.cmd, l.owned) {
 		l.sess.Process = "exited"
 		l.sess.EndedAt = &now
@@ -357,28 +420,47 @@ func (l *live) wait(m *Manager) {
 	snap := l.sess
 	l.mu.Unlock()
 	m.release(snap.AccountID)
-	if m.OnExit != nil {
-		m.OnExit(snap)
-	}
-	cleanupErr = errors.Join(cleanupErr, l.terminalPTY().Close())
+	closeErr := l.terminalPTY().Close()
+	l.mu.Lock()
+	l.nativeErr = errors.Join(l.nativeErr, closeErr)
+	l.mu.Unlock()
+	m.recordLiveCleanup(l, closeErr, nil)
 	<-l.readDone
 	l.mu.Lock()
 	for _, sub := range l.terminalSubs {
 		sub.finish()
 	}
 	l.mu.Unlock()
-	cleanupErr = errors.Join(cleanupErr, l.log.Close())
+	close(l.nativeDone)
+	var callbackErr error
+	if m.OnExit != nil {
+		if err := m.OnExit(snap); err != nil {
+			callbackErr = fmt.Errorf("session %s exit callback: %w", snap.ID, err)
+		}
+	}
+	l.recordFinalization(callbackErr)
+	m.mu.Lock()
+	m.finalizationErr = errors.Join(m.finalizationErr, callbackErr)
+	l.cleanupErr = errors.Join(l.cleanupErr, callbackErr)
+	m.mu.Unlock()
+	// Subscribers may attach to the retained live entry during finalization.
+	l.mu.Lock()
+	for _, sub := range l.terminalSubs {
+		sub.finish()
+	}
+	l.mu.Unlock()
+	logErr := l.log.Close()
+	l.recordFinalization(logErr)
+	m.recordLiveCleanup(l, logErr, nil)
 	if l.privateHome != "" {
 		homeErr := os.RemoveAll(l.privateHome)
-		cleanupErr = errors.Join(cleanupErr, homeErr)
-		ownershipErr = errors.Join(ownershipErr, homeErr)
+		l.recordFinalization(homeErr)
+		m.recordLiveCleanup(l, homeErr, homeErr)
 	}
-	l.cleanupErr = cleanupErr
-	m.recordCleanup(cleanupErr, ownershipErr)
 	m.mu.Lock()
 	delete(m.live, snap.ID)
-	m.mu.Unlock()
 	close(l.done)
+	m.mu.Unlock()
 	m.active.Done()
 }
 
@@ -396,6 +478,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		sessions := make([]*live, 0, len(m.live))
 		for _, l := range m.live {
 			sessions = append(sessions, l)
+			m.shutdownErr = errors.Join(m.shutdownErr, l.cleanupErr)
 		}
 		probes := make([]*ownedProcess, 0, len(m.probes))
 		for p := range m.probes {
@@ -424,12 +507,19 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	case <-m.shutdownDone:
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return errors.Join(m.unresolvedErr, m.shutdownErr)
+		return errors.Join(m.unresolvedErr, m.shutdownErr, m.finalizationErr)
 	case <-ctx.Done():
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return errors.Join(ctx.Err(), m.unresolvedErr, m.shutdownErr)
+		return errors.Join(context.Cause(ctx), m.unresolvedErr, m.shutdownErr, m.finalizationErr)
 	}
+}
+
+func (m *Manager) recordLiveCleanup(l *live, err, ownershipErr error) {
+	m.mu.Lock()
+	l.cleanupErr = errors.Join(l.cleanupErr, err)
+	m.mu.Unlock()
+	m.recordCleanup(err, ownershipErr)
 }
 
 func (m *Manager) recordCleanup(err, ownershipErr error) {
@@ -439,12 +529,12 @@ func (m *Manager) recordCleanup(err, ownershipErr error) {
 	log.Printf("session cleanup: %v", err)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Keep the first unresolved owned group/private-home failure, while
+	// Keep unresolved owned group/private-home failures, while
 	// completed descriptor failures only affect their active drain.
-	if ownershipErr != nil && m.unresolvedErr == nil {
-		m.unresolvedErr = ownershipErr
+	if ownershipErr != nil {
+		m.unresolvedErr = errors.Join(m.unresolvedErr, ownershipErr)
 	}
-	if m.closing && m.shutdownErr == nil {
-		m.shutdownErr = err
+	if m.closing {
+		m.shutdownErr = errors.Join(m.shutdownErr, err)
 	}
 }
