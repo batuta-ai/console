@@ -167,6 +167,20 @@ func (m model) updateJourney(msg tea.KeyPressMsg) (model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	switch key {
+	case "z":
+		if !m.journeyBusy() && !r.stopUnresolved() && r.state != nil && r.state.Active {
+			target := domain.ExecutionStopRequest{Target: r.state.Target, ApprovalID: r.state.ApprovalID, Delivery: r.state.Delivery, RunID: r.state.RunID}
+			if target.Validate() == nil {
+				r.stopSelection = &target
+				r.confirm = "stop"
+			}
+		}
+	case "y":
+		if !m.journeyBusy() && r.stopUnresolved() {
+			target := r.stopOutcome.stop.ExecutionStopRequest
+			r.stopSelection = &target
+			r.confirm = "stop_observe"
+		}
 	case "p":
 		if r.session == nil && r.uncertain == "" {
 			_, err := planningMember(r.mission)
@@ -274,9 +288,30 @@ func (m model) viewJourney(b *strings.Builder) bool {
 	if r.effect != "" {
 		fmt.Fprintf(b, "%s: %s\n", i18n.T("journey_effect"), r.effect)
 	}
+	for _, out := range r.outcomes {
+		if out.stop == nil {
+			continue
+		}
+		label := string(out.stop.Effect)
+		if out.effect == "not_sent" {
+			label = out.effect
+		}
+		if r.stopOutcome != nil && out.request == r.stopOutcome.request {
+			fmt.Fprintln(b, i18n.T("journey_stop_"+label))
+		} else {
+			fmt.Fprintln(b, i18n.T("journey_stop_history"))
+		}
+		fmt.Fprintln(b, journeyJSON(out.stop))
+		if out.err != nil {
+			fmt.Fprintln(b, strconv.QuoteToASCII(out.err.Error()))
+		}
+	}
+
 	if r.confirm != "" {
 		fmt.Fprintf(b, "%s: %s\n%s\n", i18n.T("journey_confirm"), i18n.T("journey_"+r.confirm), i18n.T("journey_confirm_keys"))
 		switch r.confirm {
+		case "stop", "stop_observe":
+			fmt.Fprintln(b, journeyJSON(r.stopSelection))
 		case "planning":
 			member, _ := planningMember(r.mission)
 			fmt.Fprintln(b, journeyJSON(member))
