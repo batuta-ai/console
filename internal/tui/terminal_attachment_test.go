@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -95,6 +96,7 @@ func terminalFixture(t *testing.T, commands ...map[string][]string) (*client.Cli
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := manager.Shutdown(ctx); err != nil {
+			terminalLogGoroutineStacks(t, "fixture manager.Shutdown error")
 			t.Error(err)
 		}
 		_ = server.Close()
@@ -150,6 +152,13 @@ func TestTerminalExplicitSelectedViewDoesNotTake(t *testing.T) {
 	}
 }
 
+func terminalLogGoroutineStacks(t *testing.T, phase string) {
+	t.Helper()
+	buf := make([]byte, 8<<20)
+	n := runtime.Stack(buf, true)
+	t.Logf("goroutine stacks: phase=%q bytes=%d truncated=%t\n%s", phase, n, n == len(buf), buf[:n])
+}
+
 func terminalAwaitFrame(t *testing.T, l *termLink, accept func(terminalFrame) bool) terminalFrame {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -166,6 +175,7 @@ func terminalAwaitFrame(t *testing.T, l *termLink, accept func(terminalFrame) bo
 		case <-l.done:
 			t.Fatalf("attachment closed: %s", f.problem)
 		case <-ctx.Done():
+			terminalLogGoroutineStacks(t, "terminalAwaitFrame context timeout")
 			t.Fatalf("attachment state timeout: %+v", f)
 		}
 	}
