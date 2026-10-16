@@ -237,7 +237,7 @@ func probeManager(t *testing.T) (*Manager, string, *atomic.Int32) {
 	logs := t.TempDir()
 	m := New(logs)
 	callbacks := &atomic.Int32{}
-	m.OnExit = func(_ domain.Session) { callbacks.Add(1) }
+	m.OnExit = func(_ domain.Session) error { callbacks.Add(1); return nil }
 	return m, logs, callbacks
 }
 

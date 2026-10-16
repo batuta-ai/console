@@ -71,8 +71,8 @@ func (s *Service) qualifiedNativeCore(ctx context.Context, runner publication.Co
 		Version  string   `json:"version"`
 		Commands []string `json:"commands"`
 	}
-	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.49" {
-		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.49", domain.ErrExecutionUnavailable)
+	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.55" {
+		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.55", domain.ErrExecutionUnavailable)
 	}
 	for _, required := range []string{"loop", "review", "inventory"} {
 		found := false
@@ -134,9 +134,12 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 }
 
 func (s *Service) signalNativeExecutionFailure(job *nativeExecution, receipt domain.PlanApproval, result domain.ExecutionResult, active bool, err error) {
+	// Failure evidence can outlive job cancellation, but cannot own drain forever.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(job.ctx), time.Second)
+	defer cancel()
 	b := receipt.Identity.Binding
 	b.DeliveryID = job.delivery
-	if digest, readErr := batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt); readErr == nil {
+	if digest, readErr := batuta.ValidateApprovedDeliveryContext(ctx, b.CanonicalRoot, b, receipt); readErr == nil {
 		result.Delivery = job.delivery
 		result.OpenedDigest = digest
 		err = errors.Join(domain.ErrExecutionUncertain, err)
@@ -144,7 +147,7 @@ func (s *Service) signalNativeExecutionFailure(job *nativeExecution, receipt dom
 	} else if exists, existenceErr := batuta.DeliveryEvidenceExists(b.CanonicalRoot, job.delivery); exists || existenceErr != nil || active {
 		result.Delivery = job.delivery
 		result.Effect = domain.ExecutionUncertain
-		err = errors.Join(domain.ErrExecutionUncertain, err, existenceErr)
+		err = errors.Join(domain.ErrExecutionUncertain, err, readErr, existenceErr)
 	}
 	job.signal(result, err)
 }
@@ -166,7 +169,7 @@ func (s *Service) linkNativeExecution(ctx context.Context, job *nativeExecution,
 	}
 	b := receipt.Identity.Binding
 	b.DeliveryID = job.delivery
-	b.OpenedDigest, err = batuta.ValidateApprovedDelivery(b.CanonicalRoot, b, receipt)
+	b.OpenedDigest, err = batuta.ValidateApprovedDeliveryContext(ctx, b.CanonicalRoot, b, receipt)
 	if err != nil {
 		return err
 	}

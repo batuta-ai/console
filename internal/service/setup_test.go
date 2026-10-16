@@ -222,7 +222,7 @@ func TestSetupStartPersistenceClassifiedAsStorage(t *testing.T) {
 	rejectEvents(t, db)
 	done := make(chan domain.Session, 1)
 	onExit := svc.Session.OnExit
-	svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+	svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 	row := domain.Session{ID: "init-storage", Work: "init", Argv: testfixture.Argv(t, []string{"/bin/cat"}), CreatedAt: domain.Now()}
 	live, err := svc.startAndPersist(row, nil, t.TempDir(), 0, "workspace.init", map[string]any{"session": row.ID})
 	if live.PID == 0 {

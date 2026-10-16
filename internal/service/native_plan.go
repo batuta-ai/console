@@ -19,7 +19,7 @@ func (s *Service) nativePlanDetail(ctx context.Context, mission, workspace strin
 	if canonical != binding.CanonicalRoot {
 		return out, false, domain.ErrBindingConflict
 	}
-	reference, err := batuta.DeliveryApprovalReference(canonical, binding)
+	reference, err := batuta.DeliveryApprovalReferenceContext(ctx, canonical, binding)
 	if err != nil || reference.ReceiptID == "" {
 		return out, false, err
 	}
@@ -27,7 +27,7 @@ func (s *Service) nativePlanDetail(ctx context.Context, mission, workspace strin
 	if err != nil {
 		return out, true, err
 	}
-	if _, err := batuta.ValidateApprovedDelivery(canonical, binding, receipt); err != nil {
+	if _, err := batuta.ValidateApprovedDeliveryContext(ctx, canonical, binding, receipt); err != nil {
 		return out, true, err
 	}
 	plan, err := routing.ParsePlan(binding.PlanSlug, receipt.Content)

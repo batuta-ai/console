@@ -107,7 +107,7 @@ func TestOriginalGroupStopAndNaturalExit(t *testing.T) {
 		t.Run(fmt.Sprint(natural), func(t *testing.T) {
 			m := New(t.TempDir())
 			callbacks := make(chan domain.Session, 4)
-			m.OnExit = func(s domain.Session) { callbacks <- s }
+			m.OnExit = func(s domain.Session) error { callbacks <- s; return nil }
 			sibling, err := m.Start(domain.Session{ID: "sibling", Argv: []string{"/bin/cat"}}, nil, "")
 			if err != nil {
 				t.Fatal(err)

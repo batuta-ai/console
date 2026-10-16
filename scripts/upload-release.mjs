@@ -26,13 +26,13 @@ assert.equal(release.tag_name, tag);
 assert.equal(release.prerelease, true);
 assert.equal(release.draft, false);
 assert.ok(Number.isSafeInteger(release.id) && release.id > 0);
-const assets = readdirSync('dist').filter(name => name.endsWith('.tar.gz') || name === 'checksums.txt').sort();
-assert.equal(assets.length, 5);
+const assets = readdirSync('dist').filter(name => name.endsWith('.tar.gz') || name.endsWith('.zip') || name === 'checksums.txt').sort();
+assert.equal(assets.length, 6);
 for (const name of assets) {
   const body = readFileSync(`dist/${name}`);
   const asset = await request(`https://uploads.github.com/repos/${repository}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, {
     method: 'POST', body,
-    headers: { 'Content-Type': name.endsWith('.tar.gz') ? 'application/gzip' : 'text/plain' },
+    headers: { 'Content-Type': name.endsWith('.tar.gz') ? 'application/gzip' : name.endsWith('.zip') ? 'application/zip' : 'text/plain' },
   });
   assert.equal(asset.name, name);
   assert.equal(asset.size, body.length);

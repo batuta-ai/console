@@ -1,0 +1,294 @@
+param(
+    [Parameter(Mandatory)][string]$ExpectedSid,
+    [Parameter(Mandatory)][string]$BinaryHash,
+    [Parameter(Mandatory)][string]$BaselineHash,
+    [Parameter(Mandatory)][string]$CandidateHash,
+    [Parameter(Mandatory)][string]$RuntimeInputsHash,
+    [Parameter(Mandatory)][string]$BundleInputsHash
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$PSNativeCommandUseErrorActionPreference = $false
+
+function Publish-Evidence([string]$Name, [byte[]]$Bytes) {
+    @{ name = $Name; base64 = [Convert]::ToBase64String($Bytes) } | ConvertTo-Json -Compress | Write-Output
+}
+function Publish-Text([string]$Name, [string]$Value) {
+    Publish-Evidence $Name ([Text.Encoding]::UTF8.GetBytes($Value))
+}
+function Invoke-TempBinary([string]$Binary, [string[]]$Arguments, [string]$Prefix, [int]$TimeoutMilliseconds) {
+    $start = [Diagnostics.ProcessStartInfo]::new($Binary)
+    foreach ($arg in $Arguments) { $start.ArgumentList.Add($arg) }
+    $start.UseShellExecute = $false
+    $start.WorkingDirectory = $fixture
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $native = $null
+    $stdout = $stderr = $outTask = $errTask = $null
+    $started = $false
+    $timedOut = $false
+    $exitCode = $null
+    $failures = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
+    try {
+        $stdout = [IO.File]::Create((Join-Path $fixture "$Prefix.stdout"))
+        $stderr = [IO.File]::Create((Join-Path $fixture "$Prefix.stderr"))
+        # No credentials or token substitution: inherit the verified ordinary primary actor.
+        $native = [Diagnostics.Process]::new()
+        $native.StartInfo = $start
+        $started = $native.Start()
+        if (-not $started) { throw "TEMP native process did not start: $Prefix" }
+        $outTask = $native.StandardOutput.BaseStream.CopyToAsync($stdout)
+        $errTask = $native.StandardError.BaseStream.CopyToAsync($stderr)
+        $timedOut = -not $native.WaitForExit($TimeoutMilliseconds)
+        if ($timedOut) { throw "TEMP native process timed out: $Prefix" }
+    } catch { $failures.Add($_) } finally {
+        if ($started) {
+            try {
+                if (-not $native.HasExited) { $native.Kill() }
+            } catch { $failures.Add($_) }
+            try {
+                $native.WaitForExit()
+                $exitCode = $native.ExitCode
+            } catch { $failures.Add($_) }
+        }
+        foreach ($task in @($outTask, $errTask)) {
+            if ($null -ne $task) {
+                try { $null = $task.GetAwaiter().GetResult() } catch { $failures.Add($_) }
+            }
+        }
+        foreach ($stream in @($stdout, $stderr)) {
+            if ($null -ne $stream) {
+                try { $stream.Dispose() } catch { $failures.Add($_) }
+            }
+        }
+        if ($null -ne $native) {
+            try { $native.Dispose() } catch { $failures.Add($_) }
+        }
+    }
+    try {
+        if ($null -ne $exitCode) { Publish-Text "$Prefix.exit" ([string]$exitCode) }
+        if ($started) { Publish-Text "$Prefix.timeout" ([string]$timedOut) }
+    } catch { $failures.Add($_) }
+    foreach ($name in @('stdout', 'stderr')) {
+        try {
+            $path = Join-Path $fixture "$Prefix.$name"
+            if (Test-Path -LiteralPath $path) { Publish-Evidence "$Prefix.$name" ([IO.File]::ReadAllBytes($path)) }
+        } catch { $failures.Add($_) }
+    }
+    if ($failures.Count -ne 0) {
+        foreach ($failure in $failures) { [Console]::Error.WriteLine("TEMP native process ${Prefix}: $failure") }
+        throw $failures[0]
+    }
+}
+function Publish-TempHashes([string]$Name) {
+    $baseline = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'temp-baseline.test.exe')).Hash
+    $candidate = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'temp-candidate.test.exe')).Hash
+    Publish-Text $Name (@{ sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; pid = $PID;
+        baseline = $baseline; candidate = $candidate } | ConvertTo-Json)
+    if ($baseline -cne $BaselineHash -or $candidate -cne $CandidateHash) { throw 'Staged TEMP binary hashes differ' }
+}
+
+$fixture = $null
+try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $sid = $identity.User
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if ($sid.Value -cne $ExpectedSid -or $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Created ordinary account identity required'
+    }
+    $whoami = Join-Path $env:SystemRoot 'System32\whoami.exe'
+    $groups = & $whoami /groups /fo csv /nh
+    if ($LASTEXITCODE -ne 0 -or -not $groups) { throw 'Missing native group metadata' }
+    $privileges = & $whoami /priv /fo csv /nh
+    if ($LASTEXITCODE -ne 0 -or -not $privileges) { throw 'Missing native privilege metadata' }
+    Publish-Text 'groups.log' ($groups -join "`n")
+    Publish-Text 'privileges.log' ($privileges -join "`n")
+    $groupRows = @($groups | ConvertFrom-Csv -Header Name, Type, Sid, Attributes)
+    $privilegeRows = @($privileges | ConvertFrom-Csv -Header Name, Description, State)
+    $userCSV = & $whoami /user /fo csv /nh
+    if ($LASTEXITCODE -ne 0 -or -not $userCSV) { throw 'Missing native user metadata' }
+    Publish-Text 'user.log' ($userCSV -join "`n")
+    $userRows = @($userCSV | ConvertFrom-Csv -Header Name, Sid)
+    if ($userRows.Count -ne 1 -or $userRows[0].Sid -cne $ExpectedSid -or
+        @($groupRows | Where-Object { $_.Sid -cnotmatch '^S-1-' }).Count -ne 0 -or
+        @($privilegeRows | Where-Object { $_.Name -cnotmatch '^Se\w+Privilege$' }).Count -ne 0) { throw 'Native CSV token identity differs' }
+    if (@($groupRows | Where-Object { $_.Sid -ceq 'S-1-5-32-544' }).Count -ne 0 -or
+        @($privilegeRows | Where-Object { $_.Name -ceq 'SeCreateSymbolicLinkPrivilege' }).Count -ne 0) {
+        throw 'Administrator group or special symlink privilege present'
+    }
+    $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    $registered = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$ExpectedSid").ProfileImagePath
+    if (-not $profilePath -or $profilePath -ine [Environment]::ExpandEnvironmentVariables($registered)) { throw 'Loaded created-account profile required' }
+    $profileAcl = Get-Acl -LiteralPath $profilePath
+    $profileOwner = $profileAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    Publish-Text 'profile.json' (@{ path = $profilePath; registered = $registered; accountSid = $ExpectedSid;
+        ownerSid = $profileOwner; acl = $profileAcl.Sddl } | ConvertTo-Json)
+    # The profile service can own a registered profile; only the new fixture is claimed private.
+    if ($profileOwner -cnotin @($ExpectedSid, 'S-1-5-18', 'S-1-5-32-544')) { throw 'Registered profile has a foreign owner' }
+    $fixture = Join-Path $profilePath ('co-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($sid)
+    $acl.SetAccessRuleProtection($true, $false)
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+    $acl.AddAccessRule($rule)
+    Set-Acl -LiteralPath $fixture -AclObject $acl
+    $actual = Get-Acl -LiteralPath $fixture
+    $rules = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ExpectedSid -or -not $actual.AreAccessRulesProtected -or
+        $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -cne $ExpectedSid -or $rules[0].IsInherited -or
+        $rules[0].FileSystemRights -ne $rule.FileSystemRights -or $rules[0].InheritanceFlags -ne $rule.InheritanceFlags -or
+        $rules[0].PropagationFlags -ne $rule.PropagationFlags -or $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Private fixture ACL differs' }
+    $env:USERPROFILE = $profilePath
+    $env:HOME = $profilePath
+    $env:TEMP = $fixture
+    $env:TMP = $fixture
+    $env:LOCALAPPDATA = $fixture
+    # Read the current process token only; no token duplication or privilege adjustment.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class OrdinaryToken {
+    [DllImport("advapi32.dll", SetLastError=true)]
+    static extern bool GetTokenInformation(IntPtr token, int kind, IntPtr data, int size, out int needed);
+    public static int ReadInt(IntPtr token, int kind) {
+        IntPtr data = Marshal.AllocHGlobal(4);
+        try {
+            int needed;
+            if (!GetTokenInformation(token, kind, data, 4, out needed) || needed != 4)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            return Marshal.ReadInt32(data);
+        } finally { Marshal.FreeHGlobal(data); }
+    }
+}
+'@
+    $tokenType = [OrdinaryToken]::ReadInt($identity.Token, 8)
+    $elevationType = [OrdinaryToken]::ReadInt($identity.Token, 18)
+    $elevated = [OrdinaryToken]::ReadInt($identity.Token, 20)
+    if ($tokenType -ne 1 -or $elevated -ne 0 -or $elevationType -ne 1) { throw 'Genuine unelevated primary token required' }
+    Set-Location -LiteralPath $fixture
+    $binary = Join-Path $PSScriptRoot 'service.test.exe'
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash
+    if ($hash -cne $BinaryHash) { throw 'Staged binary hash differs' }
+    Publish-Text 'actor.json' (@{ sid = $sid.Value; pid = $PID; tokenType = $tokenType; elevationType = $elevationType;
+        elevated = $elevated; profile = $profilePath; fixture = $fixture; acl = $actual.Sddl; binarySHA256 = $hash;
+        temp = $env:TEMP; tmp = $env:TMP; localAppData = $env:LOCALAPPDATA } | ConvertTo-Json)
+    $inputsPath = Join-Path $PSScriptRoot 'msys-inputs.json'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $inputsPath).Hash -cne $RuntimeInputsHash) { throw 'Staged runtime inputs differ' }
+    $inputs = Get-Content -LiteralPath $inputsPath -Raw | ConvertFrom-Json
+    $controller = Join-Path $PSScriptRoot 'check-windows-msys-owner.ps1'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $controller).Hash -cne $inputs.controllerSHA256) { throw 'Staged controller differs' }
+    Publish-Evidence 'msys-inputs.json' ([IO.File]::ReadAllBytes($inputsPath))
+    # Process-local offline compiler access: existing source/toolchain ACLs are read only.
+    $env:PATH = (Split-Path $inputs.go) + ';' + (Split-Path $inputs.git) + ';' + $env:PATH
+    $env:GOROOT = $inputs.goroot
+    $env:GOENV = 'off'
+    $env:GOTOOLCHAIN = 'local'
+    $env:GOFLAGS = '-mod=readonly'
+    $env:GOWORK = 'off'
+    $env:GOPROXY = 'off'
+    $env:GOSUMDB = 'off'
+    $env:GOPRIVATE = ''
+    $env:GONOSUMDB = ''
+    $env:GOCACHE = Join-Path $fixture 'go-cache'
+    $env:GOMODCACHE = Join-Path $fixture 'go-mod-cache'
+    $null = [IO.Directory]::CreateDirectory($env:GOCACHE)
+    $null = [IO.Directory]::CreateDirectory($env:GOMODCACHE)
+    foreach ($path in @((Join-Path $inputs.source 'internal/testfixture/scriptcmd/main_windows.go'),
+        (Join-Path $inputs.goroot 'src/runtime/runtime.go'), $inputs.go,
+        (Join-Path $inputs.goroot 'pkg/tool/windows_amd64/compile.exe'), (Join-Path $inputs.goroot 'pkg/tool/windows_amd64/link.exe'))) {
+        $null = Get-FileHash -Algorithm SHA256 -LiteralPath $path
+    }
+    $ownerEvidence = Join-Path $fixture 'msys-evidence'
+    $null = [IO.Directory]::CreateDirectory($ownerEvidence)
+    try {
+        & $controller -Evidence $ownerEvidence -FixtureBinary (Join-Path $PSScriptRoot 'temp-candidate.test.exe') -Source $inputs.source -ExpectedSources $inputs.sources -Go $inputs.go -Git $inputs.git -Operation {
+            & $binary '-test.list=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' 1> inventory.stdout 2> inventory.stderr
+            $inventoryExit = $LASTEXITCODE
+            Publish-Text 'inventory.exit' ([string]$inventoryExit)
+            foreach ($name in @('inventory.stdout', 'inventory.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
+            if ($inventoryExit -ne 0 -or (Get-Content inventory.stdout -Raw).Trim() -cne 'TestOrdinaryWindowsUserDiscoversSelectedSkills') { throw 'Exact named test inventory required' }
+            & $binary '-test.run=^TestOrdinaryWindowsUserDiscoversSelectedSkills$' '-test.v=test2json' '-test.count=1' '-test.timeout=5m' 1> test.stdout 2> test.stderr
+            $testExit = $LASTEXITCODE
+            Publish-Text 'test.exit' ([string]$testExit)
+            foreach ($name in @('test.stdout', 'test.stderr')) { Publish-Evidence $name ([IO.File]::ReadAllBytes((Join-Path $fixture $name))) }
+            Publish-TempHashes 'temp-binaries.json'
+            try {
+                foreach ($variant in @('baseline', 'candidate')) {
+                    $pairBinary = Join-Path $PSScriptRoot "temp-$variant.test.exe"
+                    Invoke-TempBinary $pairBinary @('-test.list=.') "temp-$variant.inventory" 15000
+                    if ((Get-Content (Join-Path $fixture "temp-$variant.inventory.stdout") -Raw) -cnotmatch '(?m)^TestTerminalEnvironmentPreservesOrdinaryUserTEMP\r?$') { throw "Frozen TEMP test missing: $variant" }
+                    Invoke-TempBinary $pairBinary @('-test.run=^TestTerminalEnvironmentPreservesOrdinaryUserTEMP$', '-test.v=test2json', '-test.count=1', '-test.timeout=1m') "temp-$variant" 90000
+                }
+            } finally {
+                try { Publish-TempHashes 'temp-binaries-after.json' } finally {
+                    $after = & $whoami /priv /fo csv /nh
+                    if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
+                    Publish-Text 'privileges-after.log' ($after -join "`n")
+                }
+            }
+            if ($testExit -ne 0) { throw 'Selected native test failed' }
+        }
+    } finally {
+        foreach ($file in Get-ChildItem -LiteralPath $ownerEvidence -File) { Publish-Evidence $file.Name ([IO.File]::ReadAllBytes($file.FullName)) }
+        $after = & $whoami /priv /fo csv /nh
+        if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Actor process privileges changed' }
+        if ((Get-Acl -LiteralPath $fixture).Sddl -cne $actual.Sddl -or (Get-Acl -LiteralPath $profilePath).Sddl -cne $profileAcl.Sddl) { throw 'Actor fixture/profile ACL changed' }
+    }
+    $bundleInputPath = Join-Path $PSScriptRoot 'bundle-inputs.json'
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $bundleInputPath).Hash -cne $BundleInputsHash) { throw 'Actor package input digest differs' }
+    $bundleInputs = Get-Content -LiteralPath $bundleInputPath -Raw | ConvertFrom-Json
+    $bundleRoot = Join-Path $fixture 'bundle'
+    $null = New-Item -ItemType Directory -Path $bundleRoot
+    $copyBefore = [ordered]@{}
+    foreach ($entry in ($bundleInputs.files.PSObject.Properties | Sort-Object Name)) {
+        if ($entry.Name -cnotmatch '^[A-Za-z0-9_.+-]+$') { throw 'Unsafe staged input name' }
+        $from = Join-Path $PSScriptRoot $entry.Name
+        $to = Join-Path $bundleRoot $entry.Name
+        $before = (Get-FileHash -Algorithm SHA256 -LiteralPath $from).Hash.ToLowerInvariant()
+        Copy-Item -LiteralPath $from -Destination $to
+        $copied = (Get-FileHash -Algorithm SHA256 -LiteralPath $to).Hash.ToLowerInvariant()
+        if ($before -cne $entry.Value -or $copied -cne $entry.Value -or
+            (Get-Acl -LiteralPath $to).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ExpectedSid) { throw 'Owned package copy binding failed' }
+        $copyBefore[$entry.Name] = $copied
+    }
+    Copy-Item -LiteralPath $bundleInputPath -Destination $bundleRoot
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $bundleRoot 'bundle-inputs.json')).Hash -cne $BundleInputsHash) { throw 'Owned input manifest copy differs' }
+    $bundleEvidence = Join-Path $bundleRoot 'public'
+    $bundleAllowed = @('bundle-summary.json')
+    foreach ($case in @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')) {
+        foreach ($suffix in @('actor','mutation','result')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        if ($case -notin @('relative','ads','dotdot')) {
+            foreach ($suffix in @('receipt','observations')) { $bundleAllowed += "bundle-$case-$suffix.json" }
+        }
+    }
+    $copyRecord = ($copyBefore | ConvertTo-Json -Compress)
+    Publish-Text 'bundle-copy-before.json' $copyRecord
+    try {
+        & (Join-Path $bundleRoot 'qualify-release.test.ps1') -Inputs (Join-Path $bundleRoot 'bundle-inputs.json') -Evidence $bundleEvidence
+    } finally {
+        foreach ($name in $bundleAllowed) {
+            $path = Join-Path $bundleEvidence $name
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Publish-Evidence $name ([IO.File]::ReadAllBytes($path)) }
+        }
+        $copyAfter = [ordered]@{}
+        foreach ($entry in ($bundleInputs.files.PSObject.Properties | Sort-Object Name)) {
+            foreach ($directory in @($PSScriptRoot,$bundleRoot)) {
+                $afterHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $directory $entry.Name)).Hash.ToLowerInvariant()
+                if ($afterHash -cne $entry.Value) { throw 'Actor package inputs changed' }
+            }
+            $copyAfter[$entry.Name] = $afterHash
+        }
+        foreach ($directory in @($PSScriptRoot,$bundleRoot)) {
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $directory 'bundle-inputs.json')).Hash -cne $BundleInputsHash) { throw 'Actor package manifest changed' }
+        }
+        Publish-Text 'bundle-copy-after.json' ($copyAfter | ConvertTo-Json -Compress)
+        $after = & $whoami /priv /fo csv /nh
+        if ($LASTEXITCODE -ne 0 -or ($after -join "`n") -cne ($privileges -join "`n")) { throw 'Bundle actor privileges changed' }
+        if ((Get-Acl -LiteralPath $fixture).Sddl -cne $actual.Sddl -or (Get-Acl -LiteralPath $profilePath).Sddl -cne $profileAcl.Sddl) { throw 'Bundle actor fixture/profile ACL changed' }
+    }
+    Publish-Text 'actor-complete.log' 'Native test process returned; streams drained'
+} catch {
+    [Console]::Error.WriteLine($_.ToString())
+    exit 1
+}

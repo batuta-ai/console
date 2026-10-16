@@ -17,7 +17,7 @@ func TestPendingAdmissionAndTerminalPersistence(t *testing.T) {
 		t.Run(work, func(t *testing.T) {
 			m := New(t.TempDir())
 			exited := make(chan domain.Session, 4)
-			m.OnExit = func(s domain.Session) { exited <- s }
+			m.OnExit = func(s domain.Session) error { exited <- s; return nil }
 			pending, err := m.StartPending(domain.Session{ID: "pending", AccountID: "a", Work: work, Argv: sessionTestArgv(t, []string{"/bin/cat"})}, nil, "", 1)
 			if err != nil {
 				t.Fatal(err)
@@ -61,11 +61,12 @@ func TestExitReleasesAdmissionBeforeCallbackCompletes(t *testing.T) {
 	m := New(t.TempDir())
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	m.OnExit = func(s domain.Session) {
+	m.OnExit = func(s domain.Session) error {
 		if s.ID == "first" {
 			close(entered)
 			<-release
 		}
+		return nil
 	}
 	first, err := m.StartPending(domain.Session{ID: "first", AccountID: "a", Argv: sessionTestArgv(t, []string{"/usr/bin/true"})}, nil, "", 1)
 	if err != nil {

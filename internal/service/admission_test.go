@@ -201,7 +201,7 @@ func TestAccountAdmissionFailuresRelease(t *testing.T) {
 				rejectEvents(t, f.db)
 				done := make(chan domain.Session, 1)
 				onExit := f.svc.Session.OnExit
-				f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+				f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 				_, err := f.start()
 				if err == nil || !strings.Contains(err.Error(), "event rejected") {
 					t.Fatalf("persistence: %v", err)
@@ -333,7 +333,7 @@ func TestStartFailuresRecoverAllPaths(t *testing.T) {
 				}
 				done := make(chan domain.Session, 4)
 				onExit := f.svc.Session.OnExit
-				f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+				f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 				if failure == "spawn" {
 					if err := os.WriteFile(cli, []byte("#!/missing/interpreter\n"), 0755); err != nil {
 						t.Fatal(err)

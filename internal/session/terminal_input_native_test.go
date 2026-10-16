@@ -495,7 +495,7 @@ func TestTerminalInputClosedAfterStopOrNaturalExit(t *testing.T) {
 					}
 				}
 			}()
-			m.OnExit = func(domain.Session) { close(entered); <-release }
+			m.OnExit = func(domain.Session) error { close(entered); <-release; return nil }
 			_, control := terminalNativeChild(t, m, "closing")
 			sub, err := m.SubscribeTerminal("closing")
 			if err != nil {

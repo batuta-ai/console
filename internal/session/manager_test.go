@@ -181,7 +181,7 @@ func TestSubscribeReplays(t *testing.T) {
 func TestOnExitPersists(t *testing.T) {
 	m := newTestManager(t)
 	done := make(chan domain.Session, 1)
-	m.OnExit = func(s domain.Session) { done <- s }
+	m.OnExit = func(s domain.Session) error { done <- s; return nil }
 	if _, err := m.Start(domain.Session{ID: "s6", Argv: sessionTestArgv(t, []string{"/usr/bin/true"})}, nil, ""); err != nil {
 		t.Fatal(err)
 	}

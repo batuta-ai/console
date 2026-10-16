@@ -21,11 +21,13 @@ func TestNativeCredentialLiteralLFAndNaturalExit(t *testing.T) {
 			svc, ws, _, _, out, _ := isolationFixture(t, adapter)
 			exited := make(chan domain.Session, 1)
 			previous := svc.Session.OnExit
-			svc.Session.OnExit = func(s domain.Session) {
+			svc.Session.OnExit = func(s domain.Session) error {
+				var err error
 				if previous != nil {
-					previous(s)
+					err = previous(s)
 				}
 				exited <- s
+				return err
 			}
 			sess, err := svc.Session.Start(domain.Session{ID: domain.NewID("s_"), Argv: []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(adapter))}}, nil, ws.Root)
 			if err != nil {

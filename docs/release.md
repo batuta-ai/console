@@ -106,10 +106,21 @@ access failures are failures, not a clean scan. No tests are skipped to package
 an actual release.
 
 The default package command rebuilds the web bundle and checks drift, then
-creates four local snapshots under `dist/`. It does **not** establish the full
-source-check result. Each tar.gz contains `console`, `consoled`, LICENSE and
-README. `checksums.txt` uses SHA256. The targets are darwin/linux × amd64/arm64,
-with CGO disabled. Both binaries receive the same full HEAD revision and a
+creates five local snapshot archives under `dist/`: four tar.gz files for
+darwin/linux × amd64/arm64 and one ZIP for Windows amd64, all with CGO disabled.
+Each tar.gz contains `console` and `consoled`; the Windows ZIP contains
+`console.exe` and `consoled.exe`. Every archive also contains the exact LICENSE,
+README.md and THIRD_PARTY_NOTICES files, including the copied MIT notice.
+`checksums.txt` contains one SHA256 digest for each of the five archives.
+Local packaging requires `tar`, `zip` and `unzip` (including `unzip -Z1`). After
+verifying the packages, both snapshot and release commands automatically run
+`scripts/package-contract.test.mjs` against temporary copies of those real
+archives. It checks the unmodified packages and rejects wrong OS/architecture
+binaries, a missing Windows executable, an altered MIT notice and an incorrect
+digest. The copies are removed; the distribution files remain unchanged. This
+artifact/build-metadata proof does **not** establish the full source-check
+result or native Windows runtime/provider qualification. Both binaries receive
+the same full HEAD revision and a
 `0.1.0-beta.N-snapshot.<full-revision>` label. Dirty source is permitted only for
 snapshots and remains visible in observed VCS metadata. GoReleaser publishing is
 disabled, including for actual-release packaging.
@@ -155,8 +166,10 @@ the beta tag and GitHub prerelease. The same workflow consumes its outputs, so
 it does not depend on a token-triggered tag workflow. It checks the exact tagged
 source on both OS runners, then the package job validates the beta guard and
 runs the shared check again before packaging. Upload uses the current repository
-and only an existing, non-draft prerelease whose tag matches. Failed jobs leave
-packages unpublished; an already created prerelease can remain without assets.
+and only an existing, non-draft prerelease whose tag matches. The authorized
+upload includes exactly six assets: the four Mac/Linux tar.gz archives, the
+Windows amd64 ZIP and checksums.txt. Failed jobs leave packages unpublished;
+an already created prerelease can remain without assets.
 Recovery requires reviewing the failure and explicitly packaging/uploading the
 same verified tag (using the scoped Node `scripts/upload-release.mjs` entry point
 only when separately authorized); no automatic overwrite or stable escape is configured.
@@ -205,10 +218,10 @@ then independent read-only review. The earlier reviewer's denied reads of
 proofs outside its working directory were a host-access issue, not a failed
 source check. No completed Sonnet review or successful GitHub run is claimed.
 
-The current graph pins **Core v1.1.0-beta.49** without replacement and Lyra
-React/styles **1.1.0**. The public approved-plan snapshot API is available to
+At that qualification, the graph pinned **Core v1.1.0-beta.49** without replacement and Lyra
+React/styles **1.1.0**. The public approved-plan snapshot API was available to
 the next Task21; Console
-does not yet use native `loop.New`/`loop.Resume` execution.
+did not yet use native `loop.New`/`loop.Resume` execution.
 Linker labels never replace actual toolchain, VCS, dependency or compatibility
 authorities. Existing `compatibility.native` and `compatibility.stable` remain
 pending, and the historical native authority string still names macOS/Linux.
@@ -221,3 +234,15 @@ semantic Core/plugin compatibility, Core official CLI binary security, independe
 review and Task37's final full-matrix/native distribution and stable release gates
 remain open. Cross-built Linux/Windows artifacts cannot close runtime gates.
 No stable release, complete native support or successful publication is claimed.
+
+## Current Core beta55 adoption guidance — 2026-10-15
+
+Current dependency policy and runtime expectations supersede earlier historical pins.
+The active repository graph pins [Core v1.1.0-beta.55](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55) without replacement.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55` with the required
+capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
+executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK included
+with the Console image, with strict version, public module checksum and no-replacement
+checks, and needs no external Core CLI. Native Windows qualification remains open.
+Earlier native package evidence does not qualify beta55.
+For full details on the Core beta55 adoption, verified checksums, Core CI provenance limits, local bounded checks, and failed Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954), see the [Published Core beta55 adoption and native runtime qualification — 2026-10-15 section in dependency-policy.md](dependency-policy.md#published-core-beta55-adoption-and-native-runtime-qualification--2026-10-15).

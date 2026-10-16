@@ -32,6 +32,9 @@ type journeyRecord struct {
 	uncertain                         string
 	fresh                             bool
 	mode, confirm, problem, effect    string
+	problemErr                        error
+	problemKind                       string
+	mutationFailure                   *journeyResult
 	path, delivery, receiptID, answer string
 	question                          *domain.PendingQuestion
 	nextQuestion                      *domain.PendingQuestion
@@ -440,6 +443,7 @@ func (m model) mutateJourney(kind string) (model, tea.Cmd) {
 	}
 	r.confirm = ""
 	r.problem = ""
+	r.problemErr, r.problemKind, r.mutationFailure = nil, "", nil
 	m.putJourney(r)
 	cmd := m.journeyRequest(kind, execute)
 	return m, cmd
@@ -468,6 +472,10 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 		r.sourceFresh = false
 		r.answerInspected = false
 		r.problem = "journey_failed"
+		r.problemErr, r.problemKind = out.err, req.kind
+		if !read {
+			r.mutationFailure = &out
+		}
 		if out.effect == "uncertain" {
 			r.uncertain = req.kind
 			r.problem = "journey_uncertain"
@@ -475,7 +483,17 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 		m.saveJourney(req.key, r)
 		return m, nil
 	}
-	r.problem = ""
+	if req.kind == "refresh" && r.mutationFailure != nil {
+		r.problem = "journey_failed"
+		if r.mutationFailure.effect == "uncertain" {
+			r.problem = "journey_uncertain"
+		}
+		r.problemErr = r.mutationFailure.err
+		r.problemKind = r.mutationFailure.request.kind
+	} else {
+		r.problem = ""
+		r.problemErr, r.problemKind, r.mutationFailure = nil, "", nil
+	}
 	if !read {
 		r.fresh, r.sourceFresh = false, false
 	}
@@ -602,12 +620,8 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 }
 
 func (m model) journeyErrorText(r journeyRecord) string {
-	if len(r.outcomes) == 0 {
-		return ""
-	}
-	out := r.outcomes[len(r.outcomes)-1]
-	if out.err != nil {
-		return fmt.Sprintf("%s: %s", out.request.kind, out.err)
+	if r.problemErr != nil {
+		return fmt.Sprintf("%s: %s", r.problemKind, r.problemErr)
 	}
 	return ""
 }

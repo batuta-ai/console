@@ -107,7 +107,7 @@ func testImportFileKind(t *testing.T, home, adapter, kind string) {
 			}
 			switch kind {
 			case "fifo", "fifo-symlink":
-				if err := makeImportFIFO(target); err != nil {
+				if err := makeImportFIFO(t, target); err != nil {
 					t.Fatal(err)
 				}
 			case "directory", "directory-symlink":

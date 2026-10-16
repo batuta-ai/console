@@ -10,6 +10,15 @@ The syntax baseline is the conductor's captured Codex 0.160.0 and Claude Code
 2.1.286 and 2.1.289 help (2026-10-04). The 2.1.289 command list adds `purge`,
 which is also refused as a positional goal:
 
+On 2026-10-13, Codex 0.161.0 main, exec and login help retained the syntax in
+the table below. Its JSON exec interface returned the expected response using
+an explicitly selected local account in an isolated HOME. The real daemon's
+fresh provider check then reported that account ready. This adds exact-banner
+readiness support; full interactive provider and Console mission qualification
+remain pending. Captures are `codex-0161-*-help.txt`,
+`local-codex-live-preflight.json` and `codex-0161-real-readiness.json` under
+`.batuta/runs/2026-10-13-console-public-flows/` in the parent checkout.
+
 | Input | Codex | Claude |
 | --- | --- | --- |
 | Goal | One positional argument | One positional argument |

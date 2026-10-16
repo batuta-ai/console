@@ -1,6 +1,7 @@
 package batuta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -16,6 +17,10 @@ const API = "v0"
 // the authority for deliveries. This does not start the watch TUI and does
 // not call a model.
 func Project(workspace, delivery string) (domain.WatchView, error) {
+	return ProjectContext(context.Background(), workspace, delivery)
+}
+
+func ProjectContext(ctx context.Context, workspace, delivery string) (domain.WatchView, error) {
 	out := domain.WatchView{API: API, Workspace: workspace, Available: false}
 	if workspace == "" {
 		out.Message = "workspace root required"
@@ -30,7 +35,7 @@ func Project(workspace, delivery string) (domain.WatchView, error) {
 		out.Source = domain.SourceUnavailable
 		return out, nil
 	}
-	records, err := readJournal(abs, delivery)
+	snapshot, err := readJournalSnapshot(ctx, abs, delivery)
 	if err != nil {
 		if errors.Is(err, ErrArtifactMissing) {
 			out.Message = "journal_unavailable"
@@ -40,7 +45,7 @@ func Project(workspace, delivery string) (domain.WatchView, error) {
 		return out, err
 	}
 	now := time.Now().UTC()
-	view := loop.PanelModel(records, now, "")
+	view := loop.PanelModel(snapshot.Records(), now, "")
 	presence, loops := loop.Presence(abs, delivery, now)
 	view.Header.Presence = presence
 	view.Header.Loops = loops

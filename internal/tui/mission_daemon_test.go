@@ -25,6 +25,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // The same protected synthetic credential/TLS profile used by service fixtures,
@@ -50,6 +51,9 @@ func journeyFixtureAuthentication(t *testing.T, svc *service.Service, a domain.A
 		payload = map[string]any{"claudeAiOauth": map[string]any{"accessToken": "synthetic-never-real", "expiresAt": time.Now().Add(time.Hour).UnixMilli(), "scopes": []string{"user:inference", "user:profile"}}}
 	}
 	raw, _ := json.Marshal(payload)
+	if err = testfixture.PreparePrivateFile(filepath.Join(ad.IsolateDir(svc.Home, a.ID), dir, name)); err != nil {
+		t.Fatal(err)
+	}
 	if err = os.WriteFile(filepath.Join(ad.IsolateDir(svc.Home, a.ID), dir, name), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +110,7 @@ func TestJourneyRealDaemonPlanningBindingApprovalTwoMissions(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	for _, provider := range []string{"codex", "claude"} {
 		t.Run(provider, func(t *testing.T) {
-			root := t.TempDir()
+			root := testfixture.PrivateHome(t)
 			st, err := store.Open(filepath.Join(root, "catalog.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -125,12 +129,12 @@ func TestJourneyRealDaemonPlanningBindingApprovalTwoMissions(t *testing.T) {
 				}
 			})
 			bin := filepath.Join(root, "bin")
-			if err = os.Mkdir(bin, 0700); err != nil {
+			if err = testfixture.MakePrivateDirectory(bin, 0700); err != nil {
 				t.Fatal(err)
 			}
 			version := map[string]string{"codex": "codex-cli 0.160.0", "claude": "2.1.289 (Claude Code)"}[provider]
 			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + version + "'; exit 0; fi\nif [ -n \"$OPENAI_API_KEY\" ] || [ -n \"$ANTHROPIC_API_KEY\" ]; then exit 90; fi\nprintf JOURNEY_READY\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-			if err = os.WriteFile(filepath.Join(bin, provider), []byte(script), 0700); err != nil {
+			if err = testfixture.WriteScript(t, filepath.Join(bin, testfixture.ExecutableName(provider)), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin)

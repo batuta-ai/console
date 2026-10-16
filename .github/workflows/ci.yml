@@ -45,3 +45,342 @@ jobs:
           node scripts/check-release-config.mjs
       - name: Shared non-root source contract
         run: sh scripts/check-release.sh
+  windows-source:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
+    steps:
+      - name: Create owned evidence directory
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP ("console-windows-evidence-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          "WINDOWS_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.10.0'
+          package-manager-cache: false
+      - name: Record native environment and install pinned npm
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          & {
+            [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+            [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+            if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') { throw 'Native Windows amd64 runner required' }
+            whoami /all
+            git rev-parse HEAD
+            go version
+            if ((go version) -ne 'go version go1.27.2 windows/amd64') { throw 'Unexpected Go toolchain' }
+            node --version
+            if ((node --version) -ne 'v26.10.0') { throw 'Unexpected Node toolchain' }
+            npm install --global npm@12.2.0
+            npm --version
+            if ((npm --version) -ne '12.2.0') { throw 'Unexpected npm toolchain' }
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'environment.log')
+      - name: Native web tests, typecheck, build and embedded asset guard
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          function Assert-EmbeddedAssets {
+            $drift = git -c core.autocrlf=false -c core.eol=lf status --porcelain --untracked-files=all -- internal/webui/dist
+            if ($drift) { throw "Embedded web assets differ from HEAD: $drift" }
+          }
+          & {
+            Assert-EmbeddedAssets
+            npm --prefix web ci
+            npm --prefix web run test:run
+            & ./web/node_modules/.bin/tsc.cmd --noEmit --project web/tsconfig.json
+            npm --prefix web run build
+            Assert-EmbeddedAssets
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'web.log')
+      - name: Native Go builds, integrity, vet and complete original tests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          $userProfilePath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+          if (-not $userProfilePath -or -not (Test-Path -LiteralPath $userProfilePath -PathType Container)) { throw 'Current-user profile directory required' }
+          $ancestorLog = Join-Path $env:WINDOWS_EVIDENCE 'ancestor-acls.log'
+          @("current-user-sid=$($sid.Value)", "user-profile=$userProfilePath", "runner-temp=$env:RUNNER_TEMP") | Set-Content $ancestorLog
+          $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          foreach ($rootPath in @($env:RUNNER_TEMP, $userProfilePath)) {
+            $ancestor = [System.IO.DirectoryInfo]::new($rootPath)
+            while ($null -ne $ancestor) {
+              if ($seenPaths.Add($ancestor.FullName)) {
+                $ancestorAcl = Get-Acl -LiteralPath $ancestor.FullName
+                @("path=$($ancestor.FullName)",
+                  "owner-sid=$($ancestorAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)",
+                  "dacl=$($ancestorAcl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access))") | Add-Content $ancestorLog
+              }
+              $ancestor = $ancestor.Parent
+            }
+          }
+          $env:GOCACHE = Join-Path $env:RUNNER_TEMP ("console-windows-go-cache-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $env:GOCACHE | Out-Null
+          # Only this new empty fixture directory receives a protected current-user ACL.
+          $fixture = Join-Path $userProfilePath ("cw-" + [guid]::NewGuid().ToString('N').Substring(0, 12))
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          @("fixture=$fixture", "go-cache=$env:GOCACHE", "evidence=$env:WINDOWS_EVIDENCE") | Add-Content $ancestorLog
+          $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+          $acl.SetOwner($sid)
+          $acl.SetAccessRuleProtection($true, $false)
+          $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $sid, [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+          $acl.AddAccessRule($rule)
+          Set-Acl -LiteralPath $fixture -AclObject $acl
+          $actual = Get-Acl -LiteralPath $fixture
+          $rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+          $actual.Sddl | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'fixture-acl.log')
+          if ($actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or
+              -not $actual.AreAccessRulesProtected -or $rules.Count -ne 1 -or
+              $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].IsInherited -or
+              $rules[0].FileSystemRights -ne $rule.FileSystemRights -or
+              $rules[0].InheritanceFlags -ne $rule.InheritanceFlags -or
+              $rules[0].PropagationFlags -ne $rule.PropagationFlags -or
+              $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Fixture owner/ACL verification failed' }
+          & {
+            go mod download
+            go mod verify
+            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'console.exe') ./cmd/console
+            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'consoled.exe') ./cmd/consoled
+            go vet ./...
+          } *> (Join-Path $env:WINDOWS_EVIDENCE 'go-checks.log')
+          $saved = @{ TEMP = $env:TEMP; TMP = $env:TMP; LOCALAPPDATA = $env:LOCALAPPDATA }
+          try {
+            $env:TEMP = $fixture
+            $env:TMP = $fixture
+            $env:LOCALAPPDATA = $fixture
+            # Keep both original streams even when Go returns a failing exit code.
+            $PSNativeCommandUseErrorActionPreference = $false
+            $tokens = $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/check-windows-msys-owner.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+            $parseErrors | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-parser.log')
+            if ($parseErrors.Count) { throw 'MSYS controller parse failed' }
+            $fixtureBinary = Join-Path $env:WINDOWS_EVIDENCE 'msys-original.test.exe'
+            go test -c -o $fixtureBinary ./internal/testfixture 1> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stdout') 2> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stderr')
+            $compileExit = $LASTEXITCODE
+            $compileExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.exit')
+            if ($compileExit -ne 0) { throw 'Original testfixture compilation failed' }
+            $testExit = & ./scripts/check-windows-msys-owner.ps1 -Evidence $env:WINDOWS_EVIDENCE -FixtureBinary $fixtureBinary -Source $PWD.Path -Go (Get-Command go -CommandType Application | Select-Object -First 1).Source -Git (Get-Command git -CommandType Application | Select-Object -First 1).Source -FullSuite
+          } finally {
+            $env:TEMP = $saved.TEMP
+            $env:TMP = $saved.TMP
+            $env:LOCALAPPDATA = $saved.LOCALAPPDATA
+          }
+          $badEvents = 0
+          $passEvents = 0
+          $requiredPasses = @('TestTerminalEnvironmentPreservesOrdinaryUserTEMP', 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP/select_environment',
+            'TestTerminalEnvironmentMSYSTempLifetime', 'TestTerminalEnvironmentMSYSTempLifetime/first_scope',
+            'TestTerminalEnvironmentMSYSTempLifetime/later_original_literal', 'TestNativeScriptLiteralArgumentsAndExit')
+          $requiredPasses += @(Select-String -Path internal/testfixture/script_inplace_windows_test.go -Pattern '^func (TestNativeScriptInPlace\w+)\(t \*testing.T\)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+          $observedPasses = @{}
+          $emptyPackageOutput = @{}
+          $skippedPackages = @()
+          Get-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test.json') | ForEach-Object {
+            $testEvent = $_ | ConvertFrom-Json -ErrorAction Stop
+            if ($testEvent.Action -eq 'output' -and -not $testEvent.Test -and $testEvent.Package -and
+                $testEvent.Output -cmatch ('^\?\s+' + [regex]::Escape($testEvent.Package) + '\s+\[no test files\]\r?\n?$')) {
+              $emptyPackageOutput[$testEvent.Package] = $true
+            }
+            if ($testEvent.Action -eq 'output' -and $testEvent.Output -cmatch 'could not find /tmp|warning:.* /tmp') { $badEvents++ }
+            if ($testEvent.Action -eq 'pass' -and $testEvent.Package -ceq 'github.com/batuta-ai/console/internal/testfixture' -and $testEvent.Test -cin $requiredPasses) {
+              if (-not $observedPasses.ContainsKey($testEvent.Test)) { $observedPasses[$testEvent.Test] = 0 }
+              $observedPasses[$testEvent.Test]++
+            }
+            if ($testEvent.Action -eq 'fail' -or ($testEvent.Action -eq 'skip' -and $testEvent.Test)) { $badEvents++ }
+            if ($testEvent.Action -eq 'skip' -and -not $testEvent.Test) { $skippedPackages += $testEvent.Package }
+            if ($testEvent.Action -eq 'pass' -and $testEvent.Test) { $passEvents++ }
+          }
+          foreach ($required in $requiredPasses) {
+            if (-not $observedPasses.ContainsKey($required) -or $observedPasses[$required] -ne 1) { $badEvents++ }
+          }
+          $emptyPackages = @()
+          foreach ($package in $skippedPackages) {
+            if ($package -and $emptyPackageOutput.ContainsKey($package)) { $emptyPackages += $package }
+            else { $badEvents++ }
+          }
+          @("exit=$testExit pass=$passEvents fail-or-test-skip-or-unexplained-package-skip=$badEvents",
+            "empty-package-count=$($emptyPackages.Count)",
+            "empty-packages=$($emptyPackages -join ',')") | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'go-test-summary.log')
+          if ($testExit -ne 0 -or $badEvents -ne 0 -or $passEvents -eq 0) { throw 'Complete native Go suite failed or skipped tests; see retained evidence' }
+      - name: Retain native Windows evidence on success or failure
+        if: always() && env.WINDOWS_EVIDENCE != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
+          path: |
+            ${{ env.WINDOWS_EVIDENCE }}/*.log
+            ${{ env.WINDOWS_EVIDENCE }}/*.json
+            ${{ env.WINDOWS_EVIDENCE }}/*.stdout
+            ${{ env.WINDOWS_EVIDENCE }}/*.stderr
+            ${{ env.WINDOWS_EVIDENCE }}/*.exit
+          if-no-files-found: error
+  package-snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      labels-sha256: ${{ steps.labels.outputs.sha256 }}
+      revision: ${{ steps.labels.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.10.0'
+          package-manager-cache: false
+      - name: Install pinned npm on the runner
+        run: npm install --global npm@12.2.0
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: 'v2.18.2'
+          install-only: true
+      - name: Produce and verify all five real snapshot archives
+        env:
+          REQUESTED_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$REQUESTED_REF^{commit}")"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          sh scripts/package-release.sh
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Bind public package labels to producer outputs
+        id: labels
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import assert from 'node:assert/strict';
+          const revision = execFileSync('git', ['rev-parse', 'HEAD'], {encoding:'utf8'}).trim();
+          const version = JSON.parse(readFileSync('.release-please-manifest.json'))['.'] + '-snapshot.' + revision;
+          const archive = `console_${version}_windows_amd64.zip`;
+          const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const metadata = JSON.parse(readFileSync('dist/metadata.json'));
+          assert.equal(metadata.version, version);
+          assert.equal(metadata.commit, revision);
+          const labels = { version, revision, archive, archiveSHA256: hash('dist/' + archive),
+            checksumsSHA256: hash('dist/checksums.txt'), runID: process.env.GITHUB_RUN_ID,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            qualifierSHA256: hash('scripts/qualify-release.ps1'), testsSHA256: hash('scripts/qualify-release.test.ps1') };
+          writeFileSync('dist/labels.json', JSON.stringify(labels, null, 2) + '\n');
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha256=${hash('dist/labels.json')}\nrevision=${revision}\n`);
+          JS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: console-snapshot-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/metadata.json
+            dist/artifacts.json
+            dist/labels.json
+          if-no-files-found: error
+  windows-ordinary-skills:
+    needs: package-snapshot
+    if: ${{ !cancelled() }}
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      GOSUMDB: sum.golang.org
+      GONOSUMDB: ''
+      GOPRIVATE: ''
+    steps:
+      - name: Create owned ordinary-user evidence directory
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP ('console-ordinary-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          "ORDINARY_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Parse Windows harness scripts without executing the bootstrap
+        run: |
+          foreach ($path in @('scripts/check-windows-ordinary.ps1', 'scripts/check-windows-ordinary-child.ps1', 'scripts/check-windows-msys-owner.ps1', 'scripts/qualify-release.ps1', 'scripts/qualify-release.test.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$parseErrors) | Out-Null
+            $parseErrors | Out-String | Add-Content (Join-Path $env:ORDINARY_EVIDENCE 'parser.log')
+            if ($parseErrors.Count) { throw "PowerShell parse failed: $path" }
+          }
+      - name: Require the exact producer artifact identity
+        env:
+          PRODUCER_RESULT: ${{ needs.package-snapshot.result }}
+          PRODUCER_ARTIFACT: ${{ needs.package-snapshot.outputs.artifact-id }}
+          PRODUCER_LABELS: ${{ needs.package-snapshot.outputs.labels-sha256 }}
+        run: |
+          if ($env:PRODUCER_RESULT -cne 'success' -or $env:PRODUCER_ARTIFACT -cnotmatch '^[1-9][0-9]*$' -or
+              $env:PRODUCER_LABELS -cnotmatch '^[a-f0-9]{64}$') { throw 'Required snapshot producer failed or omitted its bound artifact' }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package-snapshot.outputs.artifact-id }}
+          path: ${{ runner.temp }}/console-snapshot-inputs
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Genuine disposable ordinary-user skill proof
+        env:
+          BUNDLE_LABELS_SHA256: ${{ needs.package-snapshot.outputs.labels-sha256 }}
+          BUNDLE_REVISION: ${{ needs.package-snapshot.outputs.revision }}
+        run: |
+          & ./scripts/check-windows-ordinary.ps1 -Evidence $env:ORDINARY_EVIDENCE -Bundle (Join-Path $env:RUNNER_TEMP 'console-snapshot-inputs') -LabelsHash $env:BUNDLE_LABELS_SHA256 -ProducerRevision $env:BUNDLE_REVISION
+      - name: Retain ordinary-user evidence on success or failure
+        if: always() && env.ORDINARY_EVIDENCE != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-ordinary-skills-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.ref && 'requested-ref' || 'event-ref' }}
+          path: ${{ env.ORDINARY_EVIDENCE }}/*
+          if-no-files-found: error

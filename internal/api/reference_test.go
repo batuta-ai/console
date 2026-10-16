@@ -13,6 +13,7 @@ import (
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestReferenceHTTPStatus(t *testing.T) {
@@ -27,7 +28,7 @@ func TestReferenceHTTPStatus(t *testing.T) {
 		}
 	})
 	svc := service.New(st, session.New(t.TempDir()), nil)
-	svc.Home = t.TempDir()
+	svc.Home = testfixture.PrivateHome(t)
 	h := (&Server{Svc: svc, Token: "test-token"}).Handler()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -52,14 +53,14 @@ func TestReferenceHTTPStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli := t.TempDir()
+	cli := testfixture.PrivateHome(t)
 	artifact := filepath.Join(cli, "launches")
 	script := "#!/bin/sh\nprintf 'launch\\n' >> '" + artifact + "'\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-	if err := os.WriteFile(filepath.Join(cli, "codex"), []byte(script), 0755); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", cli)
-	control := post(t, h, "/v0/sessions", map[string]any{"mission_id": m.ID, "batuta": false, "argv": []string{filepath.Join(cli, "codex")}, "owner": "web", "client": "test"}, 200)
+	control := post(t, h, "/v0/sessions", map[string]any{"mission_id": m.ID, "batuta": false, "argv": []string{filepath.Join(cli, testfixture.ExecutableName("codex"))}, "owner": "web", "client": "test"}, 200)
 	if member, ok := control["member_id"]; ok && member != "" {
 		t.Fatalf("fictional generic member: %v", member)
 	}

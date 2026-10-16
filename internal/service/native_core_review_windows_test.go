@@ -110,6 +110,7 @@ func TestTask43WindowsNativeCoreQualifiedReview(t *testing.T) {
 			svc, a, skills, env, values := task43CoreApprovedFixture(t)
 			svc.NativeExecutorExecutable = image
 			home := accounts.ExplicitHome(values["codex"].Environment)
+			task43CoreReviewFailureDiagnostic(t, a, home)
 			task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), test.mode)
 			state, err, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
 			if err != nil || !active || state != test.state {
@@ -567,6 +568,7 @@ func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
 	authorized.Members = append(authorized.Members, domain.Member{ID: "reviewer", CLI: "codex", Model: "qa-native", Effort: "high", AccountID: "selected"})
 	values["codex"] = authorized
 	home := accounts.ExplicitHome(authorized.Environment)
+	task43CoreReviewFailureDiagnostic(t, a, home)
 	task43CoreWriteFile(t, filepath.Join(home, "native-fixture-mode"), "effort")
 	state, err, active := task43CoreParentRun(t, svc, a, skills, env, values, "")
 	if err != nil || !active || state != loop.StateDone {
@@ -602,7 +604,7 @@ func TestTask43WindowsNativeCoreBoundEffortAndReadonly(t *testing.T) {
 
 func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	_, home := task43CoreHome(t)
-	image := filepath.Join(home, "published-core49.exe")
+	image := filepath.Join(home, "published-core55.exe")
 	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-mod=readonly", "-o", image, "github.com/batuta-ai/core/cmd/batuta")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -643,7 +645,7 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 		Version  string   `json:"version"`
 		Commands []string `json:"commands"`
 	}
-	if err := json.Unmarshal(data, &public); err != nil || strings.TrimPrefix(public.Version, "v") != "1.1.0-beta.49" {
+	if err := json.Unmarshal(data, &public); err != nil || strings.TrimPrefix(public.Version, "v") != "1.1.0-beta.55" {
 		t.Fatal("actual public Core capability version", public, err)
 	}
 	found := false
@@ -655,7 +657,7 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 	if !found {
 		t.Fatal("public Core does not advertise review", public)
 	}
-	t.Logf("Actual public Core49 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
+	t.Logf("Actual public Core55 CLI flags/defaults/help exit1 verified; review capability version=%s. Helper advertises only its implemented review command over the same actual linked version, exercised by the real supervision review cases.", public.Version)
 }
 
 func task43CoreReviewGuardPE() (bool, int) {

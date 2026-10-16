@@ -12,15 +12,16 @@ import (
 	"time"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestReadinessErrorsAreRecoverableBeforeLaunch(t *testing.T) {
 	for _, mode := range []string{"session", "init"} {
 		t.Run(mode, func(t *testing.T) {
 			h, svc := testServer(t)
-			cli := t.TempDir()
+			cli := testfixture.PrivateHome(t)
 			out := filepath.Join(cli, "launch")
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.160.0'; exit 0; fi\necho launched > '"+out+"'\n"), 0700); err != nil {
+			if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.160.0'; exit 0; fi\necho launched > '"+out+"'\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
@@ -79,8 +80,8 @@ func TestReadinessErrorsAreRecoverableBeforeLaunch(t *testing.T) {
 
 func TestAccountReadinessUsesRequestCancellation(t *testing.T) {
 	h, svc := testServer(t)
-	cli := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\n/bin/sleep 30\n"), 0700); err != nil {
+	cli := testfixture.PrivateHome(t)
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\n/bin/sleep 30\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", cli)
@@ -112,14 +113,14 @@ func TestCLILaunchFailuresHaveRecoveryCodes(t *testing.T) {
 	for _, state := range []string{"cli_missing", "cli_incompatible", "adapter_unsupported"} {
 		t.Run(state, func(t *testing.T) {
 			h, svc := testServer(t)
-			cli := t.TempDir()
+			cli := testfixture.PrivateHome(t)
 			t.Setenv("PATH", cli)
 			adapter := "codex"
 			if state == "adapter_unsupported" {
 				adapter = "gemini"
 			}
 			if state != "cli_missing" {
-				if err := os.WriteFile(filepath.Join(cli, adapter), []byte("#!/bin/sh\necho 'codex-cli 99.0.0'\n"), 0700); err != nil {
+				if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName(adapter)), []byte("#!/bin/sh\necho 'codex-cli 99.0.0'\n"), 0700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -158,8 +159,8 @@ func TestSquadReadinessUsesRequestCancellation(t *testing.T) {
 	for _, mode := range []string{"stored", "draft", "save"} {
 		t.Run(mode, func(t *testing.T) {
 			h, svc := testServer(t)
-			cli := t.TempDir()
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\n/bin/sleep 30\n"), 0700); err != nil {
+			cli := testfixture.PrivateHome(t)
+			if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\n/bin/sleep 30\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
@@ -205,10 +206,10 @@ func TestSquadReadinessUsesRequestCancellation(t *testing.T) {
 
 func TestAccountChecksRunIndependentlyWithinSharedBudget(t *testing.T) {
 	h, svc := testServer(t)
-	cli := t.TempDir()
+	cli := testfixture.PrivateHome(t)
 	release := filepath.Join(cli, "release")
 	script := "#!/bin/sh\nprintf started > \"$HOME/check-started\"\nwhile [ ! -e '" + release + "' ]; do /bin/sleep 0.01; done\necho 'codex-cli 0.160.0'\n"
-	if err := os.WriteFile(filepath.Join(cli, "codex"), []byte(script), 0700); err != nil {
+	if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", cli)

@@ -5,6 +5,291 @@ unsupported until Task43 qualifies effective protection, process ownership and
 ConPTY. Cross-compilation and WSL2 do not qualify native Windows behavior. Real
 Codex/Claude provider qualification belongs to Task44.
 
+## Blocking native Windows source gate
+
+The reusable Console checks workflow now includes a blocking `windows-source`
+job on native `windows-2025` amd64. It selects the same exact
+`inputs.ref || github.sha` as the unchanged macOS/Linux source job, with pinned
+Go 1.27.2, Node 26.10.0 and npm 12.2.0. It runs web tests, TypeScript checking
+and the embedded web build, rejecting tracked and untracked embedded asset
+drift. Checkout disables automatic CRLF conversion, and the asset guard uses
+command-scoped `core.autocrlf=false` and `core.eol=lf`, without global Git changes.
+The native Go path downloads the selected modules before verifying their cached
+integrity, builds both commands, runs vet and requires
+`go test ./... -json -count=1 -timeout=20m` without selections or suppressions.
+A nonzero process exit, any JSON failure event or any test-level skip blocks the
+job. A package-level skip is allowed only with matching output for that same
+package reporting `[no test files]`; unexplained package skips block the job.
+Allowed empty packages are recorded separately in the summary diagnostics and
+are not skipped tests. No actual test skips are allowed.
+
+Before Go checks, the job records the actual current-user SID and reads the owner
+SID and DACL of each existing directory from RUNNER_TEMP and the current user's
+resolved UserProfile through their roots, deduplicating shared ancestors. It then
+creates a new empty disposable directory with a short name directly under that
+UserProfile, matching the prior native harness's fixture location. It verifies
+the new directory's protected ACL: current-user SID owner and only that SID's
+full control rule with object/container inheritance. Only the test process
+environment receives this directory as TEMP, TMP and LOCALAPPDATA. No existing
+directory ACL, profile, token, global temporary environment or runner security
+setting is changed. The fixture ACL does not change the token's default owner
+or make the runner a standard user. A dedicated GOCACHE under runner.temp is
+shared by Go builds and tests, so changing LOCALAPPDATA for tests does not
+introduce a separate cold build cache. The cache and evidence directories under
+runner.temp are ordinary job artifacts; no current-user SID ownership claim is
+made for them or their ancestors.
+
+An `always()` upload retains complete Go JSON stdout, stderr and process exit,
+plus runner OS/version, identity/privileges, toolchain, source revision, ancestor
+owner/DACL records, fixture ACL and stage diagnostics from a separate runner.temp
+evidence directory.
+No personal credentials or configuration are collected. The upload action is
+pinned to v7.0.2 commit `cf430e030ddbb5b0abf93d22962f4752f3646cd9`.
+Local lint/source review does not establish runtime success; a reviewed/pushed
+candidate still needs a live Windows CI run and inspection of its artifacts.
+
+[GitHub documents Windows hosted runners as administrators with UAC disabled](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+This elevated source gate cannot close standard-user Windows qualification.
+The earlier full native candidate `0747deb` recorded 3,250 passes, 107 failures
+and zero skips. The conductor reported public Windows run `38551760992` at
+`4612227`: builds, vet and web checks passed, while the complete Go suite recorded
+2,334 passes, 987 failures and zero test skips. Raw evidence remains at
+`.batuta/runs/2026-10-14-windows-beta1/native-ci-461-push`. Many PrivateHome
+constructors failed on a foreign Windows owner in the runtime parent before
+reaching their intended contracts. That run placed the fixture under RUNNER_TEMP
+on drive D, unlike the prior harness's UserProfile root; the offending ancestor's
+SID was not captured. The revised fixture location and ancestor diagnostics still
+require a fresh native CI run; no failure is claimed fixed by local source review.
+Full race/scanner, secure source/authentication, real provider and standard-user
+qualification remain outside this bounded gate. Windows remains pending until
+Task43/Task44 gates pass. Windows remains selected by SelectedPlatform, which
+represents selection rather than qualification; packages remain macOS/Linux only.
+This change neither qualifies a full Windows release nor closes beta1.
+
+## Fixture command and scope — 2026-10-13
+
+```sh
+sh scripts/qualify-release.sh --fixtures
+```
+
+This is the only supported mode, for native macOS/Linux with Go 1.27.2,
+Node 26.10.0, npm 12.2.0, cached pinned Go modules, loopback sockets and PTYs.
+Select the pinned tools on PATH (and GOROOT if set) before running. The command
+uses an owned temporary build cache, HOME and output directory; `GOMODCACHE`
+may point to a prepared module cache. Module downloads are disabled. It prints
+exact stage commands, fails on errors/timeouts/skips, and requires every named
+test both to exist before selection and to produce a passing test event.
+The cache must already contain both Console's pinned build list and the pinned
+Core release's own build list, including their checksum records. The API journey
+builds the Core CLI from its module directory, while the TUI journey builds it
+from Console's module context. Prepare both lists before offline qualification:
+
+```sh
+go mod download
+core_dir=$(go list -m -f '{{.Dir}}' github.com/batuta-ai/core)
+(cd "$core_dir" && go mod download)
+```
+
+`GOPROXY=off` keeps resolution offline, while `GOSUMDB=sum.golang.org` and
+empty private/no-sum exclusions retain public checksum policy. `go mod verify`
+checks cached module integrity in both module contexts before test inventory or
+builds. A missing or modified cached module stops qualification.
+Missing `scripts/qualify-release.sh` was the baseline missing-capability red,
+not a product behavior regression.
+
+Fresh current-source console/consoled builds report public `-version` JSON;
+the command compares diagnostic fields with the SDK's `go version -m -json`
+output and the current Git revision. It checks Go and unreplaced Core
+`v1.1.0-beta.49`, preserving the observed module version (including a Go-derived
+pseudo-version) while requiring release labels to remain development/unknown/unset.
+The final PASS line records the observed revision and modified state; a dirty
+source run qualifies those current bytes, rather than the commit alone.
+It then runs `web/tests/daemon-journey.mjs`, which builds its own
+current consoled and restarts that same binary against one disposable catalog.
+The HTTP journey covers two accounts/vaults, a custom squad revision, two
+independent mission snapshots, configuration/init-negative cases and persisted
+authenticated rereads. It performs no successful login/init or model execution.
+Both normal daemon stops require exit zero without a signal or forced kill;
+the original five-second SIGKILL fallback still drains a stuck owned child.
+
+Stage deadlines are 180 seconds by default (including builds, module verification
+and test inventory), 10 seconds for cache/revision/build-information/diagnostic
+reads, 240 seconds for the HTTP journey, and 22 minutes for each fixture package.
+Go test inventory uses `-timeout=120s`; fixture execution uses `-timeout=20m`,
+admitting the heap fixture's unchanged 10-minute context plus the other tests
+and cleanup. Stage termination escalates after 10 seconds. The HTTP journey's
+original build/startup/request/stop deadlines remain 180/10/5/5 seconds.
+
+The required fixture list in the script joins these existing proofs:
+
+- `TestJourneyPublicCoreQuestionResumeAndRestart`: model-driven TUI, pinned
+  public Core, synthetic CLIs, exact approval/question/resume, two missions
+  and service/store restart. This is not full daemon execution restart.
+- `TestJourneyRealDaemonPlanningBindingApprovalTwoMissions`: TUI model plus
+  real service/API over in-process transport and local TLS/readiness helpers.
+- `TestAccountOfficialLoginOpensActualTerminal` and
+  `TestWorkspaceInitActualHTTPWebSocketPTY`: actual terminal attachment/control
+  and PTYs, with substituted account/login/init DTO handlers; neither proves
+  completed official login or full real Workspace init.
+- Explicit `TestTerminalNative…` selections in TUI and API cover raw keyboard
+  input, control, ownership, resize, stop and transport fixtures.
+- `TestNativeApprovedHTTPJourneyUsesOneDeliveryAfterAnswerAndDeletion`:
+  approved HTTP execution with public Core, a synthetic CLI and local auth
+  fixture; it does not contact a real provider.
+
+The conductor ran the expanded HTTP journey successfully on candidate
+`d3e1143dccdae506685d53fe7a24910f5c0c1b8f`; its qualifier failed on the
+incorrect `(devel)` assumption. The retry locally passed pinned toolchains,
+cached module integrity, required-test inventory, fresh builds and both revised
+provenance checks. It then failed with sandbox `listen EPERM` on `127.0.0.1`
+before consoled startup. Source-extracted shutdown checks using owned Node
+children passed zero/nonzero/signal/forced-kill cases; these do not establish
+native daemon success. The conductor subsequently ran the revised qualifier on
+native Darwin/arm64 and Linux/amd64 in a Docker Desktop container as UID 1000:
+each passed 40 test events without skips, plus the HTTP catalog/restart journey
+and builds. A controlled shutdown mutant was rejected. Independent review then
+identified the separate Core build-list verification gap; an owned cache with
+a harmless change to Core-only `x/sync v0.21.0` reproduced that gap. Verification
+now covers both module contexts. Candidate `21bf25e` passed on native
+Darwin/arm64 and Linux/amd64 in the same UID-1000 container, with 40 passing
+test events per platform and no failures or skips.
+
+The integrity red/green pair used one complete, owned module-cache copy with
+only `golang.org/x/sync@v0.21.0/README.md` altered. The original cache's copy
+of that README kept its SHA256. In each source checkout the exact command was:
+
+```sh
+GOMODCACHE=/tmp/console-journey-core-cache-canary-complete-21bf \
+  sh scripts/qualify-release.sh --fixtures
+```
+
+Candidate `3f9c1bd` accepted that cache (exit 0). Candidate `21bf25e` rejected
+the same cache (exit 1) at `Core cached module integrity`, before inventory or
+builds, with `golang.org/x/sync v0.21.0: dir has been modified`.
+Conductor receipts and full stdout/stderr are retained under
+`.batuta/runs/2026-10-13-complete-journey/` in the parent checkout (untracked
+conductor evidence): `core-cache-complete-canary.json`,
+`qualifier-core-cache-complete-red.*`, `qualifier-core-cache-complete-green.*`,
+`qualifier-mac-verified.*` and `qualifier-linux-complete-cache.*`.
+These are fixture proofs; no check was weakened.
+Rendered browser, outer Console PTY, clean-install bundle discovery,
+standard-user Windows, real providers, stable/beta publication and whole
+Task38 completion remain outside this command. Task43's 107 native failures
+remain open. Historical evidence below is unchanged.
+
+### Additional outer Console PTY selector
+
+The inventory now additionally requires
+`TestOuterConsolePTYCatalogApprovalAndRestart` on Darwin/Linux. The previous
+20 required names and their historical 40 passing events above are unchanged;
+those receipts do not include this new test. The existing inventory/pass-event
+checks reject an absent name, a skipped test or a selection with zero tests.
+All other qualifier stages, assertions and deadlines remain unchanged. Its
+conservative final status line still leaves the full outer Console journey
+unqualified.
+
+```sh
+go test ./internal/tui -run '^TestOuterConsolePTYCatalogApprovalAndRestart$' -count=1 -timeout=5m
+```
+
+This additional test builds current-source `console` and `consoled` into owned
+temporary output and launches the actual Console with an 80-row, 240-column
+outer PTY against its owned authenticated HTTP daemon. Disposable catalog
+setup uses public HTTP; binding, source inspection, approval and the execution
+attempt use real Console key bytes. The terminal engine decodes the visible
+screen, reconstructing every displayed metadata/source byte before approval.
+Independent HTTP reads assert the exact selected mission, binding and immutable
+receipt while the other mission stays unchanged.
+
+Both disposable provider CLIs only report their qualified version banners;
+any other invocation leaves a failure marker. Empty isolated account vaults
+must yield visible `credential_missing`, no sessions, no native opening or
+delivery journal, and no model invocation. This is authentication refusal,
+not successful official login or execution. No provider transport override,
+readiness substitution or external provider request is used.
+
+The test keeps Console alive while terminating the retained daemon process
+with SIGTERM, requiring exit zero within eight seconds, then restarts the same
+binary/catalog. The test sends public refresh/selection keys and verifies both
+recovered mission identities on screen and through independent HTTP reads;
+Rendered recovery and HTTP rereads preserve the exact binding/receipt and activity log without
+repeated mutations. Console must exit zero through its public quit key. Output
+readers and owned processes are joined before temporary-directory cleanup;
+forced cleanup is a test failure, and unresolved cleanup retains its artifacts.
+State/screen waits are bounded at ten seconds, and the overall work context at
+240 seconds, within the five-minute test limit.
+
+This covers only the outer-process catalog/approval/authentication-refusal and
+actual daemon restart leg when run successfully. The existing
+`TestJourneyPublicCoreQuestionResumeAndRestart` remains a separate model-driven
+public Core question/resume test with local TLS/readiness injection and a
+service/store restart. Neither substitutes for outer-process execution,
+answer/resume or active-delivery stop. Rendered browser, clean-install bundle
+auto-discovery, real official login/providers, native Windows (Task43's 107
+failures), stable/beta publication and whole Task38 remain open. A sandbox
+loopback/PTY/cache failure leaves this new runtime proof unverified.
+
+The worker observed the required missing-name red (qualifier exit 1) before
+adding the test. Its first targeted run compiled and freshly built both
+binaries, then exited 1 on sandbox `listen tcp 127.0.0.1:0: bind: operation not
+permitted`, before daemon/PTY startup. This is an environmental failure, not
+behavioral TDD red or a runtime pass. The new journey and the final full
+qualifier remain worker sandbox-unverified; no new native passing receipt is
+claimed here.
+
+The conductor subsequently ran candidate `9935e29` outside that sandbox:
+the targeted outer PTY journey passed on native Darwin/arm64 in 17.77 seconds,
+its harness race check passed in 19.59 seconds, and the full qualifier passed
+on Darwin/arm64 in 99.82 seconds and Linux/amd64 (Docker Desktop, UID 1000)
+in 54.07 seconds. Each full run had 41 passing test events without failures
+or skips. These receipts are retained as `outer-mac-retry1.*`,
+`outer-mac-race.*`, `outer-qualifier-mac.*` and `outer-qualifier-linux.*` under
+`.batuta/runs/2026-10-13-console-public-flows/` in the parent checkout.
+
+Independent Opus review then identified a background-refresh race. Controlled
+model regressions showed that an automatic read could swallow an edited key
+and erase a mutation refusal before rendering. Keyboard input now cancels only
+an owned automatic journey read; foreground reads and mutations remain guarded.
+Successful automatic reads preserve an active mutation failure notice until
+an explicit successful inspection clears it. Canceled replies cannot replace
+the edited draft. The qualifier also requires these two regressions.
+Catalog/assertion calls use a ten-second client budget, while startup probes
+retain one second. Binding checks use persistent rendered workspace authority
+and exact HTTP rereads; authentication checks still require the visible error
+and all no-execution assertions. No mutation retry or authentication bypass
+was added. The 41-event receipts precede this fix and do not qualify it.
+
+Candidate `7922a32` passed the updated full qualifier on native Darwin/arm64
+in 67.59 seconds and Linux/amd64 in the same UID-1000 container in 54.09
+seconds: each had 48 passing events, zero failures and zero skips. The owned
+regressions reproduce both failures on the prior production source; the exact
+same test bytes pass with the correction. The initial conductor test-authoring
+compile error is retained separately and is not a behavioral red.
+Receipts are `background-refresh-behavior-red.*`, `background-refresh-green.*`,
+`background-refresh-frozen-red.*` and `critical-qualifier-{mac,linux}.*` in the
+parent checkout's evidence directory above. The frozen comparison is a
+supplemental rerun after the original red/green, not a new chronology claim.
+
+A follow-up review found that the current notice's origin must be tracked
+separately from mutation history. A rejected action followed by successful
+inspection, a failed automatic read and a successful read must not restore
+the acknowledged rejection. That sequence failed before the origin correction;
+the same added regression is retained in `notice-origin-red.*`. Read failures
+now carry their own error detail. Recovery restores an uninspected action
+refusal; successful explicit inspection acknowledges it. The first read-failure
+sequence failed in `notice-separated-red.*`; the green receipt covers both
+sequences. A separate required regression covers uncertain action failure,
+failed read and recovery without losing the uncertainty notice or original
+error.
+Its production source is unchanged from `a80f87f`: the controlled mutant red
+is retained in `uncertain-notice-mutant-red.*`, and the race green in
+`uncertain-notice-green.*`. Final candidate `c9b46ed` passed the qualifier on
+Darwin/arm64 (84.38 seconds) and Linux/amd64 in the UID-1000 container
+(53.78 seconds), each with 49 passing test events, no failures and no skips.
+The corresponding receipts are `accepted-qualifier-{mac,linux}.*`.
+The 48-event receipts
+above precede this follow-up; they are not a final-head qualification claim.
+
 ## Evidence and current limits
 
 The implementation starts from `f55edba0e0fd94ac408fba485d1531c3915ab848`.
@@ -239,13 +524,44 @@ The original test cases, subprocess watchdog, both Snapshot/All modes,
 checks remain. Darwin/Linux still use the original `Mkfifo(0600)` and descriptor
 count implementation. No required test gains a skip or loses an assertion.
 
-On Windows, `makeImportFIFO` deliberately returns an explicit unsupported-fixture
-error. It does not substitute a directory or claim a named pipe is a filesystem
-FIFO. Thus both `fifo` and `fifo-symlink` remain failing obligations in the full
-native suite. The directory, directory-symlink and regular-symlink cases still
-exercise their original assertions, using actual process handle counts for leak
-checks. Native qualification must establish symlink privileges and handle-count
-stability without changing global permissions or weakening those checks.
+The `fifo`/`fifo-symlink` labels retain a Unix filesystem FIFO (`Mkfifo(0600)`).
+Their Windows candidate is a filesystem AF_UNIX stream socket counterpart,
+not a literal FIFO or a blocking `ReadFile` guarantee. [Microsoft documents
+the bound socket as an NTFS reparse point](https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/).
+The helper checks `ModeSocket`, `IO_REPARSE_TAG_AF_UNIX` and physical identity at
+the original requested path, using a newly owned short parent alias under
+`os.UserHomeDir()` only when needed. The listener has no acceptor or writer and
+remains open until fixture cleanup. Existing controls and assertions are unchanged.
+
+Go 1.27.2 `Stat` returns `ERROR_CANT_ACCESS_FILE` when following a file
+symlink to an AF_UNIX socket. The Windows import reader now resolves metadata
+for that error and accepts the result only when it identifies a socket. This
+classifies the nonregular import as `Unknown` and invalidates a stale
+measurement. The fallback never reads data; ordinary file reads are unchanged.
+
+This follow-up adds only the `t` argument to the original FIFO constructor
+call; reversing that call reproduces the entire prior `read_test.go` byte for
+byte. The protected manifests above describe their historical capture.
+
+Candidate source, test-first source and local command evidence are retained
+under `.batuta/runs/2026-10-14-windows-beta1/nonregular-import-all-worker-raws`
+and `native-host/` in the parent checkout. Qualify each candidate on native
+Windows with the full original nonregular family using
+`-race` plus `TestWindowsImportFilesystemEndpoint`, including short/long paths,
+file symlinks, case/Unicode spelling, removal and alias cleanup. The original
+32-read import loops retain exact descriptor-count equality. Fixture setup
+verifies `SOCK_STREAM` after `Listen`; teardown requires a successful socket
+close. A whole-process count around new test goroutines also counts Go runtime
+thread resources and is not the fixture ownership oracle. The
+Windows import counter now counts kernel File objects, including sockets and
+pipes, via a current-process handle snapshot. Its exact equality is preserved;
+a new native test requires real open-file/socket increments and return to the
+baseline after close, while an Event must not count as a file descriptor.
+The NT snapshot is test-only and fails on an unsupported query or invalid
+layout. Darwin/Linux descriptor counters are unchanged.
+macOS race results and Windows cross-compilation do not establish that
+behavior. These privileged source fixtures do not qualify ordinary-user product
+operation, the full Windows suite or beta readiness.
 
 Before enabling Windows, Task43 must provide:
 
@@ -282,3 +598,485 @@ makes no provider calls and cannot close native security, provider, stable
 release or publication gates. The parent conductor froze the candidate,
 obtained the independent Sonnet review, updated canonical state and made
 the atomic commit (`2e09283`).
+
+## Disposable ordinary-user skills gate
+
+The independent blocking `windows-ordinary-skills` job selects the same exact
+`inputs.ref || github.sha` and Go 1.27.2. Before compiling the current service
+tests, the parent runs full `go vet -tags console_ordinary_user ./internal/service`,
+retains `vet.stdout`, `vet.stderr` and `vet.exit`, and fails on any nonzero exit.
+It then compiles with `-tags console_ordinary_user` and requires exactly
+`TestOrdinaryWindowsUserDiscoversSelectedSkills` and its Codex and Claude child
+passes. The new ordinary-user test requires both `windows` and
+`console_ordinary_user`; its complete body and assertions remain unchanged.
+The default Windows suite runs on the hosted full-administrator runner and
+retains every preexisting test, while this new test runs in the dedicated genuine
+nonadministrator primary-account gate. The reusable CI workflow always requires
+this independent job, including through the release paths; the tag selects the
+actor-specific test at build time and introduces no runtime skip.
+
+Only on GitHub's fresh hosted Windows 2025 VM, the parent creates a uniquely
+named disposable local account with a cryptographically random in-memory
+password. The [New-LocalUser contract](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.localaccounts/new-localuser)
+accepts a SecureString; the [Start-Process credential/profile contract](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process)
+launches a genuine primary account process with its profile loaded. No linked,
+restricted or synthetic actor is substituted. The child verifies its created
+SID, native token type/elevation, groups and privileges, then runs the actual
+compiled tests under an owned profile fixture with a protected user-only DACL.
+The profile path must match the registry entry for the created SID; its owner
+and DACL are recorded. A user, SYSTEM or Administrators owner is accepted for
+this Windows-managed parent, without changing it. The new fixture still requires
+that exact user as owner and its sole full-control ACL entry.
+TEMP, TMP and LOCALAPPDATA point there. No SDK, provider login or model call is
+needed in that account. Only the new staging directory grants the actor read
+and execute access; existing ACLs, privileges and UAC settings are untouched.
+
+Always-uploaded evidence includes source/tool/binary SHA256 inventories, raw
+child and test streams, exits, exact test inventory and JSON events, native
+identity/authority and fixture metadata, source guards and SID-matched cleanup.
+The parent waits for the credentialed process tree to drain before removing
+only its created account. Profile, staging and fixture files are left to the
+hosted VM's disposal; no broad cleanup or arbitrary process killing occurs.
+Missing metadata, failed/skipped tests, missing results or any nonzero test
+exit block the gate. This bootstrap refuses developer and self-hosted machines.
+
+On source `4c20ab17adebe0e69ef2243a4d38bdeb68389804`,
+[run 38604819159, job 115992880955](https://github.com/batuta-ai/console/actions/runs/38604819159/job/115992880955)
+passed the exact parent and both provider tests without failures or skips.
+The genuine primary account was unelevated, had no Administrators membership
+or symbolic-link privilege, and retained its two ordinary privileges. All five
+selected roles per provider had actual directory/reparse attributes, exact
+Readlink targets, matching kernel file identities and source bytes; the
+unselected role remained absent. Source/tool/binary hashes stayed unchanged,
+and the owned account was removed only after process-tree drain. Native
+PowerShell parsing and independent Opus 5.5 source/criterion reviews also passed.
+After the build-selection change, source
+`2b30e9df1d86a5ab92f3cedd3227f5bcfa28a6f8` also passed
+[run 38611127815, job 116014442657](https://github.com/batuta-ai/console/actions/runs/38611127815/job/116014442657):
+full tagged vet exited zero, and the same three native cases passed without
+failures or skips. Static Go 1.27.2 Windows selection retained all 166 preexisting
+service root test names in the default build; the dedicated tag retained the
+167-name baseline, including the new ordinary-user test. Its complete body
+remains byte-exact after reversing only the header. GitHub's elevated default
+runner cannot establish ordinary-user operation. The complete elevated Windows
+suite still has unrelated failures; this selected actor proof does not establish
+full Windows readiness, provider authentication or beta release readiness.
+All other Task43 full-Windows obligations remain open.
+
+
+## Pending run-owned MSYS temporary-directory qualification
+
+The Windows caller harness now establishes a real Git MSYS keeper before the
+complete, unchanged `go test ./... -json -count=1 -timeout=20m` invocation. It
+checks `cygpath -w /tmp` against the caller's stable TEMP using native volume and
+file identity, and retains the original process handle until Go and both output
+streams have finished. It does not change that directory's ACL or remove it.
+An unexpected existing mapping fails setup without touching foreign processes.
+
+Before the suite, a synchronized counterfactual starts independent installed
+MSYS actors A and B with distinct temporary roots. A exits and is joined before
+its root is retired while B stays alive. The unchanged compiled literal test
+must fail specifically because its otherwise exact result includes the missing
+`/tmp` warning. The positive arm repeats that sequence and binary under the
+caller's earlier keeper; the backing identity must survive and the original
+literal test must pass. The same keeper then covers the actual suite. Original
+inplace tests and both frozen TEMP tests, including `later_original_literal`,
+must explicitly pass; unrelated failures and skips still block qualification.
+
+The existing disposable ordinary-account route reuses its candidate test binary
+and the same controller. It exposes read-only original source and the pinned
+compiler, with private writable Go caches and process-local offline settings.
+It retains the original skills and paired TEMP proofs, and additionally runs
+both frozen TEMP tests, the original literal test and the original live-session
+inplace test under the verified ordinary primary actor and whole-run lease.
+These bounded operation fixtures do not replace the administrator source job's
+complete original suite or its privileged adversarial cases. Raw streams, JSON,
+exits, handle observations and before/after source/tool/binary hashes are retained.
+
+This harness change has **not yet been natively qualified**. The recorded native
+full-suite failure predates it; macOS inspection cannot establish PowerShell
+parsing, the new controlled negative/positive result, ordinary-account runtime
+success or a complete Windows pass. Those checks remain pending on Windows CI.
+Task44 provider operation and release readiness remain open.
+
+## Bounded Windows artifact qualification
+
+`scripts/qualify-release.ps1` is a **source candidate; native proof is pending**.
+It consumes the existing combined Windows amd64 ZIP and a separately trusted
+`checksums.txt`. It never builds Console or downloads tools. The checksum proves
+agreement with that manifest, not publisher identity: obtain both through the
+release producer's trusted artifact channel. The existing `verify-packages.mjs`
+contract remains unchanged. ZIP production and native CI wiring are a later task.
+
+Run in a fresh native Windows x64 PowerShell 7.4+ process. Use an existing trusted
+local NTFS staging parent and a new evidence target; do not change existing ACLs,
+accounts, privileges or environment to make this check pass. Paths must be
+canonical absolute drive paths, without UNC/device syntax, ADS, reparse points,
+untrusted mutation rights or hard-linked input files. Parent owners may be the
+current user, SYSTEM, Administrators or TrustedInstaller. The script creates
+only its new directories with protected current-user-only DACLs. It refuses
+unsupported ownership/NT query behavior rather than switching to PID-only kills.
+No administrator bootstrap or ordinary-user qualification is included.
+
+Example invocation (replace the artifact paths, version and full revision with
+the exact producer inputs). The profile-local `ConsoleArtifacts` and
+`ConsoleQualification` parents must already exist and be already trusted under
+the path checks above; trust is not guaranteed by their location. The `run-001`
+target must not exist. Any staging path with untrusted mutation rights is rejected,
+including a child of `C:\` that inherits such rights; do not change ambient ACLs
+to accommodate the qualifier.
+
+```powershell
+pwsh.exe -NoProfile -NonInteractive -File .\scripts\qualify-release.ps1 `
+  -Archive "$env:USERPROFILE\ConsoleArtifacts\console_0.0.0-clean-install_windows_amd64.zip" `
+  -Checksums "$env:USERPROFILE\ConsoleArtifacts\checksums.txt" `
+  -ExpectedVersion '0.0.0-clean-install' `
+  -ExpectedRevision 'd80b7ab289adf08091c131cfc748e3564593c4a6' `
+  -Evidence "$env:USERPROFILE\ConsoleQualification\run-001"
+```
+
+Before starting a runtime, the consumer checks SHA256 and exactly one each of
+`console.exe`, `consoled.exe`, `LICENSE`, `README.md` and `THIRD_PARTY_NOTICES`,
+with no directory, link, duplicate, extra or renamed entry. It requires amd64 PE
+images and both public `-version` diagnostics: exact release version/revision,
+matching observed revision, explicitly unmodified source, actual `go1.27.2`
+from `runtime.Version`, and unreplaced Core `v1.1.0-beta.49` in consoled. Console
+may truthfully report that Core is not linked. The diagnostics are the executable's
+reported provenance; this consumer does not independently parse Go module build
+records with an SDK or qualify every transitive dependency. Package-wide build
+record verification remains the producer's existing gate.
+
+The real packaged Console runs three times with separate `-home <directory>`
+and `-listen 127.0.0.1:<port>` arguments and redirected input/output. Its supported
+nonTTY route must exit zero, emit no stderr and render the BATUTA Home navigation
+and empty-workspace snapshot. The extraction directory contains spaces; the CWD
+is a different empty owned directory. Each child receives a cleared environment,
+an empty owned PATH, empty private profile/config/cache/temp locations, English
+locale and `TERM=dumb`. Caller environment is untouched. No Go, Node, npm, Core
+CLI or official provider is on that PATH; provider capability observations must
+also report missing installations. No personal credential/config files are read.
+
+The lock only locates a candidate process. Binding requires a retained process
+handle, kernel image path, extracted executable hash, exact decoded argv, native
+parent PID and creation time inside the original Console creator's lifetime.
+Launch events label the already-hashed executable path as `requestedImage`, not
+as a kernel observation: short-lived diagnostic processes may already have exited.
+The live daemon's bound event retains the kernel image and hash proof.
+Creator handles remain open through cleanup. Native process information is read
+through those handles; [Microsoft documents the native parent query as subject
+to Windows-version changes](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess).
+The bounded NT command-line query must work on the target host; failure leaves
+the process unqualified and forbids termination through its lock PID.
+
+For each daemon generation, loopback-only HTTP checks require missing and wrong
+Bearer tokens to return 401 on both capabilities and catalog routes. The correct
+token must return the expected capabilities/provenance and the same fresh empty
+workspace catalog. `/` must contain the production Console HTML, and its local
+JavaScript and CSS references must serve substantive content with matching MIME
+types. External font links are not fetched. No browser, `-web`, provider execution,
+login or session is involved. The token is read only from the private owned runtime
+and used in memory in authorization headers; it is never placed in a URL, command,
+report or token hash.
+
+Reinvocation must leave the original bound daemon object alive. The script then
+terminates that idle object directly through its original handle, joins it, starts
+Console again, and binds a newer daemon against the same home/listen/catalog and
+unchanged secret. This is **direct termination / crash-restart, not graceful
+shutdown**. Cleanup uses only retained Console objects and independently bound
+daemon objects. It never kills a PID from a lock, process tree, name or unrelated
+service. Recovery tries eligible original creator handles newest-first; when all
+eligible bindings fail, it reports that no child was bound and that the lock may
+be stale, with those errors preserved for inspection. A failed termination is
+tolerated only when the same original handle
+confirms exit; a still-live failure remains an error.
+Primary failure stage/type/location are retained separately from cleanup
+errors; raw exception payloads are withheld because they may contain captured data.
+
+Limits are 180 seconds for the operation, with individual process waits of 15
+seconds, HTTP requests of 5 seconds, ordinary async waits of 10 seconds and
+hash/extraction waits of 30 seconds, all capped by the remaining budget. Cleanup
+has a separate 20-second deadline and cancellation token, including recovery reads
+and hashes even after the operation budget expires. Its joins and stream drains
+are capped at 5 seconds and 1 second respectively and by the remaining cleanup
+budget. Termination is still requested through each original owned handle after
+that budget expires, with a zero-length join wait; a process not yet joined is
+reported as a cleanup failure. Both cancellation sources are disposed. The
+receipt records both phase
+budgets and elapsed times; these timings end before the receipt is written.
+Console stdout/stderr capture limits are 256/64 KiB; HTTP bodies are limited to
+4 MiB and headers to 16 KiB. Checksums are limited to 64 KiB, the ZIP and total
+expanded bytes to 512 MiB, each member to 256 MiB, and asset references to eight.
+The private daemon log is checked against 64 KiB at lifecycle observations; it
+is product-owned disk output, not a continuously enforced disk quota. Local OS
+filesystem/native calls are synchronous; the time budget is not a watchdog for
+an unresponsive kernel or filesystem. The released port reservation can race;
+any resulting discovery/readiness/ownership mismatch fails qualification.
+
+The only upload whitelist is:
+
+- `receipt.json` (at most 4 KiB): outcome, narrow scope, expected provenance,
+  source/artifact/member hashes, elapsed time and primary/cleanup diagnostics.
+- `observations.json`: child launches/exits, snapshot byte counts/hashes, explicit
+  provenance, isolation paths/DACL, bound process PID/creation/image/hash/argv,
+  same-object reuse and joined termination events; HTTP path/status/content type,
+  byte counts and content hashes, without response bodies or authorization values.
+
+Do **not** recursively upload the evidence directory. Its retained `runtime home`
+contains `auth.secret`, database and daemon logs; its other private subdirectories
+contain extracted binaries and isolated process state. Nothing deletes those
+roots automatically, even on failure. Dispose of the whole owned staging area
+only after inspecting cleanup results and confirming no unbound process remains.
+Neither raw process output nor HTTP payloads are public evidence.
+
+Before accepting this candidate, native CI must execute actual-ZIP negative
+controls for checksum, missing/duplicate/extra/renamed/traversal members, unsafe
+paths and mismatched executable version/revision/Go/Core provenance, then the
+positive against the unchanged original ZIP. Archive mutations must have updated
+checksums so member rejection is actually reached. Provenance negatives must
+reach the provenance check; a bad checksum is not that proof. Retain exact commands,
+exit codes and the whitelisted receipts, and verify both daemon generations,
+reuse, 401 controls and cleanup. Source inspection on macOS and the missing-script
+red/sourceguard green do not establish parsing or behavioral TDD success. All
+native negative/positive controls remain pending; no PowerShell was installed or
+Windows bootstrap executed locally. This is only a Task38 artifact-consumer slice,
+not interactive TUI, provider/council, Task43, full Task38 or release completion.
+
+### Same-run snapshot CI bridge (native result PENDING)
+
+`ci.yml` now adds `package-snapshot` on Ubuntu with the existing pinned Go,
+Node, npm and GoReleaser versions. It checks the requested ref against HEAD and
+requires a clean checkout before and after `sh scripts/package-release.sh`.
+That unchanged producer builds all five snapshot archives, verifies their real
+contents/build records and runs `package-contract.test.mjs`. No tag, release
+publication or write permission is involved. `dist/metadata.json` must agree
+with the manifest-derived snapshot version and full source revision.
+
+The producer uploads the five public archives, checksums, GoReleaser metadata,
+artifact inventory and `labels.json`. Labels bind the Windows ZIP/checksum
+SHA256, qualifier/test source SHA256, revision, version, run ID and run attempt.
+Its output binds the label SHA256 and upload artifact ID. The ordinary Windows
+job requires successful producer outputs, downloads that exact same-run ID with
+`digest-mismatch: error`, and checks labels against its own checked-out revision.
+A failed producer fails the ordinary job explicitly; it cannot silently select
+another artifact or yield a successful qualification through a skipped job.
+Run-attempt binding requires re-running the full producer and consumer flow.
+GitHub's "Re-run failed jobs" cannot reuse a successful producer from an earlier
+attempt: its labels intentionally fail the ordinary job's attempt check. Use a
+full workflow re-run; do not relax the binding or retry unchanged for green.
+
+The existing disposable hosted-Windows account bootstrap stages these inputs
+alongside the original source test binaries. Its before/after source and staged
+hash inventory now includes the package inputs. The original ordinary skills,
+TEMP baseline/candidate, literal and MSYS operations remain in place. After those
+operations return, the existing ordinary actor copies only the bound inputs into
+its own private fixture and verifies copy hashes and ownership. It invokes:
+
+```powershell
+& (Join-Path $bundleRoot 'qualify-release.test.ps1') `
+  -Inputs (Join-Path $bundleRoot 'bundle-inputs.json') `
+  -Evidence (Join-Path $bundleRoot 'public')
+```
+
+This is an internal invocation inside the existing actor, not a second account
+bootstrap. Never run `check-windows-ordinary.ps1` locally. Each qualifier child
+inherits that primary token without credentials, elevation or privilege changes;
+the harness checks self-reported SID against the ordinary actor, PID and creation
+time against the retained launching process object, and token type/elevation
+fields against the required ordinary values. Separately, the wrapper rejects
+Administrators group membership and SeCreateSymbolicLinkPrivilege; groups and
+privileges are not compared with the launcher or actor. The
+consumer remained byte-identical as of that Core49 qualification (SHA256
+`98606f972b689f92b422c123c5bdea129c2ad649f3e3f85f5bc6f2c4643937b3`).
+The current Core55 qualifier, `scripts/qualify-release.ps1`, has SHA256
+`6f2d94507a2714764fc95035a12e64465a57e5b1ad768b851110e4ef4edc62d5`,
+matching the frozen-consumer constant in `scripts/qualify-release.test.ps1`.
+This digest identifies the qualifier, not the test harness, and does not establish
+completion of the current native ordinary-account qualification.
+
+The native case order is counterfactual, checksum, missing, duplicate, extra,
+renamed, traversal, relative path, ADS, dot-dot path, wrong PE machine, wrong
+expected version, wrong expected revision, reported Go, reported Core, positive.
+The duplicate replaces README with a second LICENSE, keeping five entries;
+renamed/traversal also retain five entries. Modified archives get fresh checksums
+so they reach the member/PE/provenance guard. Rejections require the intended
+stage and exact frozen guard line, empty cleanup errors and the exact number of
+version-only process launches; path cases must reject before evidence creation.
+Go/Core cases replace equal-length data strings in copied actual PE images and
+record image/ZIP hashes and replacement counts. They are **NOT different SDK
+build qualification**. No fabricated executable or HTTP service is used.
+
+The counterfactual changes exactly one checksum guard in an owned consumer copy
+and supplies a wrong expected version to prevent runtime discovery. The unchanged
+checksum assertion must become RED (the mutant reaches provenance with one
+version launch); the following original checksum control must pass that same
+assertion. The committed consumer and assertions are never relaxed. No retry,
+skip or missing-script sourceguard counts as behavioral RED/GREEN. The final
+positive uses byte-exact original ZIP/checksums and requires complete provenance,
+two bound daemon generations, reuse, direct crash, eight HTTP 401 observations,
+closed logs and joined daemon cleanup. Each qualifier is limited to 220 seconds,
+with bounded join/drain waits and 64 KiB captured streams. The existing 20-minute
+ordinary job timeout remains unchanged. On an outer timeout or capture error,
+the harness attempts to stop only the retained original PowerShell process object
+and waits at most five seconds for that process. It preserves the primary error
+and records cleanup failures and stream drain status separately in the summary.
+Descendant cleanup is explicitly unverified/incomplete on that path; joining the
+PowerShell process does not prove daemon cleanup or artifact qualification.
+Cancellation/disposal errors cannot replace the original error. Root must inspect
+actual native case timings against the unchanged job budget before approval.
+
+Additional public evidence names are an explicit finite whitelist:
+`bundle-sourcebridge.json`, `bundle-copy-before.json`, `bundle-copy-after.json`,
+`bundle-summary.json`, and `bundle-<case>-{actor,mutation,result}.json` for the
+16 named cases. All except the three early path cases also require
+`bundle-<case>-{receipt,observations}.json`. The parent retains every original
+required record and rejects missing, duplicate or unknown transport records.
+Raw qualifier stdout/stderr remain private; public result records carry their
+hashes, arguments and exit codes. Only the public files are transported, never
+recursive contents of the owned fixture, extracted package or runtime home.
+The existing account drain/removal receipt remains mandatory.
+
+Root must run and inspect CI on the exact candidate commit before approval.
+Use the existing push/PR or reusable-workflow trigger; this worker does not push
+or dispatch CI. After the authorized trigger, these read-only commands locate
+and retrieve proof (replace the explicit placeholders):
+
+```sh
+gh run list --workflow ci.yml --commit <candidate-sha> --json databaseId,headSha,status,conclusion
+gh run watch <run-id> --exit-status
+gh run download <run-id> --name console-snapshot-<run-id>-<attempt>-event-ref --dir <owned-public-evidence>/producer
+gh run download <run-id> --name windows-ordinary-skills-<run-id>-<attempt>-event-ref --dir <owned-public-evidence>/ordinary
+```
+
+These commands use the `event-ref` phase for push/PR defaults and reusable
+callers without `inputs.ref`. A release callee with nonempty `inputs.ref` uses
+`requested-ref`; replace the suffix in both download commands for that phase.
+The three upload names (including `windows-source`) distinguish these two
+phases within the same run/attempt even when both resolve to the same commit.
+This covers the current two-call release contract; multiple callers in the
+same phase are not guaranteed unique names.
+
+Check all original source jobs and assertions, producer five-archive contract
+logs/metadata, download digest outcome, source bridge and before/after hashes,
+all 16 cases including original negative receipts, counterfactual RED, positive
+observations, original CU token evidence and account drain/removal. Then obtain
+an independent Opus review of the exact candidate and native evidence. Local
+actionlint/schema/diff checks establish source consistency only. PowerShell
+parsing, behavioral RED/GREEN, actual producer/native CI and independent review
+are **PENDING** until Root verifies their real outputs. Task37/38/43 remain bounded
+slices; native TUI/ConPTY, providers, full Task38/43, Task44 and release remain
+open. Go 1.27.2 and Core beta.49 remain unchanged; there is no Core publication
+or adoption in this work.
+
+## Core beta.55 adoption and native runtime qualification — 2026-10-15
+
+The current pinned release is [Core v1.1.0-beta.55](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55),
+released from commit `5c098af1d734af1e0dd8b6733f54faa78a2536da` following normal
+[PR 173](https://github.com/batuta-ai/core/pull/173). Public Core
+[PR 172](https://github.com/batuta-ai/core/pull/172) merged `7985226` after CI green
+and administrator authorization. Module public checksum is
+`h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=` and `go.mod` checksum is
+`h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. The module checksum was verified
+through the public Go proxy and checksum database. In separate comparisons against
+Git, all 652 module files matched release commit `5c098af1`; the 306 Go files also
+matched reviewed Core `c963`. Only those Go files were compared with the reviewed
+commit. No replacement directive, global cache modification or CLI upgrade was performed.
+Earlier dated Core 49 qualification records remain historical and do not qualify 55.
+
+### Upstream Core CI and binary provenance limits
+
+Core upstream CI ran clean on Linux Go 1.26.4; macOS Go 1.26.5 and Go 1.27.2 each passed
+4,096 tests across 18 packages with `-race`. A known historical macOS Go 1.26.4 race timeout (15m)
+cause remains unknown; newer SDK passes do not qualify older SDKs.
+Core published binary archives for five targets have verified checksums matching GitHub API
+digests, and metadata revision, version and platform match the release commit, but all record
+`vcs.modified=true` (`v1.1.0-beta.55+dirty`). Exact build tree changes are not captured, and clean
+source or reproducible build is not attested. Commit checksum and archive checksum are distinct.
+These provenance limits are publicly documented in the Core release notes. Qualified stable Core
+and plugin requirements remain unchanged future gates.
+
+Current native runtime requirements supersede the earlier dated pin expectations.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55` with the required
+capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
+executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK contained
+in the Console image, with strict beta55 version, public module checksum and
+no-replacement checks; it does not require an external Core CLI. Native Windows
+qualification remains open. Earlier native package evidence does not qualify beta55.
+
+### Console local bounded proof and unreleased status
+
+Console's SDK adoption and strict native pins received review of the full change and
+deltas. Bounded local checks covered service and integration tests with synthetic providers:
+
+- 119 integration tests passed with `-race`; the unchanged concurrent-start
+  regression passed all 20 executions.
+- 56 Unix service-family tests passed; these do not qualify full native API/TUI operation.
+- Windows strict metadata checks passed 10 subcases under an existing elevated SSH
+  account only; Windows cross-build and `go vet` also passed.
+
+These local bounded checks do not establish full Windows runtime support, real provider qualification, full web/TUI operation, or completion of Task38/43/44/Beta.
+Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954) on candidate `20ae827bbf5ebe72eb46cff986ce5956b92b7321` has finished: all 5 jobs failed. Linux and macOS native API and TUI fixtures still stamp Core 49 or lack capability response; the snapshot verifier escaped regex for 49 rejects 55; ordinary test runs are blocked by the failed producer; Windows also failed (3,530 passing and 22 failing test records, no skips), with detailed analysis pending. The four earlier Windows service failures involving Git exit 128 and Stop remain unresolved. Corrective compatibility work is ongoing.
+Normal CI and bundle qualification remain open. Core publication is finished, but Console publication is not (`v0.1.0-beta.1` is not published or installed). No release-ready claim is made for Console.
+
+## StopA native vs full durable finalization qualification — 2026-10-16
+
+Candidate `b765b0d857154495ea58260d65401244e7aee26c` (all 645 source files
+byte-exact and source-equivalent to qualified `267ff6273b2b21c76f43dc455c23b20512dde74d`)
+addresses session Stop semantics by separating native resource termination from
+full durable finalization:
+- Native resource cleanup (platform-owned termination, leader exit observation,
+  final group sweep or job cleanup, authority retirement, platform-native handle
+  collection or `Cmd.Wait` where an exec child exists, slot release, PTY closure,
+  output reader and subscriber joining) is bounded by an owned waiter at two
+  seconds following the platform-owned stop. Exceeding
+  this following resource wait reports termination uncertainty rather than a
+  permanent definitive error if clean completion occurs later.
+- Full durable finalization additionally runs exit callbacks (`session.exited`),
+  closes transcript logs, cleans private session HOME directories, and performs
+  atomic `session.stopped` catalog persistence. Legacy synchronous calls wait
+  for full completion and may exceed two seconds.
+- Cancellation during finalization returns typed `FinalizationPendingError`
+  (HTTP 503 `stop_pending`), while completed finalization wins over simultaneous
+  cancellation. A pre-canceled request initiates no new stop signaling or catalog
+  mutation. With no stop or full finalization already in
+  flight and no known prior failure, it returns HTTP 500 `stop_failed`. A canceled
+  joiner receives HTTP 503 `stop_pending` while finalization remains pending; a
+  known completed failure returns its stored error.
+- In-flight finalization stays tracked and joinable through Manager `Shutdown`.
+  Only unresolved failure snapshots and errors are retained; no completed success
+  jobs or handles are kept.
+
+### Component proofs and qualification limits
+
+Task 1 approved atomic commit `21554f444c18c3e9d8ea6bb1d6d54a40138906bb`
+and Task 2 approved atomic commit
+`b765b0d857154495ea58260d65401244e7aee26c` as current candidate (all 645 source
+files byte-exact and source-equivalent to qualified `267ff62`). Root qualification
+proofs on component suites:
+- macOS (5 packages): 1,680 PASS with `-race` at `ee67698` (all production bytes exact
+  to `267ff`, only new test environment changed), with final macOS `session` suite
+  recording 107 PASS with `-race`.
+- Ordinary native Windows (Go 1.27.2, CGO_ENABLED=1, `-race`, unprivileged ordinary
+  user token where Administrators is not enabled and Backup/Restore/CreateSymbolicLink
+  privileges are not enabled, joined without force): `session` suite recorded 139
+  PASS with `-race`, and selected `service`, `api`, and `daemon` packages recorded
+  50 PASS with `-race`, 0 fail, 0 skip (645 source files unchanged). Three regressions
+  were verified RED on native Windows before the critical fix and GREEN after.
+
+These proofs are component-level only; Windows is not called fully qualified. They
+do not constitute full native Windows CI qualification, provider runtime
+qualification, Task 43/44 completion, or beta readiness. There is no new CI green
+claim since PR 5 head `5c6` (2026-10-16 history: 5 PR checks green; on the push trigger
+at that same head SHA, cumulative 20-minute package budget exhaustion occurred, with
+no evidence of a single 20-minute flush). Task 43, Task 44, and full-flow release
+gates remain pending.
+
+### Accepted LOW limitation
+
+A Stop catalog persistence write failure that completes before daemon `Shutdown`
+remains caller- and retry-visible in memory and is not added to a later unrelated
+empty drain. If a client has already disconnected and the daemon then exits before
+another call reads that session, this failure may only have existed in memory until
+exit. There is no promise that every prior Stop failure is logged or reported by
+daemon shutdown, and pending finalization does not guarantee eventual success.
+Descriptor errors occurring after admission freeze can remain reported by later
+Shutdown, distinct from completed post-stopped-write failures.

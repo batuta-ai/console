@@ -1,11 +1,14 @@
 package batuta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
@@ -167,6 +170,152 @@ func TestApprovedProjectionPlanDone(t *testing.T) {
 			after, err := os.ReadFile(js.Path(b.DeliveryID))
 			if err != nil || string(before) != string(after) {
 				t.Fatal("projection mutated native journal", err)
+			}
+		})
+	}
+}
+
+func rewriteProjectionOpening(t *testing.T, root string, b domain.MissionBinding, change func(*journal.Record)) domain.MissionBinding {
+	t.Helper()
+	js, err := journal.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := js.Read(b.DeliveryID)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("opening fixture: %v, %v", records, err)
+	}
+	change(&records[0])
+	if err := os.Truncate(js.Path(b.DeliveryID), 0); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := js.Append(b.DeliveryID, records[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.OpenedDigest = opened.Digest
+	return b
+}
+
+func supervisedProjectionFixture(t *testing.T) (string, domain.MissionBinding, domain.PlanApproval) {
+	t.Helper()
+	root, b, a := approvedProjectionFixture(t)
+	b = rewriteProjectionOpening(t, root, b, func(record *journal.Record) {
+		var detail map[string]json.RawMessage
+		if err := json.Unmarshal(record.Detail, &detail); err != nil {
+			t.Fatal(err)
+		}
+		detail["supervision"] = json.RawMessage(`true`)
+		detail["head"] = json.RawMessage(`"` + strings.Repeat("a", 40) + `"`)
+		var err error
+		record.Detail, err = json.Marshal(detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	return root, b, a
+}
+
+func appendProjectionTerminal(t *testing.T, root string, b domain.MissionBinding) {
+	t.Helper()
+	js, err := journal.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.Append(b.DeliveryID, journal.Record{Kind: loop.KindTerminal,
+		Detail: json.RawMessage(`{"state":"done","final_commit":"` + strings.Repeat("b", 40) + `"}`),
+		Graph:  json.RawMessage(`{"tasks":[],"waves":[]}`)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApprovedSnapshotKeepsObservationAcrossPublication(t *testing.T) {
+	root, b, a := supervisedProjectionFixture(t)
+	ctx := context.Background()
+	p, snapshot, err := approvedDeliverySnapshot(ctx, root, b, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := projectApprovedSnapshot(ctx, root, b, p, snapshot)
+	if err != nil || before.Progression == nil || !before.Progression.Required || before.Progression.Cleared || before.Progression.ReviewID != "" {
+		t.Fatalf("before publication: %+v, %v", before, err)
+	}
+	appendProjectionTerminal(t, root, b)
+	captured, err := projectApprovedSnapshot(ctx, root, b, p, snapshot)
+	if err != nil || !reflect.DeepEqual(captured.Progression, before.Progression) || captured.Header["state"] != before.Header["state"] {
+		t.Fatalf("mixed observations: captured=%+v gate=%+v, prior gate=%+v, err=%v", captured.Header, captured.Progression, before.Progression, err)
+	}
+	fresh, err := ProjectApprovedMission(root, b, a)
+	if err != nil || fresh.Progression == nil || !fresh.Progression.Required || fresh.Progression.Cleared || fresh.Progression.ReviewID == "" || fresh.Header["state"] != loop.StateReviewBlocked {
+		t.Fatalf("fresh observation: header=%+v gate=%+v, %v", fresh.Header, fresh.Progression, err)
+	}
+	if len(snapshot.Records()) != 1 || snapshot.Records()[0].Digest != b.OpenedDigest {
+		t.Fatal("publication changed the approved observation")
+	}
+}
+
+func TestApprovedSnapshotDoesNotReopenJournal(t *testing.T) {
+	root, b, a := supervisedProjectionFixture(t)
+	ctx := context.Background()
+	p, snapshot, err := approvedDeliverySnapshot(ctx, root, b, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, journal.Dir, b.DeliveryID+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	view, err := projectApprovedSnapshot(ctx, root, b, p, snapshot)
+	if err != nil || !view.Available || view.Progression == nil || !view.Progression.Required || view.Progression.Cleared {
+		t.Fatalf("captured projection reopened journal: %+v, %v", view, err)
+	}
+	if _, err := ProjectApprovedMission(root, b, a); !errors.Is(err, ErrArtifactMissing) {
+		t.Fatalf("fresh projection ignored missing journal: %v", err)
+	}
+}
+
+func TestApprovedSnapshotRevalidatesCurrentReviewEvidence(t *testing.T) {
+	root, b, a := supervisedProjectionFixture(t)
+	appendProjectionTerminal(t, root, b)
+	ctx := context.Background()
+	p, snapshot, err := approvedDeliverySnapshot(ctx, root, b, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := projectApprovedSnapshot(ctx, root, b, p, snapshot)
+	if err != nil || view.Progression == nil || view.Progression.ReviewID == "" || view.Progression.Cleared {
+		t.Fatalf("pending review: %+v, %v", view.Progression, err)
+	}
+	path := filepath.Join(root, ".batuta", "reviews", "supervision", view.Progression.ReviewID, "job.json")
+	if err := os.WriteFile(path, []byte("corrupt current review evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	view, err = projectApprovedSnapshot(ctx, root, b, p, snapshot)
+	if !errors.Is(err, ErrArtifactIO) || view.Source != domain.SourceUnavailable || view.Available {
+		t.Fatalf("captured journal hid corrupt current review: %+v, %v", view, err)
+	}
+}
+
+func TestApprovedObservationRejectsRechainedForeignIdentity(t *testing.T) {
+	for _, field := range []string{"slug", "plan_path", "plan_digest", "workspace", "approval_receipt_id", "plan_content_digest"} {
+		t.Run(field, func(t *testing.T) {
+			root, b, a := approvedProjectionFixture(t)
+			b = rewriteProjectionOpening(t, root, b, func(record *journal.Record) {
+				var detail map[string]string
+				if err := json.Unmarshal(record.Detail, &detail); err != nil {
+					t.Fatal(err)
+				}
+				detail[field] = "foreign"
+				var err error
+				record.Detail, err = json.Marshal(detail)
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+			if _, err := ValidateApprovedDelivery(root, b, a); !errors.Is(err, ErrArtifactInvalid) {
+				t.Fatalf("approved foreign %s: %v", field, err)
+			}
+			if view, err := ProjectApprovedMission(root, b, a); !errors.Is(err, ErrArtifactInvalid) || view.Available {
+				t.Fatalf("projected foreign %s: %+v, %v", field, view, err)
 			}
 		})
 	}

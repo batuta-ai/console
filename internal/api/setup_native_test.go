@@ -22,6 +22,7 @@ import (
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/service"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 // The fixture uses a native TLS provider response and protected synthetic files.
@@ -53,6 +54,9 @@ func authenticateInitHTTPAccountWithStatus(t *testing.T, svc *service.Service, a
 		config, name = ".claude", ".credentials.json"
 	}
 	data, _ := json.Marshal(payload)
+	if err := testfixture.PreparePrivateFile(filepath.Join(ad.IsolateDir(svc.Home, account.ID), config, name)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(ad.IsolateDir(svc.Home, account.ID), config, name), data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -136,14 +140,14 @@ func TestExplicitInitNativeHTTP(t *testing.T) {
 	for _, adapter := range []string{"codex", "claude"} {
 		t.Run(adapter, func(t *testing.T) {
 			h, svc := testServer(t)
-			cliDir := t.TempDir()
+			cliDir := testfixture.PrivateHome(t)
 			banner := "codex-cli 0.160.0"
 			if adapter == "claude" {
 				banner = "2.1.289 (Claude Code)"
 			}
-			cli := filepath.Join(cliDir, adapter)
+			cli := filepath.Join(cliDir, testfixture.ExecutableName(adapter))
 			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" + banner + "'; exit 0; fi\n[ -t 0 ] && [ -t 1 ] || exit 91\nwhile IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done\n"
-			if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
+			if err := testfixture.WriteScript(t, cli, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cliDir)
@@ -172,7 +176,7 @@ func TestExplicitInitNativeHTTP(t *testing.T) {
 			}
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(row domain.Session) { onExit(row); done <- row }
+			svc.Session.OnExit = func(row domain.Session) error { err := onExit(row); done <- row; return err }
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

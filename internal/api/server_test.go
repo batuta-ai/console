@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -122,13 +123,28 @@ func TestValidateDraftDoesNotSave(t *testing.T) {
 	}
 }
 
+func logAPIStopFailureStacks(t *testing.T) {
+	if !t.Failed() {
+		return
+	}
+	for size := 64 * 1024; ; size *= 2 {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			t.Logf("API stop failure goroutine diagnostic (before fixture cleanup):\n%s", buf[:n])
+			return
+		}
+	}
+}
+
 func TestSessionReconnect(t *testing.T) {
+	defer logAPIStopFailureStacks(t)
 	h, svc := testServer(t)
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	sess := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": []string{"/bin/sleep", "10"}, "owner": "tui", "client": "c1"}, 200)
+	sess := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "10"}), "owner": "tui", "client": "c1"}, 200)
 	id := sess["id"].(string)
 	if sess["process"] != "running" {
 		t.Fatalf("%v", sess)
@@ -179,11 +195,14 @@ func TestTwoCodexAccountsIndependent(t *testing.T) {
 	a2 := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Home", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": a1["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	dir := t.TempDir()
-	f1 := filepath.Join(dir, "home1")
-	f2 := filepath.Join(dir, "home2")
-	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f1 + "; sleep 4"}, "owner": "tui", "client": "c1"}, 200)
-	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + f2 + "; sleep 4"}, "owner": "web", "client": "c2"}, 200)
+	dir := filepath.Join(t.TempDir(), "account output's")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f1 := filepath.ToSlash(filepath.Join(dir, "home1"))
+	f2 := filepath.ToSlash(filepath.Join(dir, "home2"))
+	s1 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a1["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + "'" + strings.ReplaceAll(f1, "'", "'\"'\"'") + "'; sleep 4"}), "owner": "tui", "client": "c1"}, 200)
+	s2 := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a2["id"], "argv": testfixture.Argv(t, []string{"/bin/sh", "-c", "printf %s \"$HOME\" > " + "'" + strings.ReplaceAll(f2, "'", "'\"'\"'") + "'; sleep 4"}), "owner": "web", "client": "c2"}, 200)
 	if s1["process"] != "running" || s2["process"] != "running" {
 		t.Fatalf("both accounts must run: %v %v", s1, s2)
 	}
@@ -208,6 +227,7 @@ func TestTwoCodexAccountsIndependent(t *testing.T) {
 }
 
 func TestAccountSessionCap(t *testing.T) {
+	defer logAPIStopFailureStacks(t)
 	h, _ := testServer(t)
 	ws := post(t, h, "/v0/workspaces", map[string]string{"name": "shop", "root": t.TempDir()}, 200)
 	a := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
@@ -215,10 +235,10 @@ func TestAccountSessionCap(t *testing.T) {
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
 	var ids []string
 	for i := 0; i < 3; i++ {
-		s := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": []string{"/bin/sleep", "8"}, "owner": "tui", "client": "c"}, 200)
+		s := post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "8"}), "owner": "tui", "client": "c"}, 200)
 		ids = append(ids, s["id"].(string))
 	}
-	req, rec := postRaw(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": []string{"/bin/sleep", "1"}, "owner": "tui", "client": "c"})
+	req, rec := postRaw(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "account_id": a["id"], "argv": testfixture.Argv(t, []string{"/bin/sleep", "1"}), "owner": "tui", "client": "c"})
 	if rec != 400 {
 		t.Fatalf("4th session on cap-3 account must fail, got %d %s", rec, req)
 	}
@@ -358,7 +378,7 @@ func TestNaturalExitIsExited(t *testing.T) {
 	acct := post(t, h, "/v0/accounts", map[string]string{"label": "Codex Work", "adapter": "codex"}, 200)
 	sq := post(t, h, "/v0/squads", map[string]any{"name": "Web", "members": []map[string]any{{"role": "Maestro", "cli": "codex", "account_id": acct["id"], "maestro": true}}}, 200)
 	msn := post(t, h, "/v0/missions", map[string]any{"workspace_id": ws["id"], "title": "Checkout", "squad_id": sq["id"]}, 200)
-	post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": []string{"/usr/bin/true"}, "owner": "tui", "client": "c1"}, 200)
+	post(t, h, "/v0/sessions", map[string]any{"mission_id": msn["id"], "argv": testfixture.Argv(t, []string{"/usr/bin/true"}), "owner": "tui", "client": "c1"}, 200)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		list := get(t, h, "/v0/sessions").([]any)
@@ -476,9 +496,10 @@ func TestSessionPersistenceBoundaries(t *testing.T) {
 			h := (&Server{Svc: svc, Token: "test-token"}).Handler()
 			sess := domain.Session{ID: "s", Process: "running", Owner: "old", Argv: []string{"/bin/cat"}}
 			if mode != "list-write" {
+				sess.Argv = testfixture.Argv(t, sess.Argv)
 				done := make(chan struct{})
 				onExit := svc.Session.OnExit
-				svc.Session.OnExit = func(s domain.Session) { onExit(s); close(done) }
+				svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); close(done); return err }
 				sess, err = svc.Session.Start(sess, nil, t.TempDir())
 				if err != nil {
 					t.Fatal(err)

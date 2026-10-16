@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -181,7 +180,21 @@ func TestOnExitReportsAtomicFailure(t *testing.T) {
 	defer log.SetOutput(previous)
 	exited := old
 	exited.Process = "exited"
-	svc.Session.OnExit(exited)
+	if err := svc.Session.OnExit(exited); err == nil || !strings.Contains(err.Error(), "event rejected") {
+		t.Fatalf("exit callback hid atomic failure: %v", err)
+	}
+	old.Argv = testfixture.Argv(t, []string{"/bin/cat"})
+	if _, err := svc.Session.Start(old, nil, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := svc.Session.Shutdown(context.Background()); err == nil || !strings.Contains(err.Error(), "event rejected") {
+			t.Errorf("shutdown lost durable callback failure: %v", err)
+		}
+	}()
+	if stopped, err := svc.Session.Stop(old.ID); err == nil || !strings.Contains(err.Error(), "event rejected") || stopped.Process != "exited" || stopped.EndedAt == nil {
+		t.Fatalf("Stop hid durable callback failure or actual exit: %+v %v", stopped, err)
+	}
 	got, err := svc.Store.GetSession(old.ID)
 	if err != nil || got.Process != "running" {
 		t.Errorf("exit write not rolled back: %+v %v", got, err)
@@ -206,8 +219,8 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			svc, db := persistenceSvc(t)
 			root := t.TempDir()
 			t.Setenv("BATUTA_SKILLS", installedSkillFixture(t, t.TempDir(), "batuta", "batuta-init", "batuta-plan"))
-			cli := t.TempDir()
-			if err := os.WriteFile(filepath.Join(cli, "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
+			cli := testfixture.PrivateHome(t)
+			if err := testfixture.WriteScript(t, filepath.Join(cli, testfixture.ExecutableName("codex")), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nexec /bin/cat\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", cli)
@@ -234,7 +247,7 @@ func TestSpawnPersistenceFailureStopsProcess(t *testing.T) {
 			authenticateFixtureAccount(t, svc, a, "A")
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			rejectEvents(t, db)
 			var live domain.Session
 			switch mode {
@@ -271,7 +284,7 @@ func TestReusePersistenceFailureReturned(t *testing.T) {
 			svc, db, a, w := f.svc, f.db, f.account, f.workspace
 			done := make(chan domain.Session, 1)
 			onExit := svc.Session.OnExit
-			svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			argv := testfixture.Argv(t, []string{"/bin/cat"})
 			if mode == "init" {
 				answers, err := confirmedInitAnswers(confirmedFixtureInput(a.ID).Config, "brief")

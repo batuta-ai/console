@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
@@ -10,24 +11,29 @@ import (
 )
 
 func (s *Service) projectMission(ctx context.Context, mission, workspace string, b domain.MissionBinding) (domain.WatchView, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Second, batuta.ErrArtifactIO)
+	defer cancel()
 	if b.DeliveryID == "" {
-		return batuta.ProjectMission(b.CanonicalRoot, b)
+		return batuta.ProjectMissionContext(ctx, b.CanonicalRoot, b)
 	}
-	reference, err := batuta.DeliveryApprovalReference(b.CanonicalRoot, b)
+	reference, err := batuta.DeliveryApprovalReferenceContext(ctx, b.CanonicalRoot, b)
 	if err != nil {
 		return domain.WatchView{API: "v0", Workspace: b.WorkspaceRoot, Delivery: b.DeliveryID, Source: domain.SourceUnavailable}, err
 	}
 	if reference.ReceiptID == "" {
-		return batuta.ProjectMission(b.CanonicalRoot, b)
+		return batuta.ProjectMissionContext(ctx, b.CanonicalRoot, b)
 	}
 	receipt, err := s.Store.GetPlanApproval(ctx, mission, workspace, reference.ReceiptID)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil && (errors.Is(err, cause) || errors.Is(err, ctx.Err())) {
+			return domain.WatchView{Source: domain.SourceUnavailable}, cause
+		}
 		return domain.WatchView{API: "v0", Workspace: b.WorkspaceRoot, Delivery: b.DeliveryID, Source: domain.SourceUnavailable}, errors.Join(batuta.ErrArtifactInvalid, err)
 	}
 	if receipt.Identity.Version != reference.Version {
 		return domain.WatchView{}, batuta.ErrArtifactInvalid
 	}
-	return batuta.ProjectApprovedMission(b.CanonicalRoot, b, receipt)
+	return batuta.ProjectApprovedMissionContext(ctx, b.CanonicalRoot, b, receipt)
 }
 
 func (s *Service) executionApproval(ctx context.Context, req domain.ExecutionRequest) (domain.PlanApproval, error) {
@@ -137,7 +143,7 @@ func (s *Service) ExecutionState(ctx context.Context, mission, workspace, approv
 		s.native.mu.Unlock()
 	}
 	b.DeliveryID = delivery
-	opened, err := batuta.ValidateApprovedDelivery(canonical, b, receipt)
+	opened, err := batuta.ValidateApprovedDeliveryContext(ctx, canonical, b, receipt)
 	if errors.Is(err, batuta.ErrArtifactMissing) && !out.Bound {
 		return out, nil
 	}
@@ -146,7 +152,7 @@ func (s *Service) ExecutionState(ctx context.Context, mission, workspace, approv
 	}
 	b.OpenedDigest = opened
 	out.OpenedDigest = opened
-	view, err := batuta.ProjectApprovedMission(canonical, b, receipt)
+	view, err := batuta.ProjectApprovedMissionContext(ctx, canonical, b, receipt)
 	if err != nil {
 		return out, err
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	stdruntime "runtime"
 
 	"github.com/batuta-ai/console/internal/buildinfo"
 	"github.com/batuta-ai/console/internal/client"
@@ -64,7 +65,11 @@ func startDaemon(paths runtime.Paths) error {
 		if err2 != nil {
 			return err
 		}
-		cand := filepath.Join(filepath.Dir(self), "consoled")
+		name := "consoled"
+		if stdruntime.GOOS == "windows" {
+			name += ".exe"
+		}
+		cand := filepath.Join(filepath.Dir(self), name)
 		if _, err3 := os.Stat(cand); err3 != nil {
 			return err
 		}

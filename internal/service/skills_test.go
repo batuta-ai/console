@@ -10,6 +10,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/adapters"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func installedSkillFixture(t *testing.T, collection string, names ...string) string {
@@ -40,7 +41,7 @@ func nativeSkillFixture(t *testing.T, adapter string) (string, []string, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := ad.IsolateEnv(t.TempDir(), domain.Account{ID: "selected", Adapter: adapter})
+	env, err := ad.IsolateEnv(testfixture.PrivateHome(t), domain.Account{ID: "selected", Adapter: adapter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,14 +68,15 @@ func TestNativeSkillPreparation(t *testing.T) {
 				if err != nil || !p.Enabled {
 					t.Fatalf("prepare=%+v %v", p, err)
 				}
-				cmd := exec.Command("/bin/sh", "-c", `unset BATUTA_SKILLS; for name in batuta batuta-init batuta-plan batuta-review custom-selected; do test -f "$1/$name/SKILL.md" || exit 41; done; test -d "$1/batuta/adapters" || exit 42; test ! -e "$1/custom-unrelated" || exit 43`, "native-discovery", native)
-				cmd.Env = append(slices.Clone(env), "PATH=/usr/bin:/bin")
+				argv := testfixture.Argv(t, []string{"/bin/sh", "-c", `unset BATUTA_SKILLS; for name in batuta batuta-init batuta-plan batuta-review custom-selected; do test -f "$1/$name/SKILL.md" || exit 41; done; test -d "$1/batuta/adapters" || exit 42; test ! -e "$1/custom-unrelated" || exit 43`, "native-discovery", native})
+				cmd := exec.Command(argv[0], argv[1:]...)
+				cmd.Env = testfixture.TerminalEnvironment(t, append(slices.Clone(env), "PATH=/usr/bin:/bin"))
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("native subprocess discovery: %v %s", err, out)
 				}
 				for _, name := range []string{"batuta", "batuta-init", "batuta-plan", "batuta-review", "custom-selected"} {
-					target, err := filepath.EvalSymlinks(filepath.Join(native, name))
-					want, _ := filepath.EvalSymlinks(filepath.Join(collection, name))
+					target, err := testfixture.ResolvePath(filepath.Join(native, name))
+					want, _ := testfixture.ResolvePath(filepath.Join(collection, name))
 					if err != nil || target != want {
 						t.Errorf("%s -> %s want %s: %v", name, target, want, err)
 					}
@@ -214,12 +216,12 @@ func TestServiceSkillsRejectBeforeSpawn(t *testing.T) {
 					t.Setenv("BATUTA_SKILLS", filepath.Join(collection, "missing"))
 				}
 				if kind == "conflict" {
-					if err := os.MkdirAll(filepath.Join(native, "batuta"), 0700); err != nil {
+					if err := testfixture.MakePrivateDirectoryAll(filepath.Join(native, "batuta"), 0700); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if kind == "symlink-parent" {
-					if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
+					if err := testfixture.MakePrivateDirectoryAll(filepath.Dir(native), 0700); err != nil {
 						t.Fatal(err)
 					}
 					if err := os.Symlink(t.TempDir(), native); err != nil {
@@ -280,6 +282,9 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				}
 				configPath := filepath.Join(accountHome, config)
 				settingsPath := filepath.Join(configPath, settings)
+				if err := testfixture.PreparePrivateFile(settingsPath); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.WriteFile(settingsPath, []byte("synthetic-caller-settings"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -288,6 +293,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				checkCallerFiles := snapshotCallerFiles(t, credentialPath, settingsPath)
 				inject := mode != "off"
 				var sess domain.Session
 				switch mode {
@@ -321,7 +327,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 					t.Fatalf("native set=%v want=%v", record.NativeSkills, want)
 				}
 				for _, name := range want {
-					target, _ := filepath.EvalSymlinks(filepath.Join(root, "skills", name))
+					target, _ := testfixture.ResolvePath(filepath.Join(root, "skills", name))
 					if record.NativeSkills[name] != target {
 						t.Errorf("native skill %s=%q want %q", name, record.NativeSkills[name], target)
 					}
@@ -337,12 +343,7 @@ func TestServiceNativeSkillsLaunch(t *testing.T) {
 				if err != nil || string(data) != "synthetic-caller-settings" {
 					t.Fatal("settings changed")
 				}
-				for _, path := range []string{credentialPath, settingsPath} {
-					info, err := os.Stat(path)
-					if err != nil || info.Mode().Perm() != 0600 {
-						t.Fatal("caller file mode changed")
-					}
-				}
+				checkCallerFiles()
 				persisted, err := svc.Store.GetSession(sess.ID)
 				if err != nil || persisted.AccountID != account.ID || persisted.BatutaInjected != sess.BatutaInjected || !slices.Equal(persisted.Argv, sess.Argv) {
 					t.Fatalf("catalog drift: %+v %v", persisted, err)
@@ -384,7 +385,7 @@ func TestServiceNativeSkillsCustomLaunch(t *testing.T) {
 			if err := os.WriteFile(credential, sentinel, 0600); err != nil {
 				t.Fatal(err)
 			}
-			argv := []string{filepath.Join(os.Getenv("PATH"), adapter), "literal; $(no-exec)"}
+			argv := []string{filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName(adapter)), "literal; $(no-exec)"}
 			sess, err := svc.StartSession(StartSessionIn{MissionID: mission.ID, AccountID: account.ID, Adapter: adapter, Argv: argv})
 			if err != nil {
 				t.Fatal(err)
@@ -397,7 +398,10 @@ func TestServiceNativeSkillsCustomLaunch(t *testing.T) {
 				t.Fatalf("native skill set: %+v", record.NativeSkills)
 			}
 			for _, name := range []string{"batuta", "batuta-init", "batuta-plan", "custom-selected"} {
-				want, _ := filepath.EvalSymlinks(filepath.Join(root, "skills", name))
+				want, resolveErr := testfixture.ResolvePath(filepath.Join(root, "skills", name))
+				if resolveErr != nil {
+					t.Fatal("resolve selected custom skill source", resolveErr)
+				}
 				if record.NativeSkills[name] != want {
 					t.Errorf("%s source mismatch", name)
 				}

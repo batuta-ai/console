@@ -3,13 +3,14 @@ package service
 import (
 	"bytes"
 	"log"
-	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
@@ -17,8 +18,8 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := admissionSetup(t, 1)
 			// The shell exits only on an explicit PTY message.
-			cli := filepath.Join(filepath.Dir(f.launches), "codex")
-			if err := os.WriteFile(cli, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nread line\n"), 0755); err != nil {
+			cli := filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex"))
+			if err := testfixture.RewriteScript(t, cli, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; exit 0; fi\nread line\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
@@ -27,7 +28,7 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 			defer log.SetOutput(previous)
 			done := make(chan domain.Session, 4)
 			onExit := f.svc.Session.OnExit
-			f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			live, err := f.start()
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +59,12 @@ func TestExitFailureReleasesRuntimeAdmission(t *testing.T) {
 				t.Fatalf("runtime admission leaked behind stale row: %v", err)
 			}
 			sqlExec(t, f.db, "DROP TRIGGER reject_exit")
-			if _, err := f.svc.StopSession(next.ID); err != nil {
+			if stopped, err := f.svc.StopSession(next.ID); err != nil {
+				stacks := make([]byte, 256<<10)
+				n := runtime.Stack(stacks, true)
+				t.Logf("second Stop failure mode=%q first_launch_id=%q first_pid=%d first_identity=%q second_launch_id=%q second_pid=%d second_identity=%q error=%v", mode, live.ID, live.PID, live.ProcessIdentity, next.ID, next.PID, next.ProcessIdentity, err)
+				t.Logf("returned Stop snapshot id=%q pid=%d identity=%q process=%q ended_at=%v", stopped.ID, stopped.PID, stopped.ProcessIdentity, stopped.Process, stopped.EndedAt)
+				t.Logf("second Stop all-goroutine stacks captured=%d limit=%d truncated=%t\n%s", n, len(stacks), n == len(stacks), stacks[:n])
 				t.Fatal(err)
 			}
 			waitExit(t, done)
@@ -73,11 +79,11 @@ func TestTerminatedPendingInitialPersistence(t *testing.T) {
 				f := admissionSetup(t, 1)
 				done := make(chan domain.Session, 1)
 				onExit := f.svc.Session.OnExit
-				f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+				f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 				if exitFailure {
 					sqlExec(t, f.db, `CREATE TRIGGER reject_exit BEFORE INSERT ON events WHEN NEW.kind='session.exited' BEGIN SELECT RAISE(ABORT,'exit rejected'); END`)
 				}
-				pending, err := f.svc.Session.StartPending(domain.Session{ID: "late", AccountID: f.account.ID, Argv: []string{"/usr/bin/true"}}, nil, "", 1)
+				pending, err := f.svc.Session.StartPending(domain.Session{ID: "late", AccountID: f.account.ID, Argv: testfixture.Argv(t, []string{"/usr/bin/true"})}, nil, "", 1)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -119,12 +125,12 @@ func TestImmediateExitStartPaths(t *testing.T) {
 	for _, mode := range []string{"session", "login", "init"} {
 		t.Run(mode, func(t *testing.T) {
 			f := admissionSetup(t, 1)
-			if err := os.WriteFile(filepath.Join(filepath.Dir(f.launches), "codex"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; fi\nexit 0\n"), 0755); err != nil {
+			if err := testfixture.RewriteScript(t, filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex")), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'codex-cli 0.160.0'; fi\nexit 0\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
 			done := make(chan domain.Session, 1)
 			onExit := f.svc.Session.OnExit
-			f.svc.Session.OnExit = func(s domain.Session) { onExit(s); done <- s }
+			f.svc.Session.OnExit = func(s domain.Session) error { err := onExit(s); done <- s; return err }
 			for range 10 {
 				var live domain.Session
 				var err error

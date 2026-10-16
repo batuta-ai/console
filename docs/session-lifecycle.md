@@ -126,28 +126,76 @@ Other observation/signaling/cleanup errors are returned or logged, not silently
 reported as successful group termination.
 
 The terminal snapshot and physical `EndedAt` follow the leader's actual wait,
-not the kill request. Stop waits up to two seconds for callback and descriptor
-cleanup, returning an error if completion is still pending. The latest terminal
-snapshot and released runtime slot survive catalog persistence failure; the
-service logs its write error. Leader exit does not by itself prove successful
-group cleanup, so a terminal snapshot may accompany a cleanup error.
+not the kill request. Stop separates native resource termination from full
+durable finalization. The native phase immediately revokes terminal input and
+invokes platform-owned process termination; it then awaits leader exit
+observation, final group sweep or job cleanup, and authority retirement, with
+platform-native handle collection or `Cmd.Wait` where an exec child exists,
+account capacity reservation release, PTY master descriptor closure, and joining
+output readers and terminal subscribers within an owned
+two-second resource waiter. This two-second timer bounds only that following
+resource wait, not the prior platform-owned stop, the entire native phase, or
+the whole Stop method, and does not bound exit callbacks or catalog
+persistence. Exceeding the two-second resource wait reports a native incomplete
+error reflecting termination uncertainty; that error is not retained as definitive
+if clean completion actually occurs later.
+
+Full durable finalization encompasses the native phase, followed by execution of
+`OnExit` (which persists the atomic `session.exited` catalog row and event),
+closing the transcript log, and removing private session HOME directories.
+At the Service level, `StopSessionContext` / `StopAndFinalize` additionally reads
+the session from the catalog (`Store.GetSession`) and writes the atomic
+`session.stopped` catalog row and event. Legacy `Manager.Stop` and
+`Service.StopSession` run foreground synchronous waits with a Background context
+through required actual completion and may exceed two seconds.
+
+Context-aware stop (`StopContext`, `StopSessionContext`) stops foreground
+waiting only after the native-stop phase has returned. Cancellation during or
+prior to the native phase does not truncate the native stop or resource cleanup
+budgets. If the context is canceled while full finalization is still pending, the
+call returns `FinalizationPendingError` carrying the `SessionID` and cancellation
+`Cause` alongside the latest truthful snapshot and any joined native or cleanup
+errors; it never returns durable success. Completion takes precedence over
+simultaneous cancellation: if finalization finishes concurrently as
+cancellation arrives, truthful completion is returned. A pre-expired or
+pre-canceled context initiates no new stop signaling or catalog mutation.
+
+Concurrent stop calls for the same session join the single in-flight finalization
+job and receive its result. In-flight stop work stays tracked and joinable
+through Manager `Shutdown`; callback resources and catalog storage must stay
+alive until draining completes. Manager does not accumulate an unlimited history
+of completed successful jobs, handles, or goroutines: only unresolved failure
+snapshots and errors are retained. A known completed failure remains visible on
+a canceled retry, and known native or owned callback failures are preserved.
+A completed foreground stopped-write failure remains caller- and retry-visible
+without poisoning a later unrelated empty drain, and active stop failures during
+drain are reported. If a client disconnects before a Stop persistence failure
+completes, and the daemon then exits before another call reads it, that failure
+may only have existed in memory; there is no promise that every prior Stop
+failure is logged or reported by daemon shutdown, nor does pending finalization
+promise automatic retry or eventual success. Active Stop persistence errors
+from catalog-only `ReconcileSession` reach Shutdown, and no historical PID
+authority is adopted. Clean leader exit does not by itself prove successful group
+cleanup, so a terminal snapshot may accompany a cleanup error.
 
 On SIGINT, SIGTERM, or a serving failure, the daemon permanently closes Manager
 admission. Starts already admitted but not yet published are included in drain;
 when they publish, they are stopped through their original owned authority.
-The daemon waits for leader collection, exit callbacks, PTY readers and file
-closure before closing the catalog. It also bounds HTTP shutdown within the
+Shutdown sets a draining flag: while admission is closed against new starts,
+already owned processes are stopped and drained. The daemon waits for leader
+collection, exit callbacks, PTY readers, file closure, and active stop
+finalizers before closing the catalog. It also bounds HTTP shutdown within the
 same five-second budget. Cleanup failures or expiry produce a nonzero daemon
 exit. On timeout, callbacks/handlers may still be active: the catalog is left
 open until process exit rather than being closed underneath them. A timeout is
 not a claim of complete cleanup. Manager callers can wait again with a new
 context, and must keep callback resources alive until draining completes.
 Callbacks and subscriber functions must return for a complete drain. Every
-cleanup error is logged, and Stop reports its session's failure. Manager retains
-the first unresolved group/wait failure and the first current drain failure,
-without accumulating an unlimited error history. A descriptor failure from a
-completed earlier session remains reported to its Stop caller but does not make
-a later empty drain fail.
+cleanup error is logged, and Stop reports its session's failure. Unresolved
+group/wait failures, drain failures, and finalization failures are joined
+rather than dropping errors via a first-error-only filter. A descriptor failure
+from a completed earlier session remains reported to its Stop caller but does
+not make a later empty drain fail.
 
 Recovered catalog-only rows and unrelated OS processes are never part of this
 drain. Clean shutdown persists current owned exits before the next startup

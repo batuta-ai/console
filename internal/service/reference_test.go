@@ -11,6 +11,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 )
 
 func referenceSetup(t *testing.T) admissionFixture {
@@ -246,7 +247,7 @@ func TestSnapshotInheritanceAndHistoricalLaunch(t *testing.T) {
 			off := false
 			in := StartSessionIn{MissionID: m.ID, Inject: &off}
 			if wantAccount == "" {
-				in.Argv = []string{filepath.Join(filepath.Dir(f.launches), "codex")}
+				in.Argv = []string{filepath.Join(filepath.Dir(f.launches), testfixture.ExecutableName("codex"))}
 			}
 			sess, err := f.svc.StartSession(in)
 			if err != nil {

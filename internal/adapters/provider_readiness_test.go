@@ -266,7 +266,7 @@ func TestCredentialFilesMustBePrivateAndNotLinked(t *testing.T) {
 			path := filepath.Join(home, "accounts", account.ID, ".claude", ".credentials.json")
 			switch mode {
 			case "open-permissions":
-				if err := os.Chmod(path, 0644); err != nil {
+				if err := testfixture.MakeCredentialWorldReadable(path); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink":
@@ -304,7 +304,7 @@ func TestReadinessHasOneOverallDeadline(t *testing.T) {
 	}))
 	checker, _, home, account, _ := authFixture(t, "claude", client)
 	script := "#!/bin/sh\n/bin/sleep 3\nprintf '%s\\n' '2.1.289 (Claude Code)'\n"
-	if err := os.WriteFile(filepath.Join(os.Getenv("PATH"), "claude"), []byte(script), 0700); err != nil {
+	if err := testfixture.RewriteScript(t, filepath.Join(os.Getenv("PATH"), testfixture.ExecutableName("claude")), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -327,14 +327,9 @@ func TestReadinessPreservesConsoleHomeAndRejectsUnsafePrivateHome(t *testing.T) 
 			if mode == "private-writable" {
 				path, perm = filepath.Join(home, "accounts", account.ID), 0777
 			}
-			if err := os.Chmod(path, perm); err != nil {
-				t.Fatal(err)
-			}
+			unchanged := prepareReadinessPermissions(t, path, perm)
 			got := checker.Check(context.Background(), home, account)
-			info, err := os.Stat(path)
-			if err != nil || info.Mode().Perm() != perm {
-				t.Fatalf("readiness changed existing permissions: %v %v", info, err)
-			}
+			unchanged()
 			if mode == "console-readable" {
 				if !got.Ready || requests.Load() != 1 {
 					t.Fatalf("safe Console root rejected: %+v requests=%d", got, requests.Load())

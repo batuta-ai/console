@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
@@ -15,6 +16,12 @@ type MissionBindingRequest struct {
 }
 
 func (s *Service) BindMission(id string, req MissionBindingRequest) (domain.Mission, error) {
+	return s.BindMissionContext(context.Background(), id, req)
+}
+
+func (s *Service) BindMissionContext(ctx context.Context, id string, req MissionBindingRequest) (domain.Mission, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Second, batuta.ErrArtifactIO)
+	defer cancel()
 	m, ws, err := s.missionWorkspace(id, req.WorkspaceID)
 	if err != nil {
 		return m, err
@@ -38,7 +45,7 @@ func (s *Service) BindMission(id string, req MissionBindingRequest) (domain.Miss
 	}
 	binding := domain.MissionBinding{WorkspaceID: ws.ID, WorkspaceRoot: ws.Root, CanonicalRoot: canonical, PlanPath: plan.Path, PlanSlug: plan.Slug, PlanDigest: plan.Set.Digest, DeliveryID: req.DeliveryID}
 	if req.DeliveryID != "" {
-		binding.OpenedDigest, err = batuta.ValidateDelivery(canonical, binding)
+		binding.OpenedDigest, err = batuta.ValidateDeliveryContext(ctx, canonical, binding)
 		if err != nil {
 			return m, err
 		}
@@ -70,6 +77,10 @@ func (s *Service) missionWorkspace(id, workspaceID string) (domain.Mission, doma
 
 // WatchMission never invokes workspace discovery or chooses a delivery.
 func (s *Service) WatchMission(id, workspaceID, deliveryID string) (domain.WatchView, error) {
+	return s.WatchMissionContext(context.Background(), id, workspaceID, deliveryID)
+}
+
+func (s *Service) WatchMissionContext(ctx context.Context, id, workspaceID, deliveryID string) (domain.WatchView, error) {
 	m, ws, err := s.missionWorkspace(id, workspaceID)
 	if err != nil {
 		return domain.WatchView{}, err
@@ -98,7 +109,7 @@ func (s *Service) WatchMission(id, workspaceID, deliveryID string) (domain.Watch
 		out.Message = "workspace_changed"
 		return out, nil
 	}
-	view, err := s.projectMission(context.Background(), m.ID, ws.ID, *m.Binding)
+	view, err := s.projectMission(ctx, m.ID, ws.ID, *m.Binding)
 	view.Workspace = ws.Root
 	view.MissionID = m.ID
 	view.WorkspaceID = ws.ID
@@ -106,6 +117,9 @@ func (s *Service) WatchMission(id, workspaceID, deliveryID string) (domain.Watch
 	if view.PendingQuestion != nil {
 		view.PendingQuestion.Target.MissionID = m.ID
 		view.PendingQuestion.Target.WorkspaceID = ws.ID
+	}
+	if cause := context.Cause(ctx); cause != nil && errors.Is(err, cause) {
+		return view, cause
 	}
 	if errors.Is(err, batuta.ErrArtifactMissing) {
 		view.Message = "artifact_missing"
