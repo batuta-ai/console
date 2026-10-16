@@ -171,15 +171,47 @@ try {
     $overlay = Join-Path $Evidence 'baseline-overlay.json'
     @{ Replace = @{ $helper = $baselineHelper } } | ConvertTo-Json | Set-Content $overlay
     $pairHashes = @{}
+    if ($env:GITHUB_REF -ceq 'refs/heads/batuta/windows-go-list-recurrence') {
+        $task43GraphRun = @{ metadataAttempted = $false; comparisonAttempted = $false; loaded = $false }
+        try {
+            . (Join-Path $PSScriptRoot 'task43-go-graph-diagnostic.ps1')
+            $task43GraphRun.loaded = $true
+        } catch {
+            Write-Warning "Graph diagnostic load failed: $($_.Exception.Message)"
+            try { $_.Exception.Message | Set-Content (Join-Path $Evidence 'task43-diagnostic-load-error.txt') }
+            catch { Write-Warning "Graph diagnostic error persistence failed: $($_.Exception.Message)" }
+        }
+    }
     foreach ($variant in @('baseline', 'candidate')) {
         $prefix = "temp-$variant"
         $pairBinary = Join-Path $stage "$prefix.test.exe"
         $flags = @('-tags', 'console_ordinary_user')
         if ($variant -ceq 'baseline') { $flags += "-overlay=$overlay" }
         $graph = '{{.ImportPath}}|{{.Dir}}|{{join .GoFiles ","}}|{{join .CgoFiles ","}}|{{join .TestGoFiles ","}}|{{join .XTestGoFiles ","}}|{{join .TestImports ","}}|{{join .XTestImports ","}}|{{join .EmbedFiles ","}}|{{.Module}}'
+        if ($env:GITHUB_REF -ceq 'refs/heads/batuta/windows-go-list-recurrence') {
+            $task43GraphState = $null
+            try {
+                if ($task43GraphRun.loaded) {
+                    $task43GraphState = Start-Task43GraphDiagnostic $Evidence $prefix $flags $graph $overlay $baselineHelper $task43GraphRun
+                }
+            } catch {
+                Write-Warning "Graph diagnostic provenance failed: $($_.Exception.Message)"
+                try { $_.Exception.Message | Set-Content (Join-Path $Evidence "$prefix-diagnostic-before-error.txt") }
+                catch { Write-Warning "Graph diagnostic error persistence failed: $($_.Exception.Message)" }
+            }
+        }
         & go list @flags -deps -test -f $graph ./internal/testfixture 1> (Join-Path $Evidence "$prefix-graph.stdout") 2> (Join-Path $Evidence "$prefix-graph.stderr")
         $graphExit = $LASTEXITCODE
         $graphExit | Set-Content (Join-Path $Evidence "$prefix-graph.exit")
+        if ($env:GITHUB_REF -ceq 'refs/heads/batuta/windows-go-list-recurrence') {
+            try {
+                if ($null -ne $task43GraphState) { Complete-Task43GraphDiagnostic $task43GraphState $task43GraphRun $graphExit }
+            } catch {
+                Write-Warning "Graph diagnostic completion failed: $($_.Exception.Message)"
+                try { $_.Exception.Message | Set-Content (Join-Path $Evidence "$prefix-diagnostic-after-error.txt") }
+                catch { Write-Warning "Graph diagnostic error persistence failed: $($_.Exception.Message)" }
+            } finally { $LASTEXITCODE = $graphExit }
+        }
         if ($graphExit -ne 0) { throw "TEMP dependency/test graph failed: $variant" }
         & go vet @flags ./internal/testfixture 1> (Join-Path $Evidence "$prefix-vet.stdout") 2> (Join-Path $Evidence "$prefix-vet.stderr")
         $pairVetExit = $LASTEXITCODE
