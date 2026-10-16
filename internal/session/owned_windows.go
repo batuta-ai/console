@@ -401,6 +401,7 @@ func (p *ownedProcess) retire(observeErr error) error {
 	if p.native && p.exited {
 		var accounting windowsJobAccounting
 		remainingErr = queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&accounting), uint32(unsafe.Sizeof(accounting)))
+		traceGraceDecisionDiagnostic(p, accounting, remainingErr)
 		if remainingErr == nil && accounting.ActiveProcesses != 0 {
 			p.forced = true
 		}
