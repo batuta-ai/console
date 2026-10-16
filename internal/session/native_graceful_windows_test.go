@@ -96,9 +96,14 @@ func TestTask43WindowsNativeGracefulDrain(t *testing.T) {
 				t.Fatal("graceful native engine readiness timed out", deadline.Err())
 			}
 			child := task43ObserveLifetimeChild(t, output.output())
+			observation := task43ObserveGrace(t, m)
+			defer observation.finish("cleanup")
+			observation.phase("before-cancel")
 			cancel()
+			observation.phase("after-cancel")
 			select {
 			case finished := <-done:
+				observation.finish("completion")
 				if !errors.Is(finished.err, context.Canceled) || finished.result.ExitCode != -1 {
 					t.Fatal("cancelled native engine reported success", finished)
 				}
