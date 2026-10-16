@@ -25,13 +25,33 @@
 // includes zombies/dead records, and errors mean unverified, never absent.
 // The observation can become stale immediately and grants no control authority.
 //
-// OnExit must be configured before starting processes. Stop waits for termination
-// and callback completion, reporting kill errors or a completion timeout. Exit
+// OnExit must be configured before starting processes. Stop separates native
+// resource termination from full durable finalization. The native phase
+// revokes input and invokes platform-owned process termination; it then waits
+// for leader exit observation, final group sweep or job cleanup, and
+// authority retirement, with platform-native handle collection or Cmd.Wait
+// where an exec child exists, slot release, PTY descriptor closure,
+// and joining output readers and terminal subscribers within an owned
+// two-second resource waiter. This two-second timer bounds only that following
+// resource wait, not the prior platform-owned stop, the entire native phase, or
+// the whole Stop method, and does not bound exit callbacks or catalog
+// persistence. Exceeding the two-second resource wait returns a native
+// incomplete error reflecting uncertainty, which is not retained as definitive
+// if clean completion occurs later.
+//
+// Full durable finalization additionally executes OnExit (persisting
+// session.exited), closes the transcript log, and removes private HOME
+// directories. StopContext bounds foreground waiting only after the native-stop
+// phase has returned; context cancellation while finalization remains pending
+// returns FinalizationPendingError with the SessionID and cancellation Cause
+// alongside the latest truthful snapshot and any joined cleanup errors, never
+// durable success. Completed finalization takes precedence over simultaneous
+// cancellation. StopAndFinalize tracks and joins concurrent stop callers and
+// required catalog finalization, keeping work joinable through Shutdown. Exit
 // callbacks must not call Stop on the same process or Shutdown on their Manager.
-// Stop sends
-// immediate SIGKILL to the original PTY process group, including children that
-// ignore HUP. Natural leader exit also sweeps that group. Descendants that move
-// to another group/session are outside containment.
+// On Unix, stop sends immediate SIGKILL to the original PTY process group,
+// including children that ignore HUP, and natural leader exit also sweeps that
+// group. Descendants that move to another group/session are outside containment.
 //
 // Successful PTY startup establishes PID = PGID. The exclusively owned unreaped
 // leader anchors that number: group signals finish under an authority lock before

@@ -234,9 +234,41 @@ promise that missing skills will start a generic session.
 Process (`running`/`exited`/`unknown`), client attachment, ownership (`owner`,
 `owner_client`) and work are independent. Observing/attaching does not take
 control; taking control does not attach. Release with `surface:"none"` requires
-the current owner client; wrong-owner release is 403. Stop requires a live
-process owned by this daemon, not terminal input ownership: unknown/catalog-only
-processes return 409 `session_not_owned`. Closing a client is separate from Stop.
+the current owner client; wrong-owner release is 403.
+
+`POST /v0/sessions/{id}/stop` passes the request context to `StopSessionContext`.
+For owned sessions, HTTP 200 is returned only after actual required durable
+completion (both native resource cleanup and atomic `session.stopped` catalog
+persistence). It requires a live session owned by this daemon, not terminal
+input ownership:
+
+- Unknown/catalog-only sessions return HTTP 409 (`error:"session_not_owned"`),
+  except an already `exited` row which returns HTTP 200 idempotently without
+  emitting new events.
+- A missing session ID returns HTTP 404 (`error:"not_found"`).
+- Requests lacking authentication return HTTP 401 (`error:"unauthorized"`).
+- When client request cancellation occurs while full durable finalization is
+  still pending after the native-stop phase has returned without truncating
+  existing budgets, the handler checks for `FinalizationPendingError` before any
+  generic 500 and returns HTTP 503 with `{"error":"stop_pending","message":...}`
+  (joining any known native cause in the message). A 503 `stop_pending` response
+  is neither terminal failure proof nor a completed stop; work remains tracked
+  in the background through daemon shutdown, but pending does not imply eventual
+  success. Clients must not assume automatic retry or replay.
+- A request already pre-canceled before the handler begins initiates no new stop
+  signaling or catalog mutation. With no stop or full
+  finalization already in flight and no known prior failure, it returns HTTP 500
+  (`error:"stop_failed"`). A canceled joiner receives HTTP 503 `stop_pending`
+  while finalization remains pending; a known completed failure returns its
+  stored error.
+- Any actual native cleanup failure, exit callback failure, or required catalog
+  persistence failure returning an error without pending finalization returns
+  HTTP 500 (`error:"stop_failed"`). Known uncertainty or failure remains an
+  error, and SQLite durability is never downgraded.
+- HTTP transport disconnect and foreground waiting are separate: if the client
+  disconnects during waiting, HTTP delivery cannot be guaranteed, but daemon
+  background finalization continues until completed or drained at shutdown. Closing
+  a client is separate from Stop.
 
 The legacy terminal socket sends binary output; input may be binary or text,
 with text resize JSON `{"type":"resize","cols":110,"rows":40}` reserved.
@@ -295,6 +327,7 @@ result envelopes above. Preserve those effects even when HTTP is non-2xx.
 | Plan | 400 `plan_request`/`plan_reference`; 408 `plan_canceled`; 409 `plan_stale`/`plan_binding`/`plan_transition`; 404 `plan_missing`; 422 `plan_artifact`; 503 `plan_io`/`plan_uncertain`; 500 `plan_store` |
 | Execution | 409 `execution_approval_required`/`execution_exists`/`execution_owned`; 503 `execution_unavailable`/`execution_closing`/`execution_uncertain`; 408 `execution_canceled`; strict request/reference 400; other plan errors as above |
 | Answer | 400 `answer_request`/`answer_reference`/`answer_target`; 409 `answer_stale`/`answer_owned`; 408 `answer_canceled`; 404 `answer_missing`; 422 `answer_artifact`; 503 `answer_io`/`answer_uncertain`; 500 `answer_store`/`answer_recorded_error` |
+| Session Stop | 401 `unauthorized`; 404 `not_found`; 409 `session_not_owned`; 503 `stop_pending`; 500 `stop_failed` |
 
 The Go client separates `not_dispatched`, `read_only`, `rejected`, `succeeded`
 and `uncertain` operation effects and refuses redirects. An accepted HTTP code

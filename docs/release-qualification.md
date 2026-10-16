@@ -1016,3 +1016,67 @@ deltas. Bounded local checks covered service and integration tests with syntheti
 These local bounded checks do not establish full Windows runtime support, real provider qualification, full web/TUI operation, or completion of Task38/43/44/Beta.
 Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954) on candidate `20ae827bbf5ebe72eb46cff986ce5956b92b7321` has finished: all 5 jobs failed. Linux and macOS native API and TUI fixtures still stamp Core 49 or lack capability response; the snapshot verifier escaped regex for 49 rejects 55; ordinary test runs are blocked by the failed producer; Windows also failed (3,530 passing and 22 failing test records, no skips), with detailed analysis pending. The four earlier Windows service failures involving Git exit 128 and Stop remain unresolved. Corrective compatibility work is ongoing.
 Normal CI and bundle qualification remain open. Core publication is finished, but Console publication is not (`v0.1.0-beta.1` is not published or installed). No release-ready claim is made for Console.
+
+## StopA native vs full durable finalization qualification — 2026-10-16
+
+Candidate `b765b0d857154495ea58260d65401244e7aee26c` (all 645 source files
+byte-exact and source-equivalent to qualified `267ff6273b2b21c76f43dc455c23b20512dde74d`)
+addresses session Stop semantics by separating native resource termination from
+full durable finalization:
+- Native resource cleanup (platform-owned termination, leader exit observation,
+  final group sweep or job cleanup, authority retirement, platform-native handle
+  collection or `Cmd.Wait` where an exec child exists, slot release, PTY closure,
+  output reader and subscriber joining) is bounded by an owned waiter at two
+  seconds following the platform-owned stop. Exceeding
+  this following resource wait reports termination uncertainty rather than a
+  permanent definitive error if clean completion occurs later.
+- Full durable finalization additionally runs exit callbacks (`session.exited`),
+  closes transcript logs, cleans private session HOME directories, and performs
+  atomic `session.stopped` catalog persistence. Legacy synchronous calls wait
+  for full completion and may exceed two seconds.
+- Cancellation during finalization returns typed `FinalizationPendingError`
+  (HTTP 503 `stop_pending`), while completed finalization wins over simultaneous
+  cancellation. A pre-canceled request initiates no new stop signaling or catalog
+  mutation. With no stop or full finalization already in
+  flight and no known prior failure, it returns HTTP 500 `stop_failed`. A canceled
+  joiner receives HTTP 503 `stop_pending` while finalization remains pending; a
+  known completed failure returns its stored error.
+- In-flight finalization stays tracked and joinable through Manager `Shutdown`.
+  Only unresolved failure snapshots and errors are retained; no completed success
+  jobs or handles are kept.
+
+### Component proofs and qualification limits
+
+Task 1 approved atomic commit `21554f444c18c3e9d8ea6bb1d6d54a40138906bb`
+and Task 2 approved atomic commit
+`b765b0d857154495ea58260d65401244e7aee26c` as current candidate (all 645 source
+files byte-exact and source-equivalent to qualified `267ff62`). Root qualification
+proofs on component suites:
+- macOS (5 packages): 1,680 PASS with `-race` at `ee67698` (all production bytes exact
+  to `267ff`, only new test environment changed), with final macOS `session` suite
+  recording 107 PASS with `-race`.
+- Ordinary native Windows (Go 1.27.2, CGO_ENABLED=1, `-race`, unprivileged ordinary
+  user token where Administrators is not enabled and Backup/Restore/CreateSymbolicLink
+  privileges are not enabled, joined without force): `session` suite recorded 139
+  PASS with `-race`, and selected `service`, `api`, and `daemon` packages recorded
+  50 PASS with `-race`, 0 fail, 0 skip (645 source files unchanged). Three regressions
+  were verified RED on native Windows before the critical fix and GREEN after.
+
+These proofs are component-level only; Windows is not called fully qualified. They
+do not constitute full native Windows CI qualification, provider runtime
+qualification, Task 43/44 completion, or beta readiness. There is no new CI green
+claim since PR 5 head `5c6` (2026-10-16 history: 5 PR checks green; on the push trigger
+at that same head SHA, cumulative 20-minute package budget exhaustion occurred, with
+no evidence of a single 20-minute flush). Task 43, Task 44, and full-flow release
+gates remain pending.
+
+### Accepted LOW limitation
+
+A Stop catalog persistence write failure that completes before daemon `Shutdown`
+remains caller- and retry-visible in memory and is not added to a later unrelated
+empty drain. If a client has already disconnected and the daemon then exits before
+another call reads that session, this failure may only have existed in memory until
+exit. There is no promise that every prior Stop failure is logged or reported by
+daemon shutdown, and pending finalization does not guarantee eventual success.
+Descriptor errors occurring after admission freeze can remain reported by later
+Shutdown, distinct from completed post-stopped-write failures.
