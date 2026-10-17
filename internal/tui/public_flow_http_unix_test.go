@@ -473,17 +473,10 @@ func publicFlowLock(t *testing.T, a domain.PlanApproval, delivery string) (*os.F
 	t.Helper()
 	js, err := journal.Open(a.Identity.Binding.CanonicalRoot)
 	publicFlowCheck(t, err)
-	f, err := os.OpenFile(js.Path(delivery), os.O_RDWR|os.O_APPEND, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f, err := publicFlowAcquireJournal(ctx, js.Path(delivery))
 	publicFlowCheck(t, err)
-	publicFlowCheck(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
-	// A separate descriptor proves the held inode excludes actual journal readers.
-	sentinel, err := os.Open(js.Path(delivery))
-	publicFlowCheck(t, err)
-	err = syscall.Flock(int(sentinel.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
-	if !errors.Is(err, syscall.EWOULDBLOCK) {
-		t.Fatalf("journal reader sentinel did not block: %v", err)
-	}
-	publicFlowCheck(t, sentinel.Close())
 	released := false
 	unlock := func() {
 		if released {
@@ -495,6 +488,177 @@ func publicFlowLock(t *testing.T, a domain.PlanApproval, delivery string) (*os.F
 	t.Cleanup(unlock)
 	return f, unlock
 }
+func publicFlowAcquireJournal(ctx context.Context, path string) (_ *os.File, err error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
+		}
+	}()
+	err = publicFlowAwaitResult(ctx, "exclusive fixture journal lock", func() (bool, error) {
+		lockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN) {
+			return false, nil
+		}
+		return lockErr == nil, lockErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	// A separate descriptor proves the held inode excludes actual journal readers.
+	sentinel, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	lockErr := syscall.Flock(int(sentinel.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
+	closeErr := sentinel.Close()
+	if !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+		return nil, errors.Join(fmt.Errorf("journal reader sentinel did not block: %v", lockErr), closeErr)
+	}
+	if err = errors.Join(closeErr, context.Cause(ctx)); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func TestPublicFlowJournalAcquisition(t *testing.T) {
+	for _, mode := range []string{"release", "cancel", "deadline", "already-canceled", "already-expired"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "journal")
+				contents := []byte("owned journal bytes\n")
+				publicFlowCheck(t, os.WriteFile(path, contents, 0600))
+				reader, err := os.Open(path)
+				publicFlowCheck(t, err)
+				defer reader.Close()
+				before, err := reader.Stat()
+				publicFlowCheck(t, err)
+				publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_SH|syscall.LOCK_NB))
+				ctx, cancel := context.WithCancelCause(context.Background())
+				defer cancel(nil)
+				cause := errors.New("fixture canceled")
+				if mode == "deadline" || mode == "already-expired" {
+					var stop context.CancelFunc
+					duration := time.Second
+					if mode == "already-expired" {
+						duration = -time.Second
+					}
+					ctx, stop = context.WithTimeout(ctx, duration)
+					defer stop()
+					cause = context.DeadlineExceeded
+				}
+				if mode == "already-canceled" {
+					cancel(cause)
+				}
+				type result struct {
+					f   *os.File
+					err error
+				}
+				done := make(chan result, 1)
+				go func() { f, err := publicFlowAcquireJournal(ctx, path); done <- result{f, err} }()
+				synctest.Wait()
+				if mode == "release" || mode == "cancel" {
+					select {
+					case got := <-done:
+						t.Fatalf("returned while shared lock held: %v", got.err)
+					default:
+					}
+				}
+				if mode == "cancel" {
+					cancel(cause)
+				}
+				if mode == "release" {
+					publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_UN))
+				}
+				got := <-done
+				if mode == "release" {
+					publicFlowCheck(t, got.err)
+					if got.f == nil {
+						t.Fatal("missing exclusive owner")
+					}
+					after, err := got.f.Stat()
+					publicFlowCheck(t, err)
+					if !os.SameFile(before, after) {
+						t.Fatal("journal inode changed")
+					}
+					if err := syscall.Flock(int(reader.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); !errors.Is(err, syscall.EWOULDBLOCK) {
+						t.Fatalf("reader not excluded: %v", err)
+					}
+					publicFlowCheck(t, got.f.Close())
+				} else if got.f != nil || !errors.Is(got.err, cause) {
+					t.Fatalf("ownership=%v error=%v want cause=%v", got.f, got.err, cause)
+				}
+				publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_UN))
+				publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+				raw, err := os.ReadFile(path)
+				publicFlowCheck(t, err)
+				if !bytes.Equal(raw, contents) {
+					t.Fatal("journal bytes changed")
+				}
+			})
+		})
+	}
+	t.Run("IO-error", func(t *testing.T) {
+		_, err := publicFlowAcquireJournal(context.Background(), filepath.Join(t.TempDir(), "missing"))
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("open error lost: %v", err)
+		}
+	})
+}
+
+func TestPublicFlowLockLifetime(t *testing.T) {
+	var a domain.PlanApproval
+	a.Identity.Binding.CanonicalRoot = t.TempDir()
+	js, err := journal.Open(a.Identity.Binding.CanonicalRoot)
+	publicFlowCheck(t, err)
+	path := js.Path("fixture")
+	publicFlowCheck(t, os.MkdirAll(filepath.Dir(path), 0700))
+	contents := []byte("owned fixture journal\n")
+	publicFlowCheck(t, os.WriteFile(path, contents, 0600))
+	reader, err := os.Open(path)
+	publicFlowCheck(t, err)
+	defer reader.Close()
+	before, err := reader.Stat()
+	publicFlowCheck(t, err)
+	var held *os.File
+	t.Run("explicit-unlock", func(t *testing.T) {
+		f, unlock := publicFlowLock(t, a, "fixture")
+		after, err := f.Stat()
+		publicFlowCheck(t, err)
+		if !os.SameFile(before, after) {
+			t.Fatal("journal inode changed")
+		}
+		unlock()
+		unlock()
+		if _, err := f.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("descriptor not closed: %v", err)
+		}
+		publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_SH|syscall.LOCK_NB))
+		publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_UN))
+	})
+	t.Run("cleanup", func(t *testing.T) {
+		held, _ = publicFlowLock(t, a, "fixture")
+		if err := syscall.Flock(int(reader.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); !errors.Is(err, syscall.EWOULDBLOCK) {
+			t.Fatalf("reader not excluded: %v", err)
+		}
+	})
+	if _, err := held.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("cleanup left descriptor open: %v", err)
+	}
+	publicFlowCheck(t, syscall.Flock(int(reader.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	raw, err := os.ReadFile(path)
+	publicFlowCheck(t, err)
+	if !bytes.Equal(raw, contents) {
+		t.Fatal("journal bytes changed")
+	}
+}
+
 func publicFlowCoreBlocked(t *testing.T, ctx context.Context, h *publicFlowHost) {
 	t.Helper()
 	publicFlowAwait(t, ctx, "actual Core unwind at journal lock", func() bool {
