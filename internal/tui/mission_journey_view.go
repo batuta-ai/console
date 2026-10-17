@@ -548,6 +548,9 @@ func (m model) journeyInspectionHeader(r journeyRecord) (string, string) {
 	} else {
 		fmt.Fprintln(&b, i18n.T("journey_inspection_readonly"))
 	}
+	if m.journeyBusy() {
+		fmt.Fprintln(&b, i18n.T("journey_pending"))
+	}
 	if r.problem != "" {
 		fmt.Fprintln(&b, i18n.T(r.problem))
 		problem := strconv.QuoteToASCII(m.journeyErrorText(r))

@@ -820,6 +820,70 @@ func inspectionBackgroundTick(t *testing.T, m model) model {
 	return m
 }
 
+func TestInspectionPendingInspectVisibleBeforeSnapshotReading(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, ordering := range []string{"pending", "queued", "applied"} {
+		t.Run(ordering, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				// This is a real read of the seeded projection, never a native run.
+				m.tick()()
+				cmd := m.readJourney("inspect")
+				request := m.journey.pending
+				if cmd == nil || request == nil || request.kind != "inspect" {
+					t.Fatal("missing explicit inspection")
+				}
+				var message tea.Msg
+				if ordering != "pending" {
+					message = cmd()
+				}
+				if ordering == "applied" {
+					m = journeyFinish(t, m, func() tea.Msg { return message })
+				}
+				m = journeyKey(t, m, "w")
+				frame := m.View().Content
+				pending := strings.Contains(frame, "Mission request pending")
+				if pending != (ordering != "applied") {
+					t.Fatalf("snapshot hides unresolved inspection: ordering=%s pending=%v\n%s", ordering, pending, frame)
+				}
+				if ordering != "applied" {
+					if m.journey.pending != request {
+						t.Fatal("opening progress canceled or replaced inspect")
+					}
+					m = inspectionKey(t, m, "pgdown")
+					if m.journeyRecord().page == 0 {
+						t.Fatal("pending snapshot cannot be inspected")
+					}
+					if ordering == "pending" {
+						message = cmd()
+					}
+					m = journeyFinish(t, m, func() tea.Msg { return message })
+				}
+				if m.journey.pending != nil || strings.Contains(m.View().Content, "Mission request pending") || m.journeyRecord().page != 0 {
+					t.Fatal("settled inspection did not expose its first complete page")
+				}
+				m, raw := inspectionDocument(t, m)
+				var visible struct {
+					Mission   string                 `json:"mission"`
+					Workspace string                 `json:"workspace"`
+					Execution *domain.ExecutionState `json:"execution"`
+					Fresh     bool                   `json:"fresh"`
+				}
+				if err := json.Unmarshal(raw, &visible); err != nil || visible.Mission != "m" || visible.Workspace != "w" || !visible.Fresh || visible.Execution == nil || visible.Execution.Watch == nil || visible.Execution.Watch.Health["journal_age_ns"] != float64(time.Second) {
+					t.Fatal("settled document lost exact current projection", err, string(raw))
+				}
+				frame = m.View().Content
+				record := m.journeyRecord()
+				m = journeyFinish(t, m, func() tea.Msg { return message })
+				m = inspectionBackgroundTick(t, m)
+				if m.View().Content != frame || !reflect.DeepEqual(m.journeyRecord(), record) {
+					t.Fatal("duplicate completion or tick replaced the settled snapshot")
+				}
+			})
+		})
+	}
+}
+
 func TestInspectionProgressSnapshotAcrossBackgroundTicks(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	synctest.Test(t, func(t *testing.T) {
