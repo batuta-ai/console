@@ -71,10 +71,18 @@ func TestOuterConsolePTYNativeStopRestartSHIP(t *testing.T) {
 			j.console.key(t, "exact native\ranswer\t\r")
 			j.visibleJSON("Confirm: Record this answer; resume remains separate", q.Answer("exact native\nanswer"))
 			j.console.key(t, "\r")
-			j.console.contains(t, j.ctx, "Last verified effect: recorded")
-			answered := j.host.state(t, a.approval)
+			// Automatic reads can replace the operation caption. Observe the exact
+			// public delivery, then independently verify its durable journal below.
+			var answered domain.ExecutionState
+			j.host.awaitReadiness(t, j.ctx, a.approval, "keyboard answer current inactive delivery", func(s domain.ExecutionState) bool {
+				if !s.Bound || s.Active || s.RunID != "" || s.Delivery != first.Delivery || s.OpenedDigest != first.OpenedDigest || s.Watch == nil || !s.Watch.Available || s.Watch.PendingQuestion != nil {
+					return false
+				}
+				answered = s
+				return true
+			})
 			afterAnswer := publicFlowJournal(t, a.approval, first.Delivery)
-			if answered.Active || answered.RunID != "" || len(afterAnswer) != len(beforeAnswer)+1 || afterAnswer[len(afterAnswer)-1].Kind != loop.KindAnswer || !reflect.DeepEqual(beforeAnswer, afterAnswer[:len(beforeAnswer)]) {
+			if answered.Active || answered.RunID != "" || answered.Watch == nil || answered.Watch.PendingQuestion != nil || len(afterAnswer) != len(beforeAnswer)+1 || afterAnswer[len(afterAnswer)-1].Kind != loop.KindAnswer || !reflect.DeepEqual(beforeAnswer, afterAnswer[:len(beforeAnswer)]) {
 				t.Fatal("keyboard answer did not record exactly once without launching", answered)
 			}
 			var recorded struct {
@@ -90,6 +98,11 @@ func TestOuterConsolePTYNativeStopRestartSHIP(t *testing.T) {
 				t.Fatal("answer launched provider", err)
 			}
 			j.refresh(a)
+			j.receipt(a)
+			visibleAnswer := j.progress()
+			if !outerNativeExecutionEqual(visibleAnswer, answered) {
+				t.Fatal("full rendered post-answer facts differ from independently verified delivery", visibleAnswer, answered)
+			}
 			j.execute(a, true)
 			aRun := j.active(a)
 			if aRun.Delivery != first.Delivery || aRun.OpenedDigest != first.OpenedDigest {
