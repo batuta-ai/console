@@ -496,10 +496,17 @@ func (l *termLink) run() {
 					l.owned = true
 					l.epoch++
 					l.releaseAttempted = false
-					l.ownershipUncertain = false
 					l.mu.Unlock()
 				}
-				s.frame.control = ""
+				l.mu.Lock()
+				if a.controlResult {
+					l.ownershipUncertain = false
+				}
+				uncertain := l.ownershipUncertain
+				l.mu.Unlock()
+				if !uncertain {
+					s.frame.control = ""
+				}
 				s.frame.owner = a.ownership.OwnerClient
 			}
 			l.publish(s.frame)
