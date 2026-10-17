@@ -532,19 +532,29 @@ func (j *outerNativeJourney) refresh(m outerNativeMission) {
 	j.t.Helper()
 	ctx, cancel := context.WithTimeout(j.ctx, 10*time.Second)
 	defer cancel()
+	ready := func(s string) bool {
+		return !strings.Contains(s, "Request failed") && strings.Contains(s, "Last verified effect: read_only") && strings.Contains(s, "Immutable approved snapshot "+m.approval.ID+" "+m.approval.Identity.Version) && !strings.Contains(s, "refresh required")
+	}
 	for {
-		j.console.mu.Lock()
-		before := j.console.raw.Len()
-		j.console.mu.Unlock()
+		// Establish a visible stale frame before inspecting; identical final frames
+		// otherwise give no indication that any read completed.
+		j.console.key(j.t, "w")
+		j.console.contains(j.t, ctx, "Progress snapshot (Esc, f, w refresh) / retained Stop observations")
+		j.console.key(j.t, "\x1b")
+		stale := j.console.screen(j.t, ctx, "visible invalidation or newer facts "+m.mission.ID, func(s string) bool {
+			return strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) && !strings.Contains(s, "Progress snapshot (Esc, f, w refresh) / retained Stop observations") && (strings.Contains(s, "refresh required") || ready(s)) && !strings.Contains(s, "Confirm:")
+		})
+		if ready(stale) {
+			return
+		}
+		previousFailure := strings.Contains(stale, "Request failed")
 		j.console.key(j.t, "f")
 		s := j.console.screen(j.t, ctx, "explicit refreshed "+m.mission.ID, func(s string) bool {
-			j.console.mu.Lock()
-			changed := j.console.raw.Len() > before
-			j.console.mu.Unlock()
-			if !changed || !strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) || strings.Contains(s, "Confirm:") {
+			// An identical completed read may produce no new terminal frame.
+			if !strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) || strings.Contains(s, "Confirm:") {
 				return false
 			}
-			return strings.Contains(s, "Request failed") || (strings.Contains(s, "Last verified effect: read_only") && strings.Contains(s, "Immutable approved snapshot "+m.approval.ID+" "+m.approval.Identity.Version) && !strings.Contains(s, "refresh required"))
+			return (!previousFailure && strings.Contains(s, "Request failed")) || ready(s)
 		})
 		if !strings.Contains(s, "Request failed") {
 			return
