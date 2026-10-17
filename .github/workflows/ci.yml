@@ -52,6 +52,9 @@ jobs:
       run:
         shell: pwsh
     env:
+      # NEVER SHIP: only the source-verified diagnostic branch may emit traces.
+      NEVER_SHIP_INIT_TRACE: ${{ github.ref == 'refs/heads/batuta/windows-concurrent-init-phase-diagnostic' && (!inputs.ref || inputs.ref == github.ref || inputs.ref == 'batuta/windows-concurrent-init-phase-diagnostic') && '1' || '0' }}
+      NEVER_SHIP_INIT_TRACE_BRANCH: ${{ github.ref == 'refs/heads/batuta/windows-concurrent-init-phase-diagnostic' && (!inputs.ref || inputs.ref == github.ref || inputs.ref == 'batuta/windows-concurrent-init-phase-diagnostic') && 'batuta/windows-concurrent-init-phase-diagnostic' || '' }}
       GOTOOLCHAIN: local
       GOENV: 'off'
       GOWORK: 'off'

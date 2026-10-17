@@ -129,5 +129,29 @@ func authenticateFixtureAccountWithStatus(t *testing.T, svc *Service, account do
 		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
-	svc.Readiness = adapters.NewReadinessChecker(svc.diagnosticProbe(), &http.Client{Transport: transport})
+	probe := svc.diagnosticProbe()
+	var provider http.RoundTripper = transport
+	if t.Name() == "TestConcurrentLoginInitReuse/init" && neverShipInitTraceEnabled() {
+		probe = neverShipInitProbe(probe)
+		provider = neverShipInitTransport{transport}
+	}
+	svc.Readiness = adapters.NewReadinessChecker(probe, &http.Client{Transport: provider})
+}
+
+func neverShipInitProbe(delegate adapters.DiagnosticProbe) adapters.DiagnosticProbe {
+	return func(ctx context.Context, argv, env []string, dir string) ([]byte, int, error) {
+		neverShipInitObserve(ctx, "probe_enter", nil, -1)
+		output, exit, err := delegate(ctx, argv, env, dir)
+		neverShipInitObserve(ctx, "probe_exit", err, exit)
+		return output, exit, err
+	}
+}
+
+type neverShipInitTransport struct{ delegate http.RoundTripper }
+
+func (t neverShipInitTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	neverShipInitObserve(r.Context(), "provider_transport_enter", nil, -1)
+	response, err := t.delegate.RoundTrip(r)
+	neverShipInitObserve(r.Context(), "provider_transport_exit", err, -1)
+	return response, err
 }

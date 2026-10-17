@@ -689,9 +689,11 @@ func (s *Service) StartInit(workspaceID, brief, owner, client string, input ...I
 	return s.StartInitContext(context.Background(), workspaceID, brief, owner, client, input...)
 }
 
-func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owner, client string, input ...InitInput) (domain.Session, error) {
+func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owner, client string, input ...InitInput) (result domain.Session, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	defer func() { neverShipInitObserve(ctx, "returned", resultErr, -1) }()
+	neverShipInitObserve(ctx, "validation_enter", nil, -1)
 	ws, err := s.Store.GetWorkspace(workspaceID)
 	if err != nil {
 		return domain.Session{}, catalogReferenceError{err}
@@ -709,15 +711,20 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	if err != nil {
 		return domain.Session{}, err
 	}
+	neverShipInitObserve(ctx, "validation_exit", nil, -1)
 	if ctx.Err() != nil {
 		return domain.Session{}, ReadinessError{Code: "check_cancelled", AccountID: input[0].AccountID}
 	}
+	neverShipInitObserve(ctx, "init_cli_enter", nil, -1)
 	ad, command, extra, selected, err := s.initCLI(ctx, initPrompt(answers), input[0].AccountID)
+	neverShipInitObserve(ctx, "init_cli_exit", err, -1)
 	if err != nil {
 		return domain.Session{}, err
 	}
 
+	neverShipInitObserve(ctx, "reuse_wait", nil, -1)
 	s.reuseMu.Lock()
+	neverShipInitObserve(ctx, "reuse_acquired", nil, -1)
 	defer s.reuseMu.Unlock()
 	if ctx.Err() != nil {
 		return domain.Session{}, ReadinessError{Code: "check_cancelled", AccountID: selected.ID}
@@ -739,7 +746,9 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	if batuta.ReadSetup(ws.Root).Ready {
 		return domain.Session{}, fmt.Errorf("%w: workspace configuration is already complete", ErrInitConflict)
 	}
+	neverShipInitObserve(ctx, "skills_enter", nil, -1)
 	profile, err := prepareSessionSkills(ws.Root, true, ad.ID, extra, []string{"batuta-init"})
+	neverShipInitObserve(ctx, "skills_exit", err, -1)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -760,6 +769,8 @@ func (s *Service) StartInitContext(ctx context.Context, workspaceID, brief, owne
 	if err := batuta.ValidateSetupRoot(ws.Root); err != nil {
 		return domain.Session{}, invalidReference("%s", err)
 	}
+	neverShipInitObserve(ctx, "spawn_persist_enter", nil, -1)
+	defer func() { neverShipInitObserve(ctx, "spawn_persist_exit", resultErr, -1) }()
 	return s.startAndPersist(sess, env, ws.Root, selected.SessionCap, "workspace.init", map[string]any{"id": ws.ID, "session": sess.ID, "account_id": selected.ID, "command": command.Report})
 }
 
@@ -794,7 +805,9 @@ func (s *Service) initCLI(ctx context.Context, prompt, accountID string) (adapte
 	if err != nil {
 		return ad, command, nil, a, err
 	}
+	neverShipInitObserve(ctx, "readiness_enter", nil, -1)
 	r := s.readinessChecker().Check(ctx, s.Home, a)
+	neverShipInitReadinessResult(ctx, r)
 	if !r.Ready {
 		return ad, command, nil, a, ReadinessError{Code: r.Code, AccountID: a.ID}
 	}

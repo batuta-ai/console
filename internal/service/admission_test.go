@@ -252,6 +252,7 @@ func TestIndependentAccountAdmission(t *testing.T) {
 func TestConcurrentLoginInitReuse(t *testing.T) {
 	for _, mode := range []string{"login", "init"} {
 		t.Run(mode, func(t *testing.T) {
+			trace := neverShipInitStartReporter(t, mode)
 			f := admissionSetup(t, 1)
 			gate := make(chan struct{})
 			type result struct {
@@ -259,13 +260,15 @@ func TestConcurrentLoginInitReuse(t *testing.T) {
 				err error
 			}
 			out := make(chan result, 10)
-			for range 10 {
+			for i := range 10 {
 				go func() {
 					<-gate
 					var s domain.Session
 					var err error
 					if mode == "login" {
 						s, err = f.svc.StartLogin(f.account.ID, "web", "test")
+					} else if trace != nil {
+						s, err = f.svc.StartInitContext(trace.context(i+1), f.workspace.ID, "brief", "web", "test", confirmedFixtureInput(f.account.ID))
 					} else {
 						s, err = f.svc.StartInit(f.workspace.ID, "brief", "web", "test", confirmedFixtureInput(f.account.ID))
 					}
