@@ -41,6 +41,8 @@ type journeyRecord struct {
 	question                          *domain.PendingQuestion
 	nextQuestion                      *domain.PendingQuestion
 	focus, page, inspected            int
+	confirmPage                       int
+	confirmData                       []byte
 }
 type journeyFlow struct {
 	epoch   uint64
@@ -85,6 +87,14 @@ func (m model) journeyRecord() journeyRecord {
 	return journeyRecord{mission: cloneMission(msn)}
 }
 func (m *model) saveJourney(key string, record journeyRecord) {
+	previous := m.journey.records[key]
+	if previous.mode == "progress" && record.mode == "progress" &&
+		(!reflect.DeepEqual(previous.state, record.state) || !reflect.DeepEqual(previous.watch, record.watch) ||
+			len(previous.outcomes) != len(record.outcomes) || previous.fresh != record.fresh ||
+			previous.uncertain != record.uncertain || previous.problem != record.problem ||
+			m.journeyErrorText(previous) != m.journeyErrorText(record)) {
+		record.page = 0
+	}
 	next := make(map[string]journeyRecord, len(m.journey.records)+1)
 	for k, v := range m.journey.records {
 		next[k] = v
@@ -92,8 +102,18 @@ func (m *model) saveJourney(key string, record journeyRecord) {
 	next[key] = record
 	m.journey.records = next
 }
-func (m *model) putJourney(r journeyRecord) { m.saveJourney(journeyID(r.mission), r) }
-func (m model) journeyBusy() bool           { return m.journey.pending != nil }
+func (m *model) putJourney(r journeyRecord) {
+	previous := m.journey.records[journeyID(r.mission)]
+	if r.confirm == "" {
+		r.confirmData = nil
+		r.confirmPage = 0
+	} else if previous.confirm != r.confirm || r.confirmData == nil {
+		r.confirmData = journeyConfirmationBytes(r)
+		r.confirmPage = 0
+	}
+	m.saveJourney(journeyID(r.mission), r)
+}
+func (m model) journeyBusy() bool { return m.journey.pending != nil }
 func (m model) journeyVisible() bool {
 	return (m.screen == scrRoom || m.screen == scrReview) && m.roomMission().ID != ""
 }
@@ -404,7 +424,7 @@ func (m model) mutateJourney(kind string) (model, tea.Cmd) {
 			return out
 		}
 	case "approve":
-		if !r.sourceFresh || r.nativeSnapshot || r.detail == nil || r.mode != "source" || r.inspected < len(journeySourceLines(*r.detail)) || r.detail.Identity.Binding.DeliveryID != "" {
+		if !r.sourceFresh || r.nativeSnapshot || r.detail == nil || r.mode != "source" || r.inspected < len(journeySourceLines(*r.detail, m.width)) || r.detail.Identity.Binding.DeliveryID != "" {
 			return m, nil
 		}
 		target := r.detail.Identity
@@ -577,7 +597,8 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 	case "source":
 		r.mode = "source"
 		r.confirm = ""
-		r.inspected = max(r.inspected, min(journeyPageSize, len(journeySourceLines(*r.detail))))
+		r.page = 0
+		r.inspected = min(m.journeyBodyRows(r), len(journeySourceLines(*r.detail, m.width)))
 	case "receipt":
 		r.historical = out.receipt
 		r.mode = "receipt"

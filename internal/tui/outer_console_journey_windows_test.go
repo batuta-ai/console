@@ -134,7 +134,7 @@ func TestOuterConsoleConPTYCatalogApprovalAndRestart(t *testing.T) {
 	console.key(t, "o")
 	windowsOuterReviewSource(t, ctx, console, detail)
 	console.key(t, "y")
-	console.contains(t, ctx, "Confirm: Approve all inspected original source bytes")
+	outerInspectionReviewJSON(t, ctx, console, "Confirm: Approve all inspected original source bytes", detail.Identity)
 	unapproved, err := f.api.PlanDetail(ctx, selected.ID, ws.ID)
 	if err != nil || unapproved.Approval != nil || !reflect.DeepEqual(unapproved, detail) {
 		t.Fatalf("source inspection or confirmation prompt approved/mutated without Enter: %+v %v", unapproved, err)
@@ -205,15 +205,16 @@ func TestOuterConsoleConPTYCatalogApprovalAndRestart(t *testing.T) {
 				return false
 			}
 			if m.ID == selected.ID {
-				for _, line := range strings.Split(s, "\n") {
-					if strings.TrimSpace(line) == "Immutable approved snapshot "+receipt.ID+" "+receipt.Identity.Version {
-						return true
-					}
-				}
-				return false
+				return strings.Contains(s, "Immutable approved snapshot")
 			}
 			return !strings.Contains(s, "Immutable approved snapshot")
 		})
+		if m.ID == selected.ID {
+			console.key(t, "k")
+			outerInspectionReviewJSON(t, ctx, console, "Immutable approved snapshot", receipt)
+			console.key(t, "\x1b")
+			console.contains(t, ctx, m.ID+"  Workspace: "+ws.ID)
+		}
 	}
 	refresh(selected)
 
@@ -821,52 +822,7 @@ func (f *windowsOuterHarness) finish(t *testing.T, ctx context.Context) {
 
 func windowsOuterReviewSource(t *testing.T, ctx context.Context, p *windowsOuterConsole, detail domain.PlanDetail) {
 	t.Helper()
-	page := regexp.MustCompile(`(?m)^\s*(\d+)/(\d+)\s*$`)
-	byteLine := regexp.MustCompile(`^([0-9a-f]{8}) (".*")$`)
-	var metadata, source []byte
-	inSource, previous := false, 0
-	for {
-		s := p.screen(t, ctx, "next exact source page", func(s string) bool {
-			m := page.FindStringSubmatch(s)
-			if len(m) == 0 || !strings.Contains(s, "Current source "+detail.Identity.Version) {
-				return false
-			}
-			n, _ := strconv.Atoi(m[1])
-			return n > previous && !strings.Contains(s, "Mission request pending")
-		})
-		m := page.FindStringSubmatch(s)
-		previous, _ = strconv.Atoi(m[1])
-		for _, line := range strings.Split(s, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "Original source bytes; offsets and lossless ASCII escapes" {
-				inSource = true
-			}
-			parts := byteLine.FindStringSubmatch(line)
-			if len(parts) == 0 {
-				continue
-			}
-			offset, err := strconv.ParseInt(parts[1], 16, 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			decoded, err := strconv.Unquote(parts[2])
-			if err != nil {
-				t.Fatal(err)
-			}
-			target := &metadata
-			if inSource {
-				target = &source
-			}
-			if offset != int64(len(*target)) {
-				t.Fatalf("visible byte gap: offset=%d collected=%d", offset, len(*target))
-			}
-			*target = append(*target, decoded...)
-		}
-		if strings.Contains(s, "END OF SOURCE") {
-			break
-		}
-		p.key(t, "\x1b[B")
-	}
+	metadata, source := outerInspectionRead(t, ctx, p, "Current source", detail.Identity.Version)
 	var decoded domain.PlanDetail
 	if err := json.Unmarshal(metadata, &decoded); err != nil {
 		t.Fatalf("visible metadata: %v\n%s", err, metadata)
@@ -877,4 +833,173 @@ func windowsOuterReviewSource(t *testing.T, ctx context.Context, p *windowsOuter
 		t.Fatalf("visible source differs from independently read exact HTTP bytes: metadata=%+v source=%q", decoded, source)
 	}
 	t.Logf("REVIEW exact metadata and %d source bytes sha256=%x", len(source), sha256.Sum256(source))
+}
+
+type outerInspectionConsole interface {
+	screen(*testing.T, context.Context, string, func(string) bool) string
+	key(*testing.T, string)
+}
+
+// The indicator counts physical rows; byte offsets are independent per document.
+func outerInspectionRange(screen string, next, total int) (first, last, count int, ok bool) {
+	match := regexp.MustCompile(`(?m)^\s*Rows (\d+)-(\d+)/(\d+)\s*$`).FindStringSubmatch(screen)
+	if len(match) == 0 {
+		return
+	}
+	first, _ = strconv.Atoi(match[1])
+	last, _ = strconv.Atoi(match[2])
+	count, _ = strconv.Atoi(match[3])
+	ok = first == next && last >= first && last-first < 8 && last <= count &&
+		(total == 0 || count == total) && regexp.MustCompile(`(?m)^[ \t]*END OF SOURCE[ \t]*$`).MatchString(screen) == (last == count)
+	return
+}
+
+func outerInspectionAppend(target []byte, row string) ([]byte, error) {
+	parts := regexp.MustCompile(`^([0-9a-f]{8}) (".*")$`).FindStringSubmatch(row)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("invalid visible byte row: %q", row)
+	}
+	for _, c := range row {
+		if c < 32 || c > 126 {
+			return nil, fmt.Errorf("non-ASCII/control in visible byte row: %q", row)
+		}
+	}
+	offset, err := strconv.ParseInt(parts[1], 16, 64)
+	if err != nil || offset != int64(len(target)) {
+		return nil, fmt.Errorf("visible byte gap/overlap: offset=%d collected=%d: %v", offset, len(target), err)
+	}
+	decoded, err := strconv.Unquote(parts[2])
+	if err != nil || len(decoded) == 0 {
+		return nil, fmt.Errorf("invalid/empty quoted byte chunk: %q: %v", parts[2], err)
+	}
+	return append(target, decoded...), nil
+}
+
+func outerInspectionRead(t *testing.T, ctx context.Context, p outerInspectionConsole, title, sourceVersion string) (metadata, source []byte) {
+	t.Helper()
+	next, total, inSource, sawMetadata := 1, 0, false, false
+	for {
+		s := p.screen(t, ctx, "next exact inspection page: "+title, func(s string) bool {
+			_, _, _, ok := outerInspectionRange(s, next, total)
+			if !ok || strings.TrimSpace(strings.Split(strings.TrimSpace(s), "\n")[0]) != title || !strings.Contains(s, "up/down pgup/pgdown pages") {
+				return false
+			}
+			if sourceVersion != "" {
+				for _, line := range strings.Split(s, "\n") {
+					if strings.TrimSpace(line) == sourceVersion {
+						return true
+					}
+				}
+				return false
+			}
+			return true
+		})
+		first, last, count, _ := outerInspectionRange(s, next, total)
+		lines := strings.Split(s, "\n")
+		indicator := -1
+		for i, line := range lines {
+			if strings.TrimSpace(line) == fmt.Sprintf("Rows %d-%d/%d", first, last, count) {
+				indicator = i
+				break
+			}
+		}
+		bodyStart := indicator - (last - first + 1)
+		if bodyStart < 0 {
+			t.Fatal("page indicator exceeds physically visible body")
+		}
+		for _, line := range lines[bodyStart:indicator] {
+			line = strings.TrimSpace(line)
+			switch line {
+			case "Full metadata/tasks (ASCII escaped JSON bytes)":
+				if sourceVersion == "" || sawMetadata || inSource || first != 1 {
+					t.Fatal("unexpected/repeated metadata section")
+				}
+				sawMetadata = true
+			case "Original source bytes; offsets and lossless ASCII escapes":
+				if sourceVersion == "" || !sawMetadata || inSource {
+					t.Fatal("unexpected/repeated original byte section")
+				}
+				inSource = true
+			default:
+				target := &metadata
+				if inSource {
+					target = &source
+				}
+				var err error
+				*target, err = outerInspectionAppend(*target, line)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if last == count {
+			if sourceVersion != "" && (!sawMetadata || !inSource) {
+				t.Fatal("source ended without both exact byte sections")
+			}
+			return
+		}
+		next, total = last+1, count
+		p.key(t, "\x1b[B")
+	}
+}
+
+func outerInspectionReviewJSON(t *testing.T, ctx context.Context, p outerInspectionConsole, title string, want any) {
+	t.Helper()
+	raw, _ := outerInspectionRead(t, ctx, p, title, "")
+	expected, err := json.MarshalIndent(want, "", "  ")
+	if err != nil || !bytes.Equal(raw, expected) {
+		t.Fatalf("visible complete %s JSON differs: got=%s want=%s error=%v", title, raw, expected, err)
+	}
+	t.Logf("REVIEW exact %s JSON bytes=%d sha256=%x", title, len(raw), sha256.Sum256(raw))
+}
+
+func TestOuterInspectionPageProtocol(t *testing.T) {
+	firstPage := "Current source\nversion\n00000000 \"abc\"\nRows 1-1/2\nup/down pgup/pgdown pages  esc back\n"
+	lastPage := "Current source\nversion\n00000003 \"def\"\nRows 2-2/2\nEND OF SOURCE\nup/down pgup/pgdown pages  esc back\n"
+	for _, tc := range []struct {
+		name, screen                    string
+		next, total, first, last, count int
+		ok                              bool
+	}{
+		{"first", firstPage, 1, 0, 1, 1, 2, true},
+		{"next", lastPage, 2, 2, 2, 2, 2, true},
+		{"marker inside data", strings.ReplaceAll(firstPage, "abc", "END OF SOURCE"), 1, 0, 1, 1, 2, true},
+		{"cached", firstPage, 2, 2, 0, 0, 0, false},
+		{"changed total", lastPage, 2, 3, 0, 0, 0, false},
+		{"skipped", lastPage, 1, 2, 0, 0, 0, false},
+		{"premature end", firstPage + "END OF SOURCE\n", 1, 0, 0, 0, 0, false},
+		{"missing end", strings.ReplaceAll(lastPage, "END OF SOURCE\n", ""), 2, 2, 0, 0, 0, false},
+		{"oversized", strings.ReplaceAll(firstPage, "1-1/2", "1-9/10"), 1, 0, 0, 0, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first, last, count, ok := outerInspectionRange(tc.screen, tc.next, tc.total)
+			if ok != tc.ok || ok && (first != tc.first || last != tc.last || count != tc.count) {
+				t.Fatalf("page=(%d,%d,%d,%t), want=(%d,%d,%d,%t)", first, last, count, ok, tc.first, tc.last, tc.count, tc.ok)
+			}
+		})
+	}
+}
+
+func TestOuterInspectionByteReassembly(t *testing.T) {
+	// Chunks deliberately split a UTF-8 rune and include invalid source bytes.
+	rows := []string{`00000000 "A\xe2"`, `00000002 "\x86\x92\n\x1b[31m\xff"`}
+	var got []byte
+	for _, row := range rows {
+		var err error
+		got, err = outerInspectionAppend(got, row)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []byte("A→\n\x1b[31m\xff"); !bytes.Equal(got, want) {
+		t.Fatalf("reassembled bytes=%q want=%q", got, want)
+	}
+	for _, row := range []string{
+		`00000000 "duplicate"`, `00000003 "gap"`, `00000002 ""`,
+		`00000002 "\q"`, `00000002 "unterminated`, "00000002 \"\x1b[31m\"", `00000002 "→"`,
+	} {
+		if _, err := outerInspectionAppend([]byte("ab"), row); err == nil {
+			t.Errorf("accepted invalid/gapped/overlapping visible row %q", row)
+		}
+	}
 }
