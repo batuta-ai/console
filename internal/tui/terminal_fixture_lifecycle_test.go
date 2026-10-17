@@ -324,6 +324,53 @@ func TestTerminalFixtureHeldServiceExit(t *testing.T) {
 	}
 }
 
+// Server.Close must stop acceptance without closing the raw pipe endpoints:
+// terminalPipeListener.Close remains the later fallback owned by startHTTP.
+type terminalFixtureHTTPListener struct {
+	*terminalPipeListener
+	conn    *terminalFixtureHTTPConn
+	stopped chan struct{}
+	once    sync.Once
+}
+
+func (l *terminalFixtureHTTPListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.incoming:
+		l.conn.Conn = conn
+		return l.conn, nil
+	case <-l.stopped:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *terminalFixtureHTTPListener) Close() error {
+	l.once.Do(func() { close(l.stopped) })
+	return nil
+}
+
+type terminalFixtureHTTPConn struct {
+	net.Conn
+	closing, allowClose, closed chan struct{}
+	wrote                       chan struct{}
+	closeOnce, writeOnce        sync.Once
+	closeErr                    error
+}
+
+func (c *terminalFixtureHTTPConn) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.closing)
+		<-c.allowClose
+		c.closeErr = c.Conn.Close()
+		close(c.closed)
+	})
+	return c.closeErr
+}
+
+func (c *terminalFixtureHTTPConn) Write(p []byte) (int, error) {
+	c.writeOnce.Do(func() { close(c.wrote) })
+	return c.Conn.Write(p)
+}
+
 func TestTerminalFixtureHTTPDrain(t *testing.T) {
 	for _, upgraded := range []bool{false, true} {
 		name := "request"
@@ -346,16 +393,30 @@ func TestTerminalFixtureHTTPDrain(t *testing.T) {
 			listener := &terminalPipeListener{incoming: make(chan net.Conn), done: make(chan struct{})}
 			transport := &http.Transport{DialContext: listener.dial}
 			f := &terminalFixtureLifecycle{manager: manager, listener: listener, transport: transport, root: root}
+			var serving net.Listener = listener
+			observed := &terminalFixtureHTTPConn{
+				closing: make(chan struct{}), allowClose: make(chan struct{}), closed: make(chan struct{}), wrote: make(chan struct{}),
+			}
+			var closeOnce sync.Once
+			allowClose := func() { closeOnce.Do(func() { close(observed.allowClose) }) }
+			if !upgraded {
+				serving = &terminalFixtureHTTPListener{terminalPipeListener: listener, conn: observed, stopped: make(chan struct{})}
+			}
 			f.server = &http.Server{Handler: f.handlers.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				close(entered)
+				if upgraded {
+					close(entered)
+				}
 				base.ServeHTTP(w, r)
+				if !upgraded {
+					close(entered)
+				}
 				<-release
 				_, err := st.ListSessions()
 				returned <- err
 			}))}
 			served := make(chan error, 1)
 			f.served = served
-			go func() { served <- f.server.Serve(listener) }()
+			go func() { served <- f.server.Serve(serving) }()
 			attempted := make(chan struct{})
 			f.closeStore = func() error {
 				close(attempted)
@@ -377,6 +438,7 @@ func TestTerminalFixtureHTTPDrain(t *testing.T) {
 			}
 			closed := false
 			t.Cleanup(func() {
+				allowClose()
 				unblock()
 				if !closed {
 					f.closeStore = st.Close
@@ -406,6 +468,25 @@ func TestTerminalFixtureHTTPDrain(t *testing.T) {
 			result := make(chan error, 1)
 			go func() { result <- f.finish(canceled, drain, nil) }()
 			terminalFixtureAwait(t, ctx, drain.entered)
+			if !upgraded {
+				terminalFixtureAwait(t, ctx, observed.closing)
+				select {
+				case <-observed.closed:
+					t.Fatal("connection closed through the held Close gate")
+				default:
+				}
+				select {
+				case <-listener.done:
+					t.Fatal("listener fallback ran before actual Server.Close completed")
+				default:
+				}
+				select {
+				case <-observed.wrote:
+					t.Fatal("held response reached the connection before Server.Close")
+				default:
+				}
+				t.Log("drain wait entered while actual server endpoint Close is held; response unwritten")
+			}
 			// HTTP must get its own wait despite the canceled diagnostic context.
 			select {
 			case <-attempted:
@@ -428,6 +509,26 @@ func TestTerminalFixtureHTTPDrain(t *testing.T) {
 			case <-attempted:
 				t.Error("expired HTTP wait closed Store")
 			default:
+			}
+			if !upgraded {
+				select {
+				case err := <-requestDone:
+					t.Fatalf("held request completed before actual connection close: %v", err)
+				default:
+				}
+				allowClose()
+				terminalFixtureAwait(t, ctx, observed.closed)
+				if observed.closeErr != nil {
+					t.Fatal(observed.closeErr)
+				}
+				// Only Server.Close can reach this wrapper while the handler is held;
+				// listener fallback and client cleanup own the unwrapped endpoints.
+				select {
+				case <-observed.wrote:
+					t.Fatal("held response reached the connection before close completed")
+				default:
+				}
+				t.Log("actual server endpoint Close completed before handler release; response unwritten")
 			}
 			unblock()
 			if err := terminalFixtureAwait(t, ctx, result); err != nil {
