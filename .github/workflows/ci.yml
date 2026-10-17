@@ -127,6 +127,12 @@ jobs:
           if (-not $userProfilePath -or -not (Test-Path -LiteralPath $userProfilePath -PathType Container)) { throw 'Current-user profile directory required' }
           $ancestorLog = Join-Path $env:WINDOWS_EVIDENCE 'ancestor-acls.log'
           @("current-user-sid=$($sid.Value)", "user-profile=$userProfilePath", "runner-temp=$env:RUNNER_TEMP") | Set-Content $ancestorLog
+          $moduleCache = @(go env GOMODCACHE)
+          if ($LASTEXITCODE -ne 0) { throw 'Go module cache query failed' }
+          if ($moduleCache.Count -ne 1 -or [string]::IsNullOrWhiteSpace($moduleCache[0]) -or
+              -not [System.IO.Path]::IsPathFullyQualified($moduleCache[0])) { throw 'One absolute Go module cache path required' }
+          $env:GOMODCACHE = $moduleCache[0]
+          "go-module-cache=$env:GOMODCACHE" | Add-Content $ancestorLog
           $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
           foreach ($rootPath in @($env:RUNNER_TEMP, $userProfilePath)) {
             $ancestor = [System.IO.DirectoryInfo]::new($rootPath)
