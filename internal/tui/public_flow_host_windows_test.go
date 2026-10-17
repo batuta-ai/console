@@ -132,7 +132,7 @@ func winFlowScanner(r io.Reader) *bufio.Scanner {
 
 func winFlowFreshRoot(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(os.TempDir(), "console-public-flow-"+rand.Text())
+	root := filepath.Join(os.TempDir(), "cpf-"+rand.Text())
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	winFlowCheck(t, err)
 	sd, err := windows.SecurityDescriptorFromString("O:" + user.User.Sid.String() + "D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
