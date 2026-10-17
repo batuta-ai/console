@@ -95,14 +95,14 @@ func (c *Client) mutateExecution(ctx context.Context, req domain.ExecutionReques
 	delivery := domain.ExecutionDelivery(req.ApprovalID, req.Target)
 	switch received.Effect {
 	case domain.ExecutionStarted:
-		valid = valid && status == 202 && received.Error == nil && received.Delivery == delivery && validOpening(received.OpenedDigest)
+		valid = valid && status == 202 && received.Error == nil && received.Delivery == delivery && domain.ValidExecutionRunID(received.RunID) && validOpening(received.OpenedDigest)
 		if resume != nil {
 			valid = valid && received.OpenedDigest == resume.OpenedDigest
 		}
 	case domain.ExecutionRejected:
-		valid = valid && status >= 400 && received.Error != nil && received.Error.Code != "" && received.Delivery == "" && received.OpenedDigest == ""
+		valid = valid && status >= 400 && received.Error != nil && received.Error.Code != "" && received.Delivery == "" && received.OpenedDigest == "" && received.RunID == ""
 	case domain.ExecutionUncertain:
-		valid = valid && status >= 400 && received.Error != nil && received.Error.Code != "" && (received.Delivery == "" || received.Delivery == delivery) && (received.OpenedDigest == "" || validOpening(received.OpenedDigest))
+		valid = valid && status >= 400 && received.Error != nil && received.Error.Code != "" && (received.Delivery == "" || received.Delivery == delivery) && (received.OpenedDigest == "" || validOpening(received.OpenedDigest)) && (received.RunID == "" || domain.ValidExecutionRunID(received.RunID))
 	default:
 		valid = false
 	}
@@ -142,7 +142,7 @@ func (c *Client) ExecutionState(ctx context.Context, mission, workspace, approva
 		return domain.ExecutionState{}, &ExecutionError{Status: status, Cause: err}
 	}
 	valid := out.Target.Validate() == nil && out.Target.MissionID == mission && out.Target.Binding.WorkspaceID == workspace && out.Target.Binding.DeliveryID == "" && out.ApprovalID == approvalID && out.Delivery == domain.ExecutionDelivery(approvalID, out.Target)
-	valid = valid && validExecutionProjection(out, mission, workspace)
+	valid = valid && ((out.Active && domain.ValidExecutionRunID(out.RunID)) || (!out.Active && out.RunID == "")) && validExecutionProjection(out, mission, workspace)
 	if out.Watch != nil && out.Watch.PendingQuestion != nil {
 		q := out.Watch.PendingQuestion.Target
 		valid = valid && q.MissionID == mission && q.WorkspaceID == workspace && q.Delivery == out.Delivery && q.OpenedDigest == out.OpenedDigest
@@ -174,4 +174,95 @@ func validExecutionProjection(state domain.ExecutionState, mission, workspace st
 		return false
 	}
 	return view.Header["state"] != "done" || gate.Cleared
+}
+
+type ExecutionStopError struct {
+	Result domain.ExecutionStopResult
+	Status int
+	Cause  error
+}
+
+func (e *ExecutionStopError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("native Stop: %v", e.Cause)
+	}
+	if e.Result.Error != nil {
+		return e.Result.Error.Code + ": " + e.Result.Error.Message
+	}
+	return fmt.Sprintf("native Stop: HTTP %d", e.Status)
+}
+func (e *ExecutionStopError) Unwrap() error { return e.Cause }
+
+func (c *Client) StopExecution(ctx context.Context, req domain.ExecutionStopRequest) (domain.ExecutionStopResult, error) {
+	result := domain.ExecutionStopResult{ExecutionStopRequest: req, Effect: domain.ExecutionStopRejected}
+	fail := func(status int, err error) (domain.ExecutionStopResult, error) {
+		return result, &ExecutionStopError{Result: result, Status: status, Cause: err}
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(0, err)
+	}
+	if err := req.Validate(); err != nil {
+		return fail(0, err)
+	}
+	path, err := executionPath(req.Target.MissionID)
+	if err != nil {
+		return fail(0, err)
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fail(0, err)
+	}
+	result.Effect = domain.ExecutionStopUncertain
+	body, status, err := c.planRequest(ctx, http.MethodPost, path+"/stop", payload)
+	if status == 401 || status == 403 {
+		result.Effect = domain.ExecutionStopRejected
+		return fail(status, fmt.Errorf("native Stop authorization failed"))
+	}
+	if err != nil {
+		return fail(status, err)
+	}
+	var got domain.ExecutionStopResult
+	if err := decodePlan(body, &got); err != nil {
+		return fail(status, err)
+	}
+	valid := got.ExecutionStopRequest == req
+	switch got.Effect {
+	case domain.ExecutionStopPending:
+		valid = valid && status == 202 && !got.Finalized && !got.Durable && got.Error == nil && got.State == nil && got.CoreState == "" && len(got.Causes) == 0
+	case domain.ExecutionStopCompleted:
+		valid = valid && status == 200 && got.Finalized && got.Durable && got.Error == nil && got.State != nil
+	case domain.ExecutionStopUncertain:
+		valid = valid && status == 503 && got.Finalized && got.Error != nil && got.Error.Code != ""
+	case domain.ExecutionStopRejected:
+		valid = valid && status >= 400 && status < 600 && !got.Finalized && !got.Durable && got.Error != nil && got.Error.Code != "" && got.State == nil && got.CoreState == "" && len(got.Causes) == 0
+	default:
+		valid = false
+	}
+	if got.Durable && got.State == nil {
+		valid = false
+	}
+	if state := got.State; state != nil {
+		valid = valid && state.Target == req.Target && state.ApprovalID == req.ApprovalID && state.Delivery == req.Delivery && !state.Active && state.RunID == "" && validExecutionProjection(*state, req.Target.MissionID, req.Target.Binding.WorkspaceID)
+		if got.Durable {
+			valid = valid && ((state.OpenedDigest == "" && got.CoreState == "") || (state.OpenedDigest != "" && got.CoreState != "" && state.Bound))
+			if state.OpenedDigest != "" {
+				switch got.CoreState {
+				case "done", "blocked", "waiting_input", "waiting_plan", "canceled", "abandoned":
+				default:
+					valid = false
+				}
+				if got.Effect == domain.ExecutionStopCompleted {
+					valid = valid && state.Watch != nil && state.Watch.Header["state"] == got.CoreState
+				}
+			}
+		}
+	}
+	if !valid {
+		return fail(status, fmt.Errorf("invalid native Stop identity, effect or completion"))
+	}
+	result = got
+	if result.Error != nil {
+		return fail(status, nil)
+	}
+	return result, nil
 }

@@ -425,7 +425,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 		}
 	}
 	if cleanup != nil || errors.Is(exchangeErr, session.ErrNativeCleanupUnresolved) {
-		s.recordNativeCleanup(errors.Join(cleanup, exchangeErr))
+		s.recordExecutionCleanup(job, errors.Join(cleanup, exchangeErr))
 	}
 	return true, state, errors.Join(parentCause, outcome, cleanup, exchangeErr)
 }

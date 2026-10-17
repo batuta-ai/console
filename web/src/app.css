@@ -73,6 +73,7 @@ body {
   white-space: pre-wrap;
 }
 .plan-card {
+  flex-shrink: 0;
   min-width: 0;
   max-width: 100%;
   overflow: visible;

@@ -78,8 +78,9 @@ func (f *journeyWire) handler(t *testing.T) http.HandlerFunc {
 			f.writes = append(f.writes, "start")
 			f.opened()
 			f.state.Active = true
+			f.state.RunID = strings.Repeat("a", 64)
 			w.WriteHeader(202)
-			_ = json.NewEncoder(w).Encode(domain.ExecutionResult{Target: req.Target, ApprovalID: req.ApprovalID, Effect: domain.ExecutionStarted, Delivery: f.state.Delivery, OpenedDigest: f.state.OpenedDigest})
+			_ = json.NewEncoder(w).Encode(domain.ExecutionResult{RunID: f.state.RunID, Target: req.Target, ApprovalID: req.ApprovalID, Effect: domain.ExecutionStarted, Delivery: f.state.Delivery, OpenedDigest: f.state.OpenedDigest})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/resume"):
 			var req domain.ResumeRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -90,8 +91,9 @@ func (f *journeyWire) handler(t *testing.T) http.HandlerFunc {
 			}
 			f.writes = append(f.writes, "resume")
 			f.state.Active = true
+			f.state.RunID = strings.Repeat("b", 64)
 			w.WriteHeader(202)
-			_ = json.NewEncoder(w).Encode(domain.ExecutionResult{Target: req.Target, ApprovalID: req.ApprovalID, Effect: domain.ExecutionStarted, Delivery: f.state.Delivery, OpenedDigest: f.state.OpenedDigest})
+			_ = json.NewEncoder(w).Encode(domain.ExecutionResult{RunID: f.state.RunID, Target: req.Target, ApprovalID: req.ApprovalID, Effect: domain.ExecutionStarted, Delivery: f.state.Delivery, OpenedDigest: f.state.OpenedDigest})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/answer"):
 			var req domain.AnswerRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -215,6 +217,7 @@ func TestJourneyKeyboardStartAnswerResumeOriginalOpening(t *testing.T) {
 				t.Fatal("automatic resume", f.writes)
 			}
 			f.state.Active = false
+			f.state.RunID = ""
 			m = journeyKey(t, m, "f")
 			m = journeyKey(t, m, "g")
 			m = journeyKey(t, m, "enter")

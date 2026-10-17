@@ -154,6 +154,7 @@ Recorded is HTTP 200; uncertain is 503 `plan_uncertain` and requires inspection.
 | POST | `/v0/missions/{id}/execution` | `{target: PlanIdentity, approval_id}` → `ExecutionResult` |
 | GET | `/v0/missions/{id}/execution?workspace_id={id}&approval_id={receipt}` | `ExecutionState`; exactly these two nonempty query keys |
 | POST | `/v0/missions/{id}/execution/resume` | `{target: PlanIdentity, approval_id, delivery, opened_digest}` → `ExecutionResult` |
+| POST | `/v0/missions/{id}/execution/stop` | `{target: PlanIdentity, approval_id, delivery, run_id}` → `ExecutionStopResult` |
 
 Start uses the original approved **base target**: its binding has empty
 `delivery_id`/`opened_digest`. Do not patch the delivery back into that target.
@@ -164,16 +165,19 @@ synthesize journal records. Native work is daemon-owned and survives client
 request cancellation; shutdown drains owned work separately from HTTP clients.
 
 `ExecutionResult` echoes `target`, `approval_id`, `effect`, optional `delivery`,
-`opened_digest`, `error:{code,message}`. `effect` is `started`, `rejected` or
+`opened_digest`, `run_id`, `error:{code,message}`. `effect` is `started`, `rejected` or
 `uncertain`. HTTP 202 with `started` confirms the native delivery/opening, not
 completion. Delivery is deterministic from approval ID, mission ID and workspace
 ID. It is separate from the original target. An existing native delivery must
 be resumed explicitly; a lost reply is not permission to Start again.
 
 `ExecutionState` contains `target`, `approval_id`, `delivery`, optional
-`opened_digest`, `active`, `bound`, optional `watch` and `gate`.
-Before an opening exists it can report the deterministic delivery while
-`bound=false`, `active=false`, with no watch/opening; this is not a started run.
+`opened_digest`, `run_id`, `active`, `bound`, optional `watch` and `gate`.
+Before admission it can report the deterministic delivery with `bound=false`,
+`active=false` and no watch/opening or current `run_id`. Admitted preparation
+before opening is already `active=true` and includes `run_id`, even while
+`bound=false`. A parked question without an active admission has no live native
+process to stop.
 `active` means this daemon owns an admitted native job. `bound` means catalog
 association. Neither is a completion or provider-success claim.
 
@@ -191,6 +195,69 @@ and cleared review/evidence authority. Exit, absence of active work, catalog
 status/counters and attention are not sufficient. See [domain](domain.md).
 Start/resume enforce exact mission identity, no query, strict JSON and 16 KiB
 request limits. Rejected/uncertain effects remain distinct even on HTTP errors.
+
+### Stop one exact native attempt
+
+Stop uses the existing local bearer token and the original approved base `target`
+(with empty binding `delivery_id`/`opened_digest`), exact `approval_id`, separate
+execution `delivery`, and `run_id`. No query is accepted. The body is limited to
+16 KiB; unknown fields, trailing JSON, a target mission different from the URL,
+and invalid references are rejected with HTTP 400 `execution_reference`.
+
+The server generates `run_id` from 32 random bytes, encoded as 64 lowercase
+hexadecimal characters, for each admission. It appears in active/preparing
+`ExecutionState` and a `started` or `uncertain` `ExecutionResult`. Explicit resume
+admits a new attempt with a fresh value. Daemon recreation invalidates old admission nonces; it does
+not admit work or produce a new `run_id`. A later explicit Start/Resume admission
+does that. Inactive state has no current `run_id`. Never substitute a PID,
+process name, session ID, latest delivery or reconstructed newer `run_id`.
+
+`ExecutionStopResult` echoes the four request fields and includes `effect`,
+`finalized`, `durable`, optional `core_state`, `state`, `causes` (error strings),
+and `error:{code,message}`:
+
+| HTTP / effect | Meaning |
+|---|---|
+| 202 `pending` | Cancellation accepted; owned work, resources, catalog and journal finalization remain outstanding. `finalized=false`, `durable=false`; no terminal or durable success is established. |
+| 200 `completed` | Full finalization and the currently qualified durable outcome are verified: `finalized=true`, `durable=true`, with `state`. Read the actual `core_state`; completion does not mean task success or automatically mean canceled. |
+| 503 `uncertain` | Finalization finished but requires inspection: `finalized=true`, with `execution_stop_uncertain`, available state and actual causes. `durable` may still be true when an independent run/cleanup error or unresolved review remains. |
+| Error / `rejected` | Reference, authority or validation failed, the native manager was unavailable (503 `execution_unavailable`), or the request was canceled (408 `execution_canceled`) before cancellation was accepted; `finalized=false`, `durable=false`. Authentication is handled separately below. |
+
+An opened delivery can report `done`, `blocked`, `waiting_input`, `waiting_plan`,
+`canceled` or `abandoned`; a completed Stop before opening can omit `core_state`.
+Persistence, ownership, cleanup, release, review and independent resource errors
+must remain visible rather than being hidden as expected cancellation.
+
+Stop error paths include 400 `plan_reference` for unknown/foreign/nonretained
+admission references, 409 `plan_binding` for binding conflicts, 503
+`execution_unavailable`, and 408 `execution_canceled` for request cancellation
+before acceptance. Receipt/canonical validation also uses the common plan errors
+below, including 404 `plan_missing`, 422 `plan_artifact`, 503 `plan_io` and 500
+`plan_store`. This is not an exhaustive promise about underlying validation errors.
+Missing/invalid bearer credentials return middleware HTTP 401 `unauthorized` in
+the generic error body, before the `ExecutionStopResult` handler.
+
+A disconnected or timed-out caller does not revoke accepted Stop or own its
+finalization. Inspect a lost reply; never automatically replay it. Explicit
+reobservation sends the exact same four fields. Up to 64 historical outcomes
+are retained in daemon memory: a server-validated old exact reference may return
+only its cached result without canceling a replacement. These observations are
+neither durable invocation IDs nor cancellation authority. After daemon
+recreation, recover the real receipt, delivery, opening and journal state;
+never treat the former nonce as current.
+
+### Current read availability
+
+GET execution state can return HTTP 503 `plan_io` when fresh progress/review-gate
+facts cannot be verified. This means unavailable, not Done or mutation authority;
+it can reflect persistent I/O or corruption as well as contention. Manually
+reinspect until fresh verified facts are available. A last verified exact Stop
+reference remains a candidate through a later read failure, but every Stop,
+including historical reobservation, still validates receipt, binding and canonical
+workspace authority on the server. This grants no freshness to Start, Resume,
+Answer or approval. Completing an old Stop cannot clear another mutation's
+uncertainty. Local failures before dispatch allow explicit recovery; a lost reply
+after dispatch does not automatically restore send confirmation.
 
 ## Exact current question answers
 
@@ -327,6 +394,7 @@ result envelopes above. Preserve those effects even when HTTP is non-2xx.
 | Plan | 400 `plan_request`/`plan_reference`; 408 `plan_canceled`; 409 `plan_stale`/`plan_binding`/`plan_transition`; 404 `plan_missing`; 422 `plan_artifact`; 503 `plan_io`/`plan_uncertain`; 500 `plan_store` |
 | Execution | 409 `execution_approval_required`/`execution_exists`/`execution_owned`; 503 `execution_unavailable`/`execution_closing`/`execution_uncertain`; 408 `execution_canceled`; strict request/reference 400; other plan errors as above |
 | Answer | 400 `answer_request`/`answer_reference`/`answer_target`; 409 `answer_stale`/`answer_owned`; 408 `answer_canceled`; 404 `answer_missing`; 422 `answer_artifact`; 503 `answer_io`/`answer_uncertain`; 500 `answer_store`/`answer_recorded_error` |
+| Native execution Stop | 400 `execution_reference` (wire validation) / `plan_reference` (service reference); 409 `plan_binding`; 503 `execution_stop_uncertain` / `execution_unavailable`; 408 `execution_canceled`; receipt/canonical validation uses common plan errors; middleware 401 `unauthorized` uses the generic body |
 | Session Stop | 401 `unauthorized`; 404 `not_found`; 409 `session_not_owned`; 503 `stop_pending`; 500 `stop_failed` |
 
 The Go client separates `not_dispatched`, `read_only`, `rejected`, `succeeded`

@@ -107,3 +107,35 @@ func writeExecutionResult(w http.ResponseWriter, status int, result domain.Execu
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(result)
 }
+
+func (s *Server) stopExecution(w http.ResponseWriter, r *http.Request) {
+	var req domain.ExecutionStopRequest
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	d.DisallowUnknownFields()
+	err := d.Decode(&req)
+	result := domain.ExecutionStopResult{ExecutionStopRequest: req, Effect: domain.ExecutionStopRejected}
+	status, code, message := 400, "execution_reference", "invalid native Stop request"
+	if err == nil && d.Decode(new(json.RawMessage)) == io.EOF && r.URL.RawQuery == "" && req.Target.MissionID == r.PathValue("id") && req.Validate() == nil {
+		result, err = s.Svc.StopExecution(r.Context(), req)
+		if err != nil {
+			status, code = executionErrorStatus(err)
+			message = err.Error()
+		} else {
+			code, message = "", ""
+			switch result.Effect {
+			case domain.ExecutionStopPending:
+				status = http.StatusAccepted
+			case domain.ExecutionStopCompleted:
+				status = http.StatusOK
+			case domain.ExecutionStopUncertain:
+				status = http.StatusServiceUnavailable
+			}
+		}
+	}
+	if code != "" {
+		result.Error = &domain.PlanFailure{Code: code, Message: message}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(result)
+}
