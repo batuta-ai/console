@@ -119,6 +119,9 @@ jobs:
             Assert-EmbeddedAssets
           } *> (Join-Path $env:WINDOWS_EVIDENCE 'web.log')
       - name: Native Go builds, integrity, vet and complete original tests
+        # NEVER-SHIP: exact diagnostic branch, host Go only; inherited by MSYS owner controller.
+        env:
+          BATUTA_NEVER_SHIP_NATIVE_CONSOLE_TRACE: ${{ github.ref == 'refs/heads/batuta/pr8-native-console-decision-trace' && (inputs.ref == '' || inputs.ref == 'refs/heads/batuta/pr8-native-console-decision-trace') && '1' || '' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true

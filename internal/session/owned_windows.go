@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -123,6 +124,8 @@ func (p *ownedProcess) setAnchorOwner() error {
 // Authority comes from a newly created private job and original creation
 // handles. Catalog PIDs and later membership observations cannot create it.
 type ownedProcess struct {
+	decision atomic.Pointer[consoleDecisionTrace] // NEVER-SHIP observation only; never control authority.
+
 	mu       sync.Mutex
 	job      windows.Handle
 	port     windows.Handle
@@ -347,6 +350,7 @@ func (p *ownedProcess) stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.retired && !p.exited {
+		consoleDecisionForced(p, "stop")
 		p.forced = true
 	}
 	return p.signalLocked()
@@ -388,6 +392,7 @@ func (p *ownedProcess) closeHandles() error {
 			*handle = 0
 		}
 	}
+	consoleDecisionEvent(p, "close-handles", err)
 	return err
 }
 
@@ -401,12 +406,16 @@ func (p *ownedProcess) retire(observeErr error) error {
 	if p.native && p.exited {
 		var accounting windowsJobAccounting
 		remainingErr = queryWindowsJob(p.job, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&accounting), uint32(unsafe.Sizeof(accounting)))
+		consoleDecisionAccounting(p, accounting, remainingErr)
 		if remainingErr == nil && accounting.ActiveProcesses != 0 {
+			consoleDecisionForced(p, "retire-active")
 			p.forced = true
 		}
 	}
 	_ = p.signalLocked()
+	consoleDecisionEvent(p, "retire-signal", p.err)
 	drainErr := p.drainJob()
+	consoleDecisionEvent(p, "retire-drain", drainErr)
 	p.retired = true
 	p.err = errors.Join(observeErr, p.err, remainingErr, drainErr, p.closeHandles())
 	return p.err
@@ -419,6 +428,7 @@ func waitOwned(cmd *exec.Cmd, p *ownedProcess) error {
 
 func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 	status, observeErr := windows.WaitForSingleObject(p.root, windows.INFINITE)
+	consoleDecisionRootWait(p, status, observeErr)
 	if observeErr == nil && status != windows.WAIT_OBJECT_0 {
 		observeErr = fmt.Errorf("owned root exit returned wait status %d", status)
 	}
@@ -428,6 +438,7 @@ func waitOwnedOutcome(cmd *exec.Cmd, p *ownedProcess) (error, error) {
 		}
 		p.mu.Lock()
 		p.exited = observeErr == nil && status == windows.WAIT_OBJECT_0
+		consoleDecisionCode(p, observeErr)
 		p.mu.Unlock()
 		return p.retire(observeErr), nil
 	}

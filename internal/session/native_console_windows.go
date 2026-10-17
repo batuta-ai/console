@@ -91,8 +91,9 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	registered := false
 	defer func() {
 		cleanup := streams.Close()
+		consoleDecisionEvent(owned, "deferred-streams-close", cleanup)
 		if console != nil {
-			cleanup = errors.Join(cleanup, console.Close())
+			cleanup = errors.Join(cleanup, consoleDecisionResult(owned, "console-close", console.Close()))
 		}
 		runErr = errors.Join(runErr, cleanup)
 		if registered {
@@ -106,27 +107,36 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 			}
 		}
 		runErr = errors.Join(runErr, context.Cause(ctx))
+		consoleDecisionReturn(owned, ctx, exitCode, runErr)
 	}()
 	terminal, process, err := startWindowsConsole(cmd, 80, 24, streams.children)
 	if err != nil {
 		return exitCode, err
 	}
 	console, owned = terminal.(*windowsTerminal), process
+	beginConsoleDecision(owned)
 	if err := streams.closeChildren(); err != nil {
+		consoleDecisionEvent(owned, "child-close-error", err)
 		return exitCode, errors.Join(err, owned.retire(nil))
 	}
 	ioDone := make(chan error, 3)
 	go func() {
 		_, err := io.Copy(streams.input, cmd.Stdin)
+		consoleDecisionEvent(owned, "stdin-copy-raw", err)
 		// Like exec.Cmd's finite stdin, an exited command may close the input
 		// without consuming the rest; output/observer failures remain errors.
 		if errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_NO_DATA) {
 			err = nil
 		}
-		ioDone <- errors.Join(err, streams.input.Close())
+		ioDone <- errors.Join(err, consoleDecisionResult(owned, "stdin-close", streams.input.Close()))
 	}()
 	copyOutput := func(destination io.Writer, source io.Reader) {
 		_, err := io.Copy(destination, source)
+		if source == streams.stderr {
+			consoleDecisionEvent(owned, "stderr-copy", err)
+		} else {
+			consoleDecisionEvent(owned, "stdout-copy", err)
+		}
 		if err != nil {
 			cancel(err)
 		}
@@ -145,6 +155,7 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	done := make(chan error, 1)
 	go func() {
 		cleanup, wait := waitOwnedOutcome(cmd, owned)
+		consoleDecisionOutcome(owned, cleanup, wait)
 		if cleanup != nil {
 			cleanup = errors.Join(ErrNativeCleanupUnresolved, cleanup)
 		}
@@ -155,19 +166,24 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	}
 	select {
 	case err = <-done:
+		consoleDecisionEvent(owned, "outer-done", err)
 	case <-ctx.Done():
+		consoleDecisionCanceled(owned, ctx)
 		// Win32 input records deliver CTRL+BREAK even when the client inherited
 		// CTRL+C-ignore. Control stays on this freshly owned pseudoconsole.
 		interrupt := []byte("\x1b[3;0;0;1;8;1_\x1b[3;0;0;0;8;1_")
 		written, signalErr := writeTerminalChunk(console, interrupt)
+		consoleDecisionInjection(owned, written, len(interrupt), signalErr)
 		if written != len(interrupt) {
 			signalErr = errors.Join(signalErr, io.ErrShortWrite)
 		}
 		timer := time.NewTimer(2 * time.Second)
 		select {
 		case err = <-done:
+			consoleDecisionEvent(owned, "grace-done", err)
 			err = errors.Join(signalErr, err)
 		case <-timer.C:
+			consoleDecisionEvent(owned, "grace-timer", nil)
 			err = errors.Join(ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved, signalErr, owned.stop(), <-done)
 		}
 		timer.Stop()
@@ -180,9 +196,11 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	for joined := 0; joined < 3; joined++ {
 		select {
 		case err := <-ioDone:
+			consoleDecisionEvent(owned, "pipe-joined", err)
 			runErr = errors.Join(runErr, err)
 		case <-timer.C:
-			runErr = errors.Join(runErr, exec.ErrWaitDelay, streams.Close())
+			consoleDecisionEvent(owned, "pipe-timer", nil)
+			runErr = errors.Join(runErr, exec.ErrWaitDelay, consoleDecisionResult(owned, "pipe-timeout-close", streams.Close()))
 			for ; joined < 3; joined++ {
 				runErr = errors.Join(runErr, <-ioDone)
 			}
@@ -190,8 +208,10 @@ func (m *Manager) runWindowsConsoleCommand(ctx context.Context, cmd *exec.Cmd) (
 	}
 	owned.mu.Lock()
 	forced, code := owned.forced, owned.exitCode
+	consoleDecisionFinal(owned, ctx, forced, code)
 	owned.mu.Unlock()
 	if forced || ctx.Err() != nil && code != 0 {
+		consoleDecisionEvent(owned, "final-promoted", nil)
 		runErr = errors.Join(runErr, ErrNativeCleanupUnresolved, publication.ErrReviewCleanupUnresolved)
 	}
 	if runErr == nil && ctx.Err() == nil {
