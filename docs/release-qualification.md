@@ -1080,3 +1080,57 @@ exit. There is no promise that every prior Stop failure is logged or reported by
 daemon shutdown, and pending finalization does not guarantee eventual success.
 Descriptor errors occurring after admission freeze can remain reported by later
 Shutdown, distinct from completed post-stopped-write failures.
+
+## Native delivery Stop: bounded local evidence — 2026-10-16
+
+Native delivery Stop is implemented locally and remains unreleased. The frozen
+source base is `92b8d138879f3cf05d957cd9341916a96f849734` (tree
+`587906d4f1819b2f54da39727508885347c03fde`, 664 tracked files). This supplements
+the historical session StopA evidence above; it does not replace its limits.
+
+Bounded backend Service/Store/Core/process proofs and web/TUI model checks passed:
+69 ordinary Windows backend cases with `-race`, 102 Windows TUI model journey
+cases with `-race`, and 215 web tests plus type checking and build. The root-local
+full TUI run recorded 821 PASS with `-race` on the preceding 663-file source;
+all those blobs are unchanged in this base. The added Windows-only test did not
+execute in that macOS run. Five actual Chromium public test-host journeys used
+synthetic Codex/Claude providers across two missions, questions, resume, Stop
+202/200/503 and restart. These are public-surface test-host proofs, not
+unmodified packaged-daemon or logged-in-provider qualification.
+
+A separate native Windows built-Console ConPTY foundation case and seven original
+regressions passed with the parent test under `-race` against the 664-file source.
+The child Console used Go 1.27.2 with CGO disabled; its build omitted VCS stamping
+and was externally source-hash-bound. An ordinary limited primary token had no
+enabled Administrators, Backup, Restore or CreateSymbolicLink privileges. This
+proved bounded keyboard/catalog/binding/source/explicit-approval/receipt flows
+and a new Console using the same API/Store. It did not prove daemon restart,
+two executing roots, Windows provider/Stop operation or packaged beta behavior.
+Stop introduces no privilege or Developer Mode requirement.
+
+Separately, PR 7 merged as `96e55cf0989692e9b0f7126ee82cbba195080b36`
+(reviewed head `6f40fb34381f02d5d94f265adefb18bc1c30aef2`; merged tree
+`bfd84875c9e04ecb00d5089bad506abded8449fe`). Its ten CI jobs passed, including
+3,812 PASS, zero fail/skip in each full Windows run; root-local macOS recorded
+789 PASS with `-race`. That source does not contain native delivery Stop. A direct
+post-merge Console check at `96e55cf` instead recorded 3,810 PASS and two failures
+in concurrent login initialization/readiness (`check_cancelled`); the concurrent
+release matrix on the same source was green. The cause remains unknown: neither
+current-main nor native-Stop full CI is claimed green.
+
+Current execution-state reads can return 503 `plan_io` rather than verified
+progress/review authority. Two new public HTTP reproductions identified Core 55
+review-ownership guard contention while the caller context remained valid; the
+holder and earlier historical causes remain unknown. This does not explain every
+`plan_io`, which can also represent persistent I/O or corruption. Manual
+reinspection must recover fresh verified facts before other mutations; a retained
+exact Stop candidate remains subject to server receipt/binding/canonical checks.
+No product timeout or error-handling fix is claimed. Council advice requested
+revision of a proposed test contract because of a test-helper deadline bug;
+that is not a product fix or release approval.
+
+Full native Stop Windows ConPTY/web journeys, two executing roots, real logged-in
+providers, unmodified packaged-daemon flows, Linux runtime, full ordinary
+Windows/Linux CI, final deep/integration review, Council advice and maintainer
+release gates remain open. These bounded results do not complete Task 43/44,
+beta qualification, publication or installation.

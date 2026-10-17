@@ -104,6 +104,56 @@ func ValidateApprovedDeliveryContext(ctx context.Context, workspace string, b do
 	return snapshot.Records()[0].Digest, nil
 }
 
+// ApprovedExecutionEvidence keeps the terminal and its projection on one
+// qualified capture. A derived panel state alone does not witness finalization.
+type ApprovedExecutionEvidence struct {
+	OpenedDigest   string
+	LastSequence   int
+	TerminalState  string
+	TerminalDigest string
+	CleanupPending bool
+	View           domain.WatchView
+}
+
+func ObserveApprovedExecutionContext(ctx context.Context, workspace string, b domain.MissionBinding, a domain.PlanApproval) (ApprovedExecutionEvidence, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Second, ErrArtifactIO)
+	defer cancel()
+	p, snapshot, err := approvedDeliverySnapshot(ctx, workspace, b, a)
+	if err != nil {
+		return ApprovedExecutionEvidence{}, err
+	}
+	return approvedExecutionEvidence(ctx, workspace, b, p, snapshot)
+}
+
+func approvedExecutionEvidence(ctx context.Context, workspace string, b domain.MissionBinding, p routing.Plan, snapshot journal.Snapshot) (ApprovedExecutionEvidence, error) {
+	view, err := projectApprovedSnapshot(ctx, workspace, b, p, snapshot)
+	if err != nil {
+		return ApprovedExecutionEvidence{}, err
+	}
+	records := snapshot.Records()
+	last := records[len(records)-1]
+	out := ApprovedExecutionEvidence{OpenedDigest: records[0].Digest, LastSequence: last.Seq, View: view}
+	if last.Kind != loop.KindTerminal {
+		return out, nil
+	}
+	var terminal struct {
+		State              string `json:"state"`
+		CleanupPending     bool   `json:"cleanup_pending"`
+		BookkeepingPending bool   `json:"bookkeeping_pending"`
+	}
+	if err := json.Unmarshal(last.Detail, &terminal); err != nil {
+		return ApprovedExecutionEvidence{}, ErrArtifactInvalid
+	}
+	switch terminal.State {
+	case loop.StateDone, loop.StateBlocked, loop.StateWaitingInput, loop.StateWaitingPlan, loop.StateCanceled, loop.StateAbandoned:
+	default:
+		return ApprovedExecutionEvidence{}, ErrArtifactInvalid
+	}
+	out.TerminalState, out.TerminalDigest = terminal.State, last.Digest
+	out.CleanupPending = terminal.CleanupPending || terminal.BookkeepingPending
+	return out, nil
+}
+
 // Native projection uses the original receipt and chain, independently of the
 // editable plan path. Core owns both task state and supervision progression.
 func ProjectApprovedMission(workspace string, b domain.MissionBinding, a domain.PlanApproval) (domain.WatchView, error) {

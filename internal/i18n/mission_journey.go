@@ -2,6 +2,14 @@ package i18n
 
 func init() {
 	for key, pair := range map[string][2]string{
+		"journey_stop_history":        {"Historical Stop observation for the named attempt", "Observação histórica de Stop para a tentativa identificada"},
+		"journey_stop_not_sent":       {"Stop was not sent; select z to review explicitly again", "Stop não foi enviado; selecione z para revisar explicitamente novamente"},
+		"journey_stop":                {"Stop this exact native delivery attempt", "Parar esta tentativa exata de entrega nativa"},
+		"journey_stop_observe":        {"Reobserve Stop using the same exact request", "Reobservar Stop usando a mesma requisição exata"},
+		"journey_stop_pending":        {"Cancellation pending; y explicitly reobserve the same attempt", "Cancelamento pendente; y reobservar explicitamente a mesma tentativa"},
+		"journey_stop_completed":      {"Stop finalized durably; actual Core state follows", "Stop finalizado de forma durável; estado real do Core abaixo"},
+		"journey_stop_uncertain":      {"Stop outcome uncertain; no automatic retry; y explicitly reobserve", "Resultado do Stop incerto; sem repetição automática; y reobservar explicitamente"},
+		"journey_stop_rejected":       {"Stop rejected; inspect the retained request and error", "Stop rejeitado; inspecione a requisição e o erro mantidos"},
 		"journey_unconfirmed":         {"Unconfirmed response; inspect explicitly", "Resposta não confirmada; inspecione explicitamente"},
 		"journey_question_changed":    {"Question changed; previous identity and draft retained. Inspect again", "Pergunta alterada; identidade e texto anteriores mantidos. Inspecione novamente"},
 		"journey_not_done":            {"Completion is not verified", "Conclusão não verificada"},
@@ -11,7 +19,7 @@ func init() {
 		"journey_native_snapshot":     {"Original approved snapshot", "Snapshot original aprovado"},
 		"journey_current_unavailable": {"Current editable file bytes are unavailable through this API after native binding", "Bytes do arquivo editável atual indisponíveis nesta API após vínculo nativo"},
 		"journey_new_answer":          {"Discard the previous draft and use the displayed current question", "Descartar texto anterior e usar a pergunta atual exibida"},
-		"journey_keys":                {"p interactive planning  b bind existing plan  o read source  k receipt  h historical receipt  f inspect/refresh  e start  g resume  j answer  n new answer draft  w full progress/evidence  l inspect session", "p planejamento interativo  b vincular plano existente  o ler fonte  k recibo  h recibo histórico  f inspecionar/atualizar  e executar  g retomar  j responder  n nova resposta  w progresso/evidências completos  l inspecionar sessão"},
+		"journey_keys":                {"p interactive planning  b bind existing plan  o read source  k receipt  h historical receipt  f inspect/refresh  e start  g resume  j answer  n new answer draft  w full progress/evidence  l inspect session  z native Stop  y reobserve exact Stop", "p planejamento interativo  b vincular plano existente  o ler fonte  k recibo  h recibo histórico  f inspecionar/atualizar  e executar  g retomar  j responder  n nova resposta  w progresso/evidências completos  l inspecionar sessão  z Stop nativo  y reobservar Stop exato"},
 		"journey_pending":             {"Mission request pending; no duplicate dispatch", "Requisição da missão pendente; sem duplicação"},
 		"journey_stale":               {"Read-only facts; refresh required for execution/answer authority", "Fatos somente leitura; atualize para autorizar execução/resposta"},
 		"journey_failed":              {"Request failed; confirmed facts and draft retained", "Falha na requisição; fatos confirmados e texto mantidos"},

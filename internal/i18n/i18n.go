@@ -32,6 +32,15 @@ func T(key string) string {
 }
 
 var en = map[string]string{
+	"journey_inspection_open":         "w full progress/evidence, pending and retained Stop results",
+	"journey_progress_title":          "Progress snapshot (Esc, f, w refresh) / retained Stop observations",
+	"journey_inspection_read_keys":    "up/down pgup/pgdown pages  esc back",
+	"journey_inspection_confirm_keys": "up/down pgup/pgdown pages  enter confirm  esc back",
+	"journey_inspection_source_keys":  "up/down pgup/pgdown pages  y review all bytes  o reload  esc back",
+	"journey_inspection_readonly":     "Inspection only; paging grants no authority.",
+	"journey_inspection_changed":      "Selection changed; Enter blocked. Esc to inspect again.",
+	"journey_inspection_rows":         "Rows",
+
 	"workspace_session_owner":     "Reported session owner / client",
 	"workspace_inspect_from_form": "Esc returns to workspace details/list for f inspection and d acknowledgment. The draft and uncertain identity are retained.",
 	"workspace_unknown_create":    "A previous create for this directory has an unresolved effect. Inspect and select an actual workspace ID; do not create it again.",
@@ -158,6 +167,15 @@ var en = map[string]string{
 }
 
 var pt = map[string]string{
+	"journey_inspection_open":         "w progresso/evidências completos, Stop pendente e resultados mantidos",
+	"journey_progress_title":          "Snapshot do progresso (Esc, f, w atualiza) / observações de Stop mantidas",
+	"journey_inspection_read_keys":    "up/down pgup/pgdown páginas  esc voltar",
+	"journey_inspection_confirm_keys": "up/down pgup/pgdown páginas  enter confirmar  esc voltar",
+	"journey_inspection_source_keys":  "up/down pgup/pgdown páginas  y revisar todos bytes  o reler  esc voltar",
+	"journey_inspection_readonly":     "Somente inspeção; paginar não concede autoridade.",
+	"journey_inspection_changed":      "Seleção mudou; Enter bloqueado. Esc para inspecionar novamente.",
+	"journey_inspection_rows":         "Linhas",
+
 	"workspace_session_owner":     "Proprietário / cliente reportados da sessão",
 	"workspace_inspect_from_form": "Esc volta aos detalhes/lista para f inspecionar e d reconhecer. Rascunho e identidade incerta são preservados.",
 	"workspace_unknown_create":    "Uma criação anterior para este diretório tem efeito não resolvido. Inspecione e selecione um ID real; não crie novamente.",

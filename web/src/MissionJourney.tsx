@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  api, executionLabel, journeyMutation, samePlan, sameQuestion, verifiedPlanText, verifyExecution, verifyReceipt,
-  type AnswerResult, type ApprovalResult, type ExecutionResult, type ExecutionState, type Mission, type PlanApproval, type PlanDetail, type QuestionIdentity, type Watch,
+  api, executionLabel, journeyMutation, stopExecution, ExecutionStopError, validRunID, executionDelivery, samePlan, sameQuestion, verifiedPlanText, verifyExecution, verifyReceipt,
+  type ExecutionStopRequest, type ExecutionStopResult, type AnswerResult, type ApprovalResult, type ExecutionResult, type ExecutionState, type Mission, type PlanApproval, type PlanDetail, type QuestionIdentity, type Watch,
 } from "./lib";
 import { bounded, READ_INTERVAL } from "./sync";
 import { T } from "./i18n";
@@ -20,6 +20,12 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
   const [text, setText] = useState("");
   const [receipt, setReceipt] = useState<PlanApproval | null>(null);
   const [execution, setExecution] = useState<ExecutionState | null>(null);
+  const [stopCandidate, setStopCandidate] = useState<ExecutionStopRequest | null>(null);
+  const [selectedStop, setSelectedStop] = useState<ExecutionStopRequest | null>(null);
+  const [stopResult, setStopResult] = useState<ExecutionStopResult | null>(null);
+  const [stopError, setStopError] = useState("");
+  const [stopNotSent, setStopNotSent] = useState(false);
+  const restoredStop = useRef(false);
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
@@ -37,6 +43,7 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
   const workspaceQuery = `workspace_id=${encodeURIComponent(mission.workspace_id)}`;
   const storageKey = `bt-journey:${mission.workspace_id}:${mission.id}`;
   const snapshotKey = `${storageKey}:approved`;
+  const stopKey = `${storageKey}:native-stop`;
   const executionPendingKey = `${storageKey}:execution-pending`;
 
   function retainSnapshot() {
@@ -50,9 +57,10 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
     setBlocked(value);
   }
 
-  function showExecution(state: ExecutionState | null) {
+  function showExecution(state: ExecutionState | null, verifiedStop = false) {
     const target = state?.watch?.pending_question?.target;
     setAnswerDraft(draft => draft && target && sameQuestion(draft.target, target) ? draft : null);
+    setStopCandidate(verifiedStop && state?.active && validRunID(state.run_id) ? structuredClone({ target: state.target, approval_id: state.approval_id, delivery: state.delivery, run_id: state.run_id }) : null);
     current.current.execution = state;
     setExecution(state);
     watchCallback.current(state?.watch || null, state);
@@ -65,12 +73,36 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
     signal.throwIfAborted();
     if (ticket !== generation.current || signal.aborted) return;
     if (read.id !== approved.id) throw new Error(T("journey_invalid_plan"));
+    if (!restoredStop.current) {
+      const saved = sessionStorage.getItem(stopKey);
+      if (saved) {
+        const record: { request: ExecutionStopRequest; result: ExecutionStopResult | null } = JSON.parse(saved);
+        if (record.request?.approval_id && record.request.approval_id !== approved.id &&
+          record.request.target?.mission_id === mission.id && record.request.target.binding?.workspace_id === mission.workspace_id &&
+          validRunID(record.request.run_id) && record.request.delivery === await executionDelivery(record.request.approval_id, record.request.target)) {
+          signal.throwIfAborted();
+          if (ticket !== generation.current) return;
+          // Preserve the old receipt's history without assigning it authority over this receipt.
+          sessionStorage.setItem(`${stopKey}:${record.request.approval_id}`, saved);
+          sessionStorage.removeItem(stopKey);
+        } else {
+          if (!record.request || !samePlan(record.request.target, approved.identity) || record.request.approval_id !== approved.id || !validRunID(record.request.run_id) || record.request.delivery !== await executionDelivery(approved.id, approved.identity)) throw new Error(T("journey_invalid_state"));
+          signal.throwIfAborted();
+          if (ticket !== generation.current) return;
+          setSelectedStop(record.request);
+          setStopResult(record.result);
+        }
+      }
+      restoredStop.current = true;
+    }
     const state = await api<ExecutionState>(`${base}/execution?${workspaceQuery}&approval_id=${encodeURIComponent(approved.id)}`, { signal });
     signal.throwIfAborted();
     verifyExecution(state, read, current.current.execution);
     const binding = current.current.mission.binding;
     if (binding?.delivery_id && (state.delivery !== binding.delivery_id || state.opened_digest !== binding.opened_digest)) throw new Error(T("journey_invalid_state"));
-    if (ticket === generation.current) showExecution(state);
+    const verifiedStop = state.active && state.delivery === await executionDelivery(read.id, read.identity);
+    signal.throwIfAborted();
+    if (ticket === generation.current) showExecution(state, verifiedStop);
   }
 
   async function readPlan(ticket: number, signal: AbortSignal, snapshot?: PlanDetail) {
@@ -218,8 +250,75 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
     if (ticket !== generation.current || signal.aborted) return;
     if (!resume && result && samePlan(result.target, receipt.identity) && result.approval_id === receipt.id && result.effect === "rejected") sessionStorage.removeItem(executionPendingKey);
     if (!result || !samePlan(result.target, receipt.identity) || result.approval_id !== receipt.id || result.effect !== "started" || result.delivery !== execution.delivery ||
-      !result.opened_digest || (resume && result.opened_digest !== execution.opened_digest)) throw new Error(result?.error?.message || T("journey_invalid_state"));
+      !validRunID(result.run_id) || !result.opened_digest || (resume && result.opened_digest !== execution.opened_digest)) throw new Error(result?.error?.message || T("journey_invalid_state"));
+    const verifiedStop = result.delivery === await executionDelivery(receipt.id, receipt.identity);
+    signal.throwIfAborted();
+    if (ticket !== generation.current) return;
+    if (verifiedStop) setStopCandidate(structuredClone({ ...body, delivery: result.delivery, run_id: result.run_id }));
     await readExecution(receipt, ticket, signal);
+  }
+
+  function selectStop() {
+    if (lock.current || !stopCandidate) return;
+    const exact = structuredClone(stopCandidate);
+    try {
+      sessionStorage.setItem(stopKey, JSON.stringify({ request: exact, result: null }));
+      setSelectedStop(exact);
+      setStopResult(null);
+      setStopError("");
+      setStopNotSent(false);
+    } catch (e) {
+      setBlocked(true);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function submitStop() {
+    if (lock.current || !selectedStop || (stopResult && stopResult.effect !== "pending")) return;
+    const exact = structuredClone(selectedStop);
+    const ticket = ++generation.current;
+    const controller = new AbortController();
+    operation.current = controller;
+    lock.current = true;
+    setBusy(true);
+    let dispatched = false;
+    let previouslyBlocked = blocked;
+    const uncertain: ExecutionStopResult = { ...exact, effect: "uncertain", finalized: false, durable: false };
+    try {
+      previouslyBlocked = blocked || sessionStorage.getItem(storageKey) === "inspect";
+      markBlocked(true);
+      sessionStorage.setItem(stopKey, JSON.stringify({ request: exact, result: uncertain }));
+      if (!stopResult) setStopResult(uncertain);
+      setStopError("");
+      setStopNotSent(false);
+      dispatched = true;
+      const result = await bounded(signal => stopExecution(exact, signal), controller.signal);
+      if (ticket !== generation.current) return;
+      sessionStorage.setItem(stopKey, JSON.stringify({ request: exact, result }));
+      setStopResult(result);
+      // A historical finalization must not project over a replacement admission.
+      if (result.state && current.current.execution?.run_id === exact.run_id) showExecution(result.state);
+      if (result.effect === "completed") markBlocked(previouslyBlocked);
+    } catch (e) {
+      if (ticket !== generation.current) return;
+      if (!dispatched) {
+        setBlocked(true);
+        setStopNotSent(true);
+        setStopError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      const result = e instanceof ExecutionStopError ? e.result : uncertain;
+      setBlocked(true);
+      setStopResult(result);
+      setStopError(e instanceof ExecutionStopError && e.result.error ? "" : e instanceof Error ? e.message : String(e));
+      try {
+        sessionStorage.setItem(stopKey, JSON.stringify({ request: exact, result }));
+      } catch (storageError) {
+        setStopError(message => `${message} ${storageError instanceof Error ? storageError.message : String(storageError)}`.trim());
+      }
+    } finally {
+      if (ticket === generation.current) { lock.current = false; setBusy(false); }
+    }
   }
 
   async function sendAnswer(ticket: number, signal: AbortSignal) {
@@ -274,6 +373,19 @@ function Journey({ mission, refreshVersion, onWatch, children }: JourneyProps) {
       </div>
     </> : null}
     {execution ? <p className="mono">{execution.delivery} · {execution.opened_digest || "—"}</p> : null}
+    {stopCandidate && (!selectedStop || selectedStop.run_id !== stopCandidate.run_id) ? <Button variant="secondary" disabled={busy} onClick={selectStop}>{T("journey_stop")}</Button> : null}
+    {selectedStop ? <div>
+      <p className="mono">{selectedStop.delivery} · {selectedStop.run_id}</p>
+      {stopNotSent ? <><p role="status">{T("journey_stop_not_sent")}</p>{stopError ? <Alert tone="warning">{stopError}</Alert> : null}</> : null}
+      {!stopResult ? <><p>{T("journey_stop_confirm")}</p><Button disabled={busy} onClick={submitStop}>{T("journey_stop_confirm_action")}</Button></> : <>
+        <p role="status">{T(stopResult.effect === "pending" ? "journey_stop_pending" : stopResult.effect === "completed" ? "journey_stop_completed" : stopResult.effect === "rejected" ? "journey_stop_rejected" : "journey_stop_uncertain")}</p>
+        {stopResult.core_state ? <p>{T("journey_stop_core")} {stopResult.core_state}</p> : null}
+        {stopResult.causes?.map((cause, index) => <p key={index}>{cause}</p>)}
+        {stopResult.error ? <Alert tone="warning">{stopResult.error.code}: {stopResult.error.message}</Alert> : null}
+        {stopError ? <Alert tone="warning">{stopError}</Alert> : null}
+        {stopResult.effect === "pending" ? <Button variant="secondary" disabled={busy} onClick={submitStop}>{T("journey_stop_observe")}</Button> : null}
+      </>}
+    </div> : null}
     {execution?.gate?.reason ? <p>{execution.gate.reason}</p> : null}
     {question ? <div>
       <p>{question.prompt}</p>

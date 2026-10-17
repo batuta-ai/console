@@ -34,6 +34,7 @@ func TestJourneyUncertainResumeInspectsRunningOriginalWithoutReplay(t *testing.T
 		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/resume") {
 			calls++
 			f.state.Active = true
+			f.state.RunID = strings.Repeat("b", 64)
 			w.WriteHeader(500)
 			_, _ = w.Write([]byte("lost started result"))
 			return

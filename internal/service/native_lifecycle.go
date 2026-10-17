@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 
 	"github.com/batuta-ai/console/internal/domain"
@@ -17,16 +19,23 @@ type nativeExecutions struct {
 	drained   chan struct{}
 	closeOnce sync.Once
 	drainErr  error
+	completed []domain.ExecutionStopResult
 }
 
 type nativeExecution struct {
-	mission   string
-	workspace string
-	delivery  string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	ready     chan nativeStartOutcome
-	readyOnce sync.Once
+	request    domain.ExecutionRequest
+	runID      string
+	outcomeMu  sync.Mutex
+	coreState  string
+	runErr     error
+	cleanupErr error
+	mission    string
+	workspace  string
+	delivery   string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	ready      chan nativeStartOutcome
+	readyOnce  sync.Once
 }
 
 type nativeStartOutcome struct {
@@ -40,6 +49,14 @@ func newNativeExecutions() *nativeExecutions {
 }
 
 func (n *nativeExecutions) admit(mission, workspace, delivery string) (*nativeExecution, error) {
+	return n.admitOwned(mission, workspace, delivery, domain.ExecutionRequest{})
+}
+
+func (n *nativeExecutions) admitExecution(req domain.ExecutionRequest, delivery string) (*nativeExecution, error) {
+	return n.admitOwned(req.Target.MissionID, req.Target.Binding.CanonicalRoot, delivery, req)
+}
+
+func (n *nativeExecutions) admitOwned(mission, workspace, delivery string, req domain.ExecutionRequest) (*nativeExecution, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.closing {
@@ -50,8 +67,12 @@ func (n *nativeExecutions) admit(mission, workspace, delivery string) (*nativeEx
 			return nil, domain.ErrExecutionExists
 		}
 	}
+	var nonce [32]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(n.ctx)
-	job := &nativeExecution{mission: mission, workspace: workspace, delivery: delivery, ctx: ctx, cancel: cancel, ready: make(chan nativeStartOutcome, 1)}
+	job := &nativeExecution{request: req, runID: hex.EncodeToString(nonce[:]), mission: mission, workspace: workspace, delivery: delivery, ctx: ctx, cancel: cancel, ready: make(chan nativeStartOutcome, 1)}
 	n.jobs[delivery] = job
 	n.active.Add(1)
 	return job, nil
@@ -60,12 +81,17 @@ func (n *nativeExecutions) admit(mission, workspace, delivery string) (*nativeEx
 func (n *nativeExecutions) finish(job *nativeExecution) {
 	job.cancel()
 	n.mu.Lock()
-	delete(n.jobs, job.delivery)
+	if n.jobs[job.delivery] == job {
+		delete(n.jobs, job.delivery)
+	}
 	n.mu.Unlock()
 	n.active.Done()
 }
 
 func (job *nativeExecution) signal(result domain.ExecutionResult, err error) {
+	if result.Effect != domain.ExecutionRejected {
+		result.RunID = job.runID
+	}
 	job.readyOnce.Do(func() { job.ready <- nativeStartOutcome{result, err} })
 }
 

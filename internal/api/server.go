@@ -60,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/missions/{id}/execution", s.auth(s.startExecution))
 	mux.HandleFunc("GET /v0/missions/{id}/execution", s.auth(s.executionState))
 	mux.HandleFunc("POST /v0/missions/{id}/execution/resume", s.auth(s.resumeExecution))
+	mux.HandleFunc("POST /v0/missions/{id}/execution/stop", s.auth(s.stopExecution))
 	mux.HandleFunc("GET /v0/accounts", s.auth(s.listAccounts))
 	mux.HandleFunc("POST /v0/accounts", s.auth(s.createAccount))
 	mux.HandleFunc("PATCH /v0/accounts/{id}", s.auth(s.renameAccount))

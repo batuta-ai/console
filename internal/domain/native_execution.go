@@ -40,6 +40,7 @@ const (
 )
 
 type ExecutionResult struct {
+	RunID        string          `json:"run_id,omitempty"`
 	Target       PlanIdentity    `json:"target"`
 	ApprovalID   string          `json:"approval_id"`
 	Effect       ExecutionEffect `json:"effect"`
@@ -49,6 +50,7 @@ type ExecutionResult struct {
 }
 
 type ExecutionState struct {
+	RunID        string         `json:"run_id,omitempty"`
 	Gate         *ExecutionGate `json:"gate,omitempty"`
 	Target       PlanIdentity   `json:"target"`
 	ApprovalID   string         `json:"approval_id"`
@@ -66,4 +68,47 @@ type ExecutionGate struct {
 	ReviewID       string `json:"review_id,omitempty"`
 	EvidenceDigest string `json:"evidence_digest,omitempty"`
 	Reason         string `json:"reason,omitempty"`
+}
+
+// ExecutionStopRequest names one daemon admission, including its preparation.
+// RunID is never reused by resume or daemon recreation.
+type ExecutionStopRequest struct {
+	Target     PlanIdentity `json:"target"`
+	ApprovalID string       `json:"approval_id"`
+	Delivery   string       `json:"delivery"`
+	RunID      string       `json:"run_id"`
+}
+
+func ValidExecutionRunID(value string) bool {
+	raw, err := hex.DecodeString(value)
+	return err == nil && len(raw) == 32 && hex.EncodeToString(raw) == value
+}
+
+func (r ExecutionStopRequest) Validate() error {
+	if r.Target.Validate() != nil || r.Target.Binding.DeliveryID != "" || r.ApprovalID == "" || r.Delivery != ExecutionDelivery(r.ApprovalID, r.Target) || !ValidExecutionRunID(r.RunID) {
+		return ErrInvalidReference
+	}
+	return nil
+}
+
+type ExecutionStopEffect string
+
+const (
+	ExecutionStopRejected  ExecutionStopEffect = "rejected"
+	ExecutionStopPending   ExecutionStopEffect = "pending"
+	ExecutionStopCompleted ExecutionStopEffect = "completed"
+	ExecutionStopUncertain ExecutionStopEffect = "uncertain"
+)
+
+// Completed describes verified finalization, not a synthesized Core state.
+// Causes preserves run/cancellation errors even when durability is verified.
+type ExecutionStopResult struct {
+	ExecutionStopRequest
+	Effect    ExecutionStopEffect `json:"effect"`
+	Finalized bool                `json:"finalized"`
+	Durable   bool                `json:"durable"`
+	CoreState string              `json:"core_state,omitempty"`
+	State     *ExecutionState     `json:"state,omitempty"`
+	Causes    []string            `json:"causes,omitempty"`
+	Error     *PlanFailure        `json:"error,omitempty"`
 }
