@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"debug/buildinfo"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,6 +64,7 @@ type publicFlowConfig struct {
 	Home, Core, Helper, Provider, Bin, Skills              string
 	CoreSHA256, HelperSHA256, SourceRevision, SourceDigest string
 	Web                                                    bool
+	ObserveStops                                           bool `json:",omitempty"`
 }
 
 type publicFlowControl struct {
@@ -164,7 +167,8 @@ func publicFlowServe(t *testing.T) {
 		web, err = fs.Sub(webui.Dist, "dist")
 		publicFlowCheck(t, err)
 	}
-	srv := &http.Server{Handler: (&api.Server{Svc: svc, Token: token, Web: web}).Handler(), ReadHeaderTimeout: 5 * time.Second}
+	handler, stopObserver := publicFlowObserveStops((&api.Server{Svc: svc, Token: token, Web: web}).Handler(), cfg.ObserveStops)
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	// Defer runs before testing cleanups, keeping synthetic readiness alive until joins.
 	var served chan error
 	defer func() {
@@ -237,6 +241,8 @@ func publicFlowServe(t *testing.T) {
 			buf := make([]byte, 4<<20)
 			n := runtime.Stack(buf, true)
 			publicFlowCheck(t, enc.Encode(publicFlowEvent{Kind: "stacks", Stacks: string(buf[:n])}))
+		case "stop_observations":
+			publicFlowCheck(t, enc.Encode(publicFlowEvent{Kind: cmd.Op, Data: stopObserver.snapshot()}))
 		case "drain":
 			return
 		default:
@@ -574,4 +580,122 @@ func publicFlowBrowserControls(t *testing.T, cfg publicFlowConfig) (func(publicF
 		}
 	}
 	return control, cleanup
+}
+
+// The opt-in observer records only Stop requests consumed by the original API.
+// No goroutine/channel is added: HTTP Shutdown joins handlers before Store.Close,
+// and the existing owned control pipe carries synchronous snapshots.
+const publicFlowStopBodyLimit = 16 << 10
+const publicFlowStopRecordLimit = 32
+
+type publicFlowStopObservation struct {
+	Sequence   int                          `json:"sequence"`
+	Path       string                       `json:"path"`
+	Request    *domain.ExecutionStopRequest `json:"request,omitempty"`
+	Status     int                          `json:"status"`
+	BodyBytes  int                          `json:"body_bytes"`
+	BodySHA256 string                       `json:"body_sha256"`
+	Truncated  bool                         `json:"truncated"`
+}
+
+type publicFlowStopSnapshot struct {
+	Enabled  bool                        `json:"enabled"`
+	Count    int                         `json:"count"`
+	InFlight int                         `json:"in_flight"`
+	Overflow bool                        `json:"overflow"`
+	Records  []publicFlowStopObservation `json:"records"`
+}
+
+type publicFlowStopObserver struct {
+	mu    sync.Mutex
+	state publicFlowStopSnapshot
+}
+
+func (o *publicFlowStopObserver) snapshot() publicFlowStopSnapshot {
+	if o == nil {
+		return publicFlowStopSnapshot{}
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s := o.state
+	s.Records = append([]publicFlowStopObservation(nil), s.Records...)
+	return s
+}
+
+type publicFlowStopBody struct {
+	io.ReadCloser
+	captured []byte
+	consumed int
+}
+
+func (b *publicFlowStopBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.consumed += n
+	remaining := publicFlowStopBodyLimit - len(b.captured)
+	b.captured = append(b.captured, p[:min(n, remaining)]...)
+	return n, err
+}
+
+type publicFlowStopWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+// Only the JSON Stop route is wrapped. All other routes (including streaming
+// and upgrades) retain their original writer; ResponseController can unwrap it.
+func (w *publicFlowStopWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *publicFlowStopWriter) WriteHeader(status int) {
+	if w.status == 0 && status >= 200 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *publicFlowStopWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func publicFlowObserveStops(next http.Handler, enabled bool) (http.Handler, *publicFlowStopObserver) {
+	if !enabled {
+		return next, nil
+	}
+	o := &publicFlowStopObserver{state: publicFlowStopSnapshot{Enabled: true}}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Path, "/")
+		if r.Method != http.MethodPost || len(parts) != 6 || parts[1] != "v0" || parts[2] != "missions" || parts[3] == "" || parts[4] != "execution" || parts[5] != "stop" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		o.mu.Lock()
+		o.state.Count++
+		sequence := o.state.Count
+		o.state.InFlight++
+		o.mu.Unlock()
+		body := &publicFlowStopBody{ReadCloser: r.Body}
+		r.Body = body
+		writer := &publicFlowStopWriter{ResponseWriter: w}
+		// Tee only bytes requested by the original handler, never pre-read a body or
+		// buffer a response. Do not retain headers or arbitrary request body text.
+		defer func() {
+			sum := sha256.Sum256(body.captured)
+			record := publicFlowStopObservation{Sequence: sequence, Path: r.URL.Path, Status: writer.status, BodyBytes: body.consumed, BodySHA256: hex.EncodeToString(sum[:]), Truncated: body.consumed > publicFlowStopBodyLimit}
+			var request domain.ExecutionStopRequest
+			decoder := json.NewDecoder(bytes.NewReader(body.captured))
+			decoder.DisallowUnknownFields()
+			if !record.Truncated && decoder.Decode(&request) == nil && decoder.Decode(new(json.RawMessage)) == io.EOF && request.Validate() == nil {
+				record.Request = &request
+			}
+			o.mu.Lock()
+			defer o.mu.Unlock()
+			o.state.InFlight--
+			if len(o.state.Records) < publicFlowStopRecordLimit {
+				o.state.Records = append(o.state.Records, record)
+			} else {
+				o.state.Overflow = true
+			}
+		}()
+		next.ServeHTTP(writer, r)
+	}), o
 }
