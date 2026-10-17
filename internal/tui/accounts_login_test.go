@@ -128,6 +128,8 @@ func TestAccountOfficialLoginOpensActualTerminal(t *testing.T) {
 			svc := service.New(st, manager, nil)
 			token := "disposable-account-fixture"
 			baseHandler := (&api.Server{Svc: svc, Token: token}).Handler()
+			controlTrace := registerNeverShipControlTrace(t, adapter)
+			baseHandler = controlTrace.handler(baseHandler)
 			var calls atomic.Int32
 			var received client.LoginAccountRequest
 			listener := &terminalPipeListener{incoming: make(chan net.Conn), done: make(chan struct{})}
@@ -153,8 +155,10 @@ func TestAccountOfficialLoginOpensActualTerminal(t *testing.T) {
 			joined := make(chan struct{})
 			go func() { defer close(joined); _ = server.Serve(listener) }()
 			transport := &http.Transport{DialContext: listener.dial}
+			transport.DialContext = controlTrace.dial(transport.DialContext)
 			c := client.New("http://account-fixture", token)
 			c.HTTP = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+			c.HTTP.Transport = controlTrace.transport(c.HTTP.Transport)
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
