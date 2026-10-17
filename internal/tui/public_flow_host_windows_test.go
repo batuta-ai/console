@@ -805,6 +805,11 @@ func winFlowLaunch(t *testing.T, cfg winFlowConfig) *winFlowHost {
 	winFlowCheck(t, err)
 	cmd := exec.Command(exe, "-test.timeout=3m")
 	cmd.Env = append(winFlowEnvironment(cfg), "BATUTA_TEST_WINDOWS_PUBLIC_FLOW_CONFIG="+path)
+	// NEVER SHIP: forward only the process-start diagnostic switch to this
+	// private host. winFlowEnvironment remains unchanged for all executors.
+	if os.Getenv("BATUTA_PRIVATE_NATIVE_CORE_OBSERVATION") == "never-ship-v1" {
+		cmd.Env = append(cmd.Env, "BATUTA_PRIVATE_NATIVE_CORE_OBSERVATION=never-ship-v1")
+	}
 	cmd.Stdin, cmd.Stdout = childIn, childOut
 	log, err := os.OpenFile(filepath.Join(cfg.Root, "host-"+rand.Text()+".stderr"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	winFlowCheck(t, err)

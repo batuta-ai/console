@@ -66,6 +66,10 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP ("console-windows-evidence-" + [guid]::NewGuid())
           New-Item -ItemType Directory -Path $evidence | Out-Null
           "WINDOWS_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+      - name: Enable NEVER-SHIP native Core observation on the exact diagnostic push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/batuta/native-core-cancel-observation' && !inputs.ref
+        run: |
+          "BATUTA_PRIVATE_NATIVE_CORE_OBSERVATION=never-ship-v1" >> $env:GITHUB_ENV
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         env:
           GIT_CONFIG_COUNT: '1'
@@ -249,6 +253,13 @@ jobs:
             ${{ env.WINDOWS_EVIDENCE }}/*.stderr
             ${{ env.WINDOWS_EVIDENCE }}/*.exit
           if-no-files-found: error
+      - name: Retain NEVER-SHIP native Core phase captures
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/batuta/native-core-cancel-observation' && !inputs.ref
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: never-ship-native-core-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/**/batuta-native-core-observation/*.jsonl
+          if-no-files-found: warn
   package-snapshot:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

@@ -174,9 +174,10 @@ func (f nativeCoreFrame) valid() bool {
 }
 
 type nativeCoreStream struct {
-	reader io.Reader
-	writer io.Writer
-	mu     sync.Mutex
+	reader   io.Reader
+	writer   io.Writer
+	mu       sync.Mutex
+	observer *session.NativeExchangeDiagnostic
 }
 
 func (s *nativeCoreStream) send(frame nativeCoreFrame) error {
@@ -192,23 +193,34 @@ func (s *nativeCoreStream) send(frame nativeCoreFrame) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := binary.Write(s.writer, binary.LittleEndian, uint32(len(data))); err != nil {
+	s.observer.Observe("write.header.begin", frame.Type, frame.ID, nil, 0)
+	err = binary.Write(s.writer, binary.LittleEndian, uint32(len(data)))
+	s.observer.Observe("write.header.end", frame.Type, frame.ID, err, 0)
+	if err != nil {
 		return err
 	}
+	s.observer.Observe("write.payload.begin", frame.Type, frame.ID, nil, 0)
 	_, err = io.Copy(s.writer, bytes.NewReader(data))
+	s.observer.Observe("write.payload.end", frame.Type, frame.ID, err, 0)
 	return err
 }
 
 func (s *nativeCoreStream) receive() (nativeCoreFrame, error) {
 	var size uint32
-	if err := binary.Read(s.reader, binary.LittleEndian, &size); err != nil {
+	s.observer.Observe("read.header.begin", "", 0, nil, 0)
+	err := binary.Read(s.reader, binary.LittleEndian, &size)
+	s.observer.Observe("read.header.end", "", 0, err, 0)
+	if err != nil {
 		return nativeCoreFrame{}, err
 	}
 	if size == 0 || size > nativeCoreFrameLimit {
 		return nativeCoreFrame{}, domain.ErrInvalidReference
 	}
 	data := make([]byte, size)
-	if _, err := io.ReadFull(s.reader, data); err != nil {
+	s.observer.Observe("read.payload.begin", "", 0, nil, 0)
+	_, err = io.ReadFull(s.reader, data)
+	s.observer.Observe("read.payload.end", "", 0, err, 0)
+	if err != nil {
 		return nativeCoreFrame{}, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -220,6 +232,7 @@ func (s *nativeCoreStream) receive() (nativeCoreFrame, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) || !frame.valid() {
 		return frame, domain.ErrInvalidReference
 	}
+	s.observer.Observe("read.frame", frame.Type, frame.ID, nil, 0)
 	return frame, nil
 }
 
@@ -242,16 +255,19 @@ func newNativeCoreRPC(master context.Context, cancel context.CancelFunc, stream 
 	r := &nativeCoreRPC{stream: stream, master: master, responses: make(chan nativeCoreFrame, 1), finished: make(chan struct{}), ack: make(chan struct{})}
 	go func() {
 		defer close(r.finished)
+		defer stream.observer.Observe("rpc.reader.return", "", 0, nil, 0)
 		var last uint64
 		for {
 			frame, err := stream.receive()
 			if err != nil {
+				stream.observer.Observe("rpc.reader.error", "", 0, err, 0)
 				r.err = err
 				cancel()
 				return
 			}
 			switch frame.Type {
 			case "cancel":
+				stream.observer.Observe("rpc.cancel.received", "cancel", 0, nil, 0)
 				cancel()
 			case "response":
 				if frame.ID != last+1 || frame.ID != r.inflight.Load() || r.final.Load() {
@@ -273,6 +289,7 @@ func newNativeCoreRPC(master context.Context, cancel context.CancelFunc, stream 
 					cancel()
 					return
 				}
+				stream.observer.Observe("rpc.ack.accepted", "ack", 0, nil, 0)
 				close(r.ack)
 				return
 			default:

@@ -66,6 +66,12 @@ func (p nativeExchangePipes) Close() error {
 }
 
 func (r NativeRunner) runNativeExchange(ctx context.Context, command publication.Command, handler func(context.Context, io.Reader, io.WriteCloser) error) (result publication.CommandResult, runErr error) {
+	diagnostic := nativeExchangeDiagnosticFrom(ctx)
+	observer := diagnostic.observer
+	if observer != nil {
+		observer.Observe("exchange.begin", "", 0, nil, 0)
+		defer func() { observer.Observe("exchange.return", "", 0, runErr, int64(result.ExitCode)) }()
+	}
 	result.ExitCode = -1
 	if r.Manager == nil || handler == nil || !filepath.IsAbs(command.Executable) || r.Graceful || len(command.Stdin) != 0 || command.Observer != nil || command.StdoutLimit != 0 || command.StderrLimit < 0 || command.StderrLimit > 16<<20 {
 		return result, errors.New("invalid native exchange command or manager")
@@ -125,6 +131,9 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	}
 	stderr := &nativeOutput{limit: limit}
 	cmd := exec.Command(command.Executable, command.Args...)
+	if observer != nil && diagnostic.metadata != "" {
+		env = append(env, "BATUTA_PRIVATE_NATIVE_CORE_OBSERVATION=never-ship-v1", "BATUTA_PRIVATE_NATIVE_CORE_OBSERVATION_METADATA="+diagnostic.metadata)
+	}
 	cmd.Env, cmd.Dir = env, command.Directory
 	// Original standard handles are duplicated into the suspended Job anchor.
 	// The parent owns all three drains independently of Cmd.Wait, which can
@@ -134,7 +143,9 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	if command.StderrObserver != nil {
 		stderrWriter = io.MultiWriter(stderr, command.StderrObserver)
 	}
+	observer.Observe("exchange.start.begin", "", 0, nil, 0)
 	owned, err := startOwnedCommand(cmd)
+	observer.Observe("exchange.start.end", "", 0, err, 0)
 	if err != nil {
 		return result, err
 	}
@@ -164,15 +175,46 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		requestStop()
 	}
 	callbackDone := make(chan error, 1)
-	go func() { callbackDone <- handler(callbackContext, pipes.outputRead, pipes.inputWrite) }()
+	go func() {
+		observer.Observe("exchange.callback.begin", "", 0, nil, 0)
+		err := handler(callbackContext, pipes.outputRead, pipes.inputWrite)
+		observer.Observe("exchange.callback.end", "", 0, err, 0)
+		callbackDone <- err
+	}()
 	stderrDone := make(chan error, 1)
 	go func() {
+		observer.Observe("exchange.stderr.begin", "", 0, nil, 0)
 		_, err := io.Copy(stderrWriter, pipes.stderrRead)
+		observer.Observe("exchange.stderr.end", "", 0, err, 0)
 		stderrDone <- errors.Join(err, pipes.stderrRead.Close())
 	}()
 	processDone := make(chan error, 1)
 	go func() {
+		observer.Observe("exchange.wait.begin", "", 0, nil, 0)
 		ownership, wait := waitOwnedOutcome(cmd, owned)
+		if observer != nil {
+			observer.Observe("exchange.wait.ownership", "", 0, ownership, 0)
+			observer.Observe("exchange.wait.native", "", 0, wait, 0)
+			if cmd.ProcessState != nil {
+				observer.Observe("exchange.wait.exitcode", "", 0, nil, int64(cmd.ProcessState.ExitCode()))
+			}
+			owned.mu.Lock()
+			var status int64
+			if owned.retired {
+				status |= 1
+			}
+			if owned.forced {
+				status |= 2
+			}
+			if owned.exited {
+				status |= 4
+			}
+			if owned.signaled {
+				status |= 8
+			}
+			owned.mu.Unlock()
+			observer.Observe("exchange.wait.lifecycle", "", 0, nil, status)
+		}
 		cleanup := errors.Join(ownership, wait)
 		if cleanup != nil {
 			cleanup = errors.Join(ErrNativeCleanupUnresolved, cleanup)
@@ -183,7 +225,10 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	}()
 	var callbackErr, processErr, stderrErr, stopErr, protocolErr error
 	stopOwned := func() {
-		if err := owned.stop(); err != nil {
+		observer.Observe("exchange.stop.begin", "", 0, nil, 0)
+		err := owned.stop()
+		observer.Observe("exchange.stop.end", "", 0, err, 0)
+		if err != nil {
 			cleanup := errors.Join(ErrNativeCleanupUnresolved, err)
 			stopErr = errors.Join(stopErr, cleanup)
 			m.CloseAdmission()
@@ -197,6 +242,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		if grace == nil {
 			grace = time.NewTimer(2 * time.Second)
 			expired = grace.C
+			observer.Observe("exchange.grace.started", "", 0, nil, 2000000000)
 		}
 	}
 	defer func() {
@@ -207,6 +253,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	for callbackDone != nil || processDone != nil || stderrDone != nil {
 		select {
 		case callbackErr = <-callbackDone:
+			observer.Observe("exchange.callback.joined", "", 0, callbackErr, 0)
 			callbackDone = nil
 			callbackErr = errors.Join(callbackErr, pipes.inputWrite.Close())
 			if callbackErr != nil {
@@ -215,6 +262,7 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 				startGrace()
 			}
 		case processErr = <-processDone:
+			observer.Observe("exchange.process.joined", "", 0, processErr, 0)
 			processDone = nil
 			expired = nil
 			if grace != nil {
@@ -222,21 +270,33 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 			}
 			cancelCallback()
 		case stderrErr = <-stderrDone:
+			observer.Observe("exchange.stderr.joined", "", 0, stderrErr, 0)
 			stderrDone = nil
 			if stderrErr != nil {
 				cancelCallback()
 				stopOwned()
 			}
 		case <-stopRequested:
+			observer.Observe("exchange.cancel.selected", "", 0, stopContext.Err(), 0)
 			stopRequested = nil
 			startGrace()
 		case <-expired:
+			observer.Observe("exchange.grace.expired", "", 0, nil, 0)
 			expired = nil
 			stopOwned()
 			if stopContext.Err() == nil {
 				protocolErr = errors.Join(errors.New("native exchange did not finish after protocol closure"), context.DeadlineExceeded)
 			}
 		}
+	}
+	observer.Observe("exchange.joined", "", 0, nil, 0)
+	if observer != nil {
+		observer.Observe("exchange.stderr.capture", "", 0, nil, int64(len(stderr.data)))
+		var truncated int64
+		if stderr.truncated {
+			truncated = 1
+		}
+		observer.Observe("exchange.stderr.truncated", "", 0, nil, truncated)
 	}
 	result.Stderr, result.StderrTruncated = append([]byte(nil), stderr.data...), stderr.truncated
 	runErr = errors.Join(callbackErr, processErr, stderrErr, stopErr, protocolErr, stopContext.Err())

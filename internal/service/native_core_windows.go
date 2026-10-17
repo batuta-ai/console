@@ -174,7 +174,9 @@ func nativeCoreGitEnvironment(env []string) ([]string, error) {
 // RunNativeCore is the private consoled stdio entry point. The caller launches
 // the entire image in the original owned Job, before any Core preparation.
 func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error {
-	stream := &nativeCoreStream{reader: input, writer: output}
+	observation := newNativeCoreObservation(true)
+	defer observation.close()
+	stream := &nativeCoreStream{reader: input, writer: output, observer: observation.observer()}
 	hello, err := actualNativeCoreHello()
 	if err != nil {
 		return err
@@ -252,22 +254,34 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 	}
 	if err == nil {
 		active.Store(true)
+		stream.observer.Observe("core.run.begin", "", 0, nil, 0)
 		state, err = runner.Run(ctx)
+		stream.observer.Observe("core.run.end", "", 0, err, 0)
 	}
 	var cleanup error
 	if runner != nil {
+		stream.observer.Observe("core.release.begin", "", 0, nil, 0)
 		cleanup = runner.Release()
+		stream.observer.Observe("core.release.end", "", 0, cleanup, 0)
 	}
-	cleanup = errors.Join(cleanup, manager.Shutdown(context.WithoutCancel(ctx)))
+	stream.observer.Observe("core.shutdown.begin", "", 0, nil, 0)
+	shutdownErr := manager.Shutdown(context.WithoutCancel(ctx))
+	stream.observer.Observe("core.shutdown.end", "", 0, shutdownErr, 0)
+	cleanup = errors.Join(cleanup, shutdownErr)
 	if cleanup != nil {
 		cleanup = errors.Join(session.ErrNativeCleanupUnresolved, cleanup)
 	}
 	rpc.final.Store(true)
 	done := &nativeCoreDone{State: state, Error: nativeCoreEncodeError(err), Cleanup: nativeCoreEncodeError(cleanup)}
+	stream.observer.Observe("helper.done.begin", "done", 0, nil, 0)
 	if err := stream.send(nativeCoreFrame{Type: "done", Done: done}); err != nil {
+		stream.observer.Observe("helper.done.end", "done", 0, err, 0)
 		return err
 	}
+	stream.observer.Observe("helper.done.end", "done", 0, nil, 0)
+	stream.observer.Observe("rpc.join.begin", "", 0, nil, 0)
 	<-rpc.finished
+	stream.observer.Observe("rpc.join.end", "", 0, rpc.err, 0)
 	select {
 	case <-rpc.ack:
 		return nil
@@ -299,8 +313,11 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 	var state string
 	var outcome, parentCause, cleanup error
 	completed := false
-	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).Exchange(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(callback context.Context, input io.Reader, output io.WriteCloser) error {
-		stream := &nativeCoreStream{reader: input, writer: output}
+	observation := newNativeCoreObservation(false)
+	defer observation.close()
+	observer := observation.observer()
+	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).Exchange(observation.context(job.ctx), publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(callback context.Context, input io.Reader, output io.WriteCloser) error {
+		stream := &nativeCoreStream{reader: input, writer: output, observer: observation.observer()}
 		frame, err := stream.receive()
 		if err != nil {
 			return err
@@ -308,6 +325,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 		if frame.Type != "hello" || !frame.Hello.qualified() {
 			return domain.ErrExecutionUnavailable
 		}
+		observer.Observe("parent.hello.birth", "hello", uint64(frame.Hello.PID), nil, int64(frame.Hello.Created))
 		// The diagnostic birth fields never confer process control authority.
 		if err := stream.send(nativeCoreFrame{Type: "start", Start: &start}); err != nil {
 			return err
@@ -317,16 +335,22 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 			defer close(cancelJoined)
 			select {
 			case <-callback.Done():
+				observer.Observe("parent.cancel.watcher", "", 0, callback.Err(), 0)
 				_ = stream.send(nativeCoreFrame{Type: "cancel"})
 			case <-stopCancel:
 			}
 		}()
-		defer func() { close(stopCancel); <-cancelJoined }()
+		defer func() {
+			close(stopCancel)
+			<-cancelJoined
+			observer.Observe("parent.cancel.joined", "", 0, nil, 0)
+		}()
 		var last uint64
 		ready := false
 		for {
 			frame, err := stream.receive()
 			if err != nil {
+				observer.Observe("parent.receive.error", "", 0, err, 0)
 				return err
 			}
 			switch frame.Type {
@@ -392,15 +416,24 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 				}
+				observer.Observe("parent.done.accepted", "done", 0, nil, 0)
 				completed = true
 				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
+				observer.Observe("parent.ack.begin", "ack", 0, nil, 0)
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
+					observer.Observe("parent.ack.end", "ack", 0, err, 0)
 					return err
 				}
-				if err := output.Close(); err != nil {
+				observer.Observe("parent.ack.end", "ack", 0, nil, 0)
+				observer.Observe("parent.stdin.close.begin", "", 0, nil, 0)
+				closeErr := output.Close()
+				observer.Observe("parent.stdin.close.end", "", 0, closeErr, 0)
+				if err := closeErr; err != nil {
 					return err
 				}
+				observer.Observe("parent.stdout.drain.begin", "", 0, nil, 0)
 				tail, err := io.ReadAll(input)
+				observer.Observe("parent.stdout.drain.end", "", 0, err, int64(len(tail)))
 				if len(tail) != 0 {
 					return domain.ErrInvalidReference
 				}
@@ -410,6 +443,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 			}
 		}
 	})
+	observer.Observe("parent.exchange.return", "", 0, exchangeErr, int64(result.ExitCode))
 	if result.ExitCode != 0 && exchangeErr == nil {
 		exchangeErr = fmt.Errorf("native Core helper exited %d", result.ExitCode)
 	}
