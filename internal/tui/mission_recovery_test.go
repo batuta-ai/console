@@ -26,7 +26,7 @@ func newJourneyWire(provider string) *journeyWire {
 	b := domain.MissionBinding{WorkspaceID: m.WorkspaceID, WorkspaceRoot: "/fixture", CanonicalRoot: "/fixture", PlanPath: ".batuta/plans/exact.md", PlanSlug: "exact", PlanDigest: "native-tasks"}
 	m.Binding = &b
 	id := domain.PlanIdentity{MissionID: m.ID, Binding: b, Version: domain.PlanVersion(content)}
-	a := domain.PlanApproval{ID: "receipt-" + provider, Identity: id, Content: content, ApprovedAt: time.Unix(20, 0)}
+	a := domain.PlanApproval{ID: "receipt-" + provider, Identity: id, Content: content, ApprovedAt: time.Unix(20, 0).UTC()}
 	return &journeyWire{mission: m, receipt: a, detail: domain.PlanDetail{Identity: id, Content: content, Approval: &a}, state: domain.ExecutionState{Target: id, ApprovalID: a.ID, Delivery: domain.ExecutionDelivery(a.ID, id)}}
 }
 func (f *journeyWire) opened() {
