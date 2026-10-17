@@ -286,6 +286,9 @@ func publicFlowBuild(t *testing.T, provider string) publicFlowConfig {
 
 func publicFlowBuildAt(t *testing.T, provider, dir string) publicFlowConfig {
 	t.Helper()
+	publicFlowCheck(t, os.MkdirAll(dir, 0700))
+	dir, err := filepath.EvalSymlinks(dir)
+	publicFlowCheck(t, err)
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	publicFlowCheck(t, err)
 	cfg := publicFlowConfig{Home: filepath.Join(dir, "home"), Core: filepath.Join(dir, "batuta"), Helper: filepath.Join(dir, "consoled"), Provider: provider, Bin: filepath.Join(dir, "bin"), Skills: filepath.Join(dir, "skills"), Web: true}
