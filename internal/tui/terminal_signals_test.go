@@ -114,7 +114,11 @@ func TestTerminalOuterSignalsRestoreHost(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestTerminalSignalHelper$", "-test.v")
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("signal helper requires the parent context deadline")
+			}
+			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestTerminalSignalHelper$", "-test.v", "-test.timeout="+time.Until(deadline).String())
 			home := t.TempDir()
 			cmd.Env = append(os.Environ(), "CONSOLE_TERMINAL_SIGNAL_FIXTURE=1", "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "TERM=xterm-256color")
 			reportR, reportW, err := os.Pipe()
