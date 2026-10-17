@@ -278,7 +278,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyData(msg)
 	case tickMsg:
 		read := m.readAccounts()
-		return m, tea.Batch(m.refresh(), read, m.readCatalog(), m.readJourney("refresh"), m.tick())
+		refresh, catalog := m.refresh(), m.readCatalog()
+		var journeyRefresh tea.Cmd
+		// Keep the progress snapshot stable; explicit reads and operation results still apply.
+		if m.journeyRecord().mode != "progress" {
+			journeyRefresh = m.readJourney("refresh")
+		}
+		return m, tea.Batch(refresh, read, catalog, journeyRefresh, m.tick())
 	case statusMsg:
 		m.validMsg = string(msg)
 	case attachedMsg:

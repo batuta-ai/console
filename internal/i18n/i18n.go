@@ -33,7 +33,7 @@ func T(key string) string {
 
 var en = map[string]string{
 	"journey_inspection_open":         "w full progress/evidence, pending and retained Stop results",
-	"journey_progress_title":          "Current execution / retained Stop observations",
+	"journey_progress_title":          "Progress snapshot (Esc, f, w refresh) / retained Stop observations",
 	"journey_inspection_read_keys":    "up/down pgup/pgdown pages  esc back",
 	"journey_inspection_confirm_keys": "up/down pgup/pgdown pages  enter confirm  esc back",
 	"journey_inspection_source_keys":  "up/down pgup/pgdown pages  y review all bytes  o reload  esc back",
@@ -168,7 +168,7 @@ var en = map[string]string{
 
 var pt = map[string]string{
 	"journey_inspection_open":         "w progresso/evidências completos, Stop pendente e resultados mantidos",
-	"journey_progress_title":          "Execução atual / observações de Stop mantidas",
+	"journey_progress_title":          "Snapshot do progresso (Esc, f, w atualiza) / observações de Stop mantidas",
 	"journey_inspection_read_keys":    "up/down pgup/pgdown páginas  esc voltar",
 	"journey_inspection_confirm_keys": "up/down pgup/pgdown páginas  enter confirmar  esc voltar",
 	"journey_inspection_source_keys":  "up/down pgup/pgdown páginas  y revisar todos bytes  o reler  esc voltar",

@@ -2,17 +2,29 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/batuta-ai/console/internal/api"
+	"github.com/batuta-ai/console/internal/client"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/i18n"
+	"github.com/batuta-ai/console/internal/service"
+	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/core/journal"
+	"github.com/batuta-ai/core/loop"
 )
 
 func inspectionSize(t *testing.T, m model, width, height int) model {
@@ -730,5 +742,347 @@ func TestInspectionPendingSourceCannotHideFocusedChild(t *testing.T) {
 	other, ok := manager.Snapshot("a-unrelated")
 	if !ok || other.OwnerClient != "" || other.Process != "running" {
 		t.Fatal("inspection or child focus affected another session", other)
+	}
+}
+
+// Real API/Service/Store/Core projection, without a listener or provider process.
+type inspectionAPITransport struct{ handler http.Handler }
+
+func (p inspectionAPITransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	p.handler.ServeHTTP(w, req)
+	return w.Result(), nil
+}
+
+func inspectionProjectionFixture(t *testing.T) model {
+	t.Helper()
+	check := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	path := ".batuta/plans/reading.md"
+	check(os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0700))
+	check(os.WriteFile(filepath.Join(root, path), []byte("# Plan — Reading\n**Status:** approved\n- [ ] 1. Read evidence — data/high\n  Accept: all bytes\n"), 0600))
+	st, err := store.Open(filepath.Join(t.TempDir(), "reading.db"))
+	check(err)
+	t.Cleanup(func() { check(st.Close()) })
+	svc := service.New(st, nil, nil)
+	check(st.PutWorkspace(domain.Workspace{ID: "w", Root: root, CreatedAt: domain.Now()}))
+	check(st.PutMission(domain.Mission{ID: "m", WorkspaceID: "w", CreatedAt: domain.Now()}))
+	_, err = svc.BindMission("m", service.MissionBindingRequest{WorkspaceID: "w", PlanPath: path})
+	check(err)
+	c := client.New("http://inspection.invalid", "inspection")
+	c.HTTP.Transport = inspectionAPITransport{(&api.Server{Svc: svc, Token: "inspection"}).Handler()}
+	detail, err := c.PlanDetail(context.Background(), "m", "w")
+	check(err)
+	approved, err := c.ApprovePlan(context.Background(), detail.Identity)
+	check(err)
+	if approved.Receipt == nil {
+		t.Fatal("missing real approval receipt")
+	}
+	a := *approved.Receipt
+	b := a.Identity.Binding
+	b.DeliveryID = domain.ExecutionDelivery(a.ID, a.Identity)
+	js, err := journal.Open(b.CanonicalRoot)
+	check(err)
+	opening, err := json.Marshal(map[string]any{"slug": b.PlanSlug, "plan_path": b.PlanPath, "plan_digest": b.PlanDigest, "workspace": b.CanonicalRoot, "approval_receipt_id": a.ID, "plan_content_digest": a.Identity.Version, "supervision": true})
+	check(err)
+	opened, err := js.Append(b.DeliveryID, journal.Record{Kind: loop.KindOpened, Detail: opening, Graph: json.RawMessage(`{"tasks":[],"waves":[]}`)})
+	check(err)
+	b.OpenedDigest = opened.Digest
+	_, err = js.Append(b.DeliveryID, journal.Record{Kind: loop.KindTerminal, Detail: json.RawMessage(`{"state":"done"}`), Graph: opened.Graph})
+	check(err)
+	check(st.BindMission("m", b))
+	mission, err := st.GetMission("m")
+	check(err)
+	m := inspectionSize(t, model{api: c}.selectMission(mission), 80, 24)
+	m = journeyKey(t, m, "f")
+	r := m.journeyRecord()
+	if !r.fresh || r.state == nil || r.state.Active || r.state.Watch == nil || r.state.Watch.Header["state"] != loop.StateReviewBlocked || r.state.Gate == nil || !r.state.Gate.Required || r.state.Gate.Cleared {
+		t.Fatal("real completed projection unavailable", r.problemErr, r.state)
+	}
+	t.Log("seeded terminal journal; actual client/API/Service/Store/Core projection; no native execution or supervision qualification")
+	return m
+}
+
+// Run the real one-second timer under synctest's virtual clock, then the journey
+// command selected by Update. Unrelated dashboard commands are not executed.
+func inspectionBackgroundTick(t *testing.T, m model) model {
+	t.Helper()
+	next, _ := m.Update(m.tick()())
+	m = next.(model)
+	if req := m.journey.pending; req != nil && req.kind == "refresh" {
+		m = journeyFinish(t, m, req.run)
+	}
+	return m
+}
+
+func TestInspectionProgressSnapshotAcrossBackgroundTicks(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	synctest.Test(t, func(t *testing.T) {
+		m := inspectionProjectionFixture(t)
+		before := m.journeyRecord()
+		m = inspectionBackgroundTick(t, m)
+		after := m.journeyRecord()
+		oldAge := before.state.Watch.Health["journal_age_ns"]
+		newAge := after.state.Watch.Health["journal_age_ns"]
+		if oldAge != float64(0) || newAge != float64(time.Second) {
+			t.Fatalf("controlled real projection age: %v -> %v", oldAge, newAge)
+		}
+		oldJSON, _ := json.Marshal(before.state)
+		newJSON, _ := json.Marshal(after.state)
+		if !bytes.Equal(bytes.ReplaceAll(newJSON, []byte(`"journal_age_ns":1000000000`), []byte(`"journal_age_ns":0`)), oldJSON) {
+			t.Fatal("business facts changed in age-only control")
+		}
+		t.Logf("accepted normal tick: embedded journal_age_ns %v -> %v; all other execution bytes equal", oldAge, newAge)
+		m = journeyKey(t, m, "w")
+		_, expected := inspectionDocument(t, m)
+		var raw []byte
+		for page := 0; page < 10000; page++ {
+			beforeFrame, beforePage := m.View().Content, m.journeyRecord().page
+			for tick := 0; page > 0 && tick < 3; tick++ {
+				m = inspectionBackgroundTick(t, m)
+			}
+			if m.journeyRecord().page != beforePage || m.View().Content != beforeFrame {
+				t.Fatalf("normal background ticks replaced inspected document: page %d -> %d, age %v -> %v", beforePage, m.journeyRecord().page, newAge, m.journeyRecord().state.Watch.Health["journal_age_ns"])
+			}
+			end := false
+			for _, row := range inspectionCells(t, m) {
+				if row == "END OF SOURCE" {
+					end = true
+				}
+				if len(row) < 11 || row[8] != ' ' {
+					continue
+				}
+				offset, err := strconv.ParseUint(row[:8], 16, 32)
+				if err != nil {
+					continue
+				}
+				part, err := strconv.Unquote(row[9:])
+				if err != nil || int(offset) != len(raw) {
+					t.Fatalf("mixed/lost bytes at %d, reconstructed %d: %v", offset, len(raw), err)
+				}
+				raw = append(raw, part...)
+			}
+			if end {
+				if page < 2 || !bytes.Equal(raw, expected) {
+					t.Fatal("full multipage snapshot differs")
+				}
+				t.Logf("reconstructed %d bytes over %d pages and %d controlled one-second ticks through END", len(raw), page+1, 3*page)
+				return
+			}
+			m = inspectionKey(t, m, "pgdown")
+		}
+		t.Fatal("missing END")
+	})
+}
+
+func TestInspectionProgressSnapshotRefreshOrderingAndFreshRead(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, ordering := range []string{"pending", "queued", "applied"} {
+		t.Run(ordering, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				next, _ := m.Update(m.tick()())
+				m = next.(model)
+				req := m.journey.pending
+				if req == nil || req.kind != "refresh" {
+					t.Fatal("ordinary tick did not schedule refresh")
+				}
+				var message tea.Msg
+				if ordering != "pending" {
+					message = req.run()
+				}
+				if ordering == "applied" {
+					m = journeyFinish(t, m, func() tea.Msg { return message })
+				}
+				m = journeyKey(t, m, "w")
+				m = inspectionKey(t, m, "pgdown")
+				frame, record := m.View().Content, m.journeyRecord()
+				if m.journey.pending != nil {
+					t.Fatal("opening progress did not detach pending refresh")
+				}
+				if ordering == "pending" {
+					message = req.run()
+				}
+				m = journeyFinish(t, m, func() tea.Msg { return message })
+				m = inspectionBackgroundTick(t, m)
+				if m.View().Content != frame || !reflect.DeepEqual(m.journeyRecord(), record) {
+					t.Fatal("late/duplicate refresh replaced the snapshot")
+				}
+				epoch := m.journey.epoch
+				m = journeyKey(t, m, "esc")
+				if m.journeyRecord().mode != "" || m.journeyRecord().fresh || m.journeyRecord().sourceFresh || m.journey.epoch != epoch+1 {
+					t.Fatal("Esc did not retain cancellation/freshness rules")
+				}
+				m = inspectionBackgroundTick(t, m)
+				if !m.journeyRecord().fresh || m.journeyRecord().state.Watch.Health["journal_age_ns"] != float64(3*time.Second) {
+					t.Fatal("Esc did not resume ordinary refresh")
+				}
+				// Advance the real timer without delivering its background message:
+				// f must independently fetch the newer projection before w freezes it.
+				m.tick()()
+				m = journeyKey(t, m, "f")
+				m = journeyKey(t, m, "w")
+				m, raw := inspectionDocument(t, m)
+				if !bytes.Contains(raw, []byte(`"journal_age_ns": 4000000000`)) || m.journeyRecord().page == 0 {
+					t.Fatal("explicit f+w did not expose a complete fresh snapshot")
+				}
+			})
+		})
+	}
+}
+
+func TestInspectionProgressSnapshotAppliedBusinessResult(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	synctest.Test(t, func(t *testing.T) {
+		m := inspectionProjectionFixture(t)
+		m = journeyKey(t, m, "w")
+		m = inspectionKey(t, m, "pgdown")
+		r := m.journeyRecord()
+		js, err := journal.Open(r.state.Target.Binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = js.Append(r.state.Delivery, journal.Record{Kind: loop.KindTerminal, Detail: json.RawMessage(`{"state":"canceled"}`), Graph: json.RawMessage(`{"tasks":[],"waves":[]}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame := m.View().Content
+		m = inspectionBackgroundTick(t, m)
+		if m.View().Content != frame {
+			t.Fatal("background refresh replaced snapshot after external business change")
+		}
+		cmd := m.readJourney("refresh")
+		if cmd == nil {
+			t.Fatal("explicit refresh was suppressed")
+		}
+		m = journeyFinish(t, m, cmd)
+		if m.journeyRecord().page != 0 || m.journeyRecord().state.Watch.Header["state"] != "canceled" {
+			t.Fatal("applied real business result did not restart the document")
+		}
+		_, raw := inspectionDocument(t, m)
+		var got struct {
+			State domain.ExecutionState `json:"execution"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil || !reflect.DeepEqual(got.State, *m.journeyRecord().state) {
+			t.Fatal("restarted business document lost bytes", err)
+		}
+	})
+}
+
+func TestInspectionProgressSnapshotAppliesQueuedStopResults(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, effect := range []domain.ExecutionStopEffect{domain.ExecutionStopPending, domain.ExecutionStopCompleted, domain.ExecutionStopUncertain} {
+		t.Run(string(effect), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := inspectionFixture()
+				f.opened()
+				calls := 0
+				var result domain.ExecutionStopResult
+				c := accountFixture(t, func(w http.ResponseWriter, request *http.Request) {
+					if !strings.HasSuffix(request.URL.Path, "/stop") {
+						f.handler(t)(w, request)
+						return
+					}
+					calls++
+					var target domain.ExecutionStopRequest
+					if err := json.NewDecoder(request.Body).Decode(&target); err != nil {
+						t.Error(err)
+					}
+					result = domain.ExecutionStopResult{ExecutionStopRequest: target, Effect: effect}
+					switch effect {
+					case domain.ExecutionStopPending:
+						w.WriteHeader(http.StatusAccepted)
+					case domain.ExecutionStopCompleted:
+						state := f.state
+						state.Active, state.RunID = false, ""
+						watch := *state.Watch
+						watch.Header = map[string]any{"state": "blocked"}
+						state.Watch = &watch
+						result.State = &state
+						result.Finalized, result.Durable = true, true
+						result.CoreState = "blocked"
+						result.Causes = []string{"retained cancellation evidence"}
+					case domain.ExecutionStopUncertain:
+						result.Finalized = true
+						result.Error = &domain.PlanFailure{Code: "uncertain", Message: "durability unknown"}
+						w.WriteHeader(http.StatusServiceUnavailable)
+					}
+					_ = json.NewEncoder(w).Encode(result)
+				})
+				m := inspectionSize(t, model{api: c}.selectMission(f.mission), 80, 24)
+				m = journeyKey(t, m, "f")
+				r := m.journeyRecord()
+				r.uncertain, r.problem = "answer", "journey_uncertain"
+				r.problemErr = fmt.Errorf("original answer outcome unknown")
+				m.putJourney(r)
+				m = journeyKey(t, m, "z")
+				m, cmd := catalogKey(m, "enter")
+				if cmd == nil || m.journey.pending == nil || m.journey.pending.stopTarget == nil {
+					t.Fatal("Stop was not dispatched")
+				}
+				target := *m.journey.pending.stopTarget
+				// Execute the actual client command, retaining its asynchronous Update
+				// message until inspection has opened and several ticks have passed.
+				message := cmd()
+				m = journeyKey(t, m, "w")
+				m, pendingRaw := inspectionDocument(t, m)
+				var pending struct {
+					Target *domain.ExecutionStopRequest `json:"pending_stop"`
+				}
+				if err := json.Unmarshal(pendingRaw, &pending); err != nil || pending.Target == nil || *pending.Target != target {
+					t.Fatal("pending Stop target disappeared", err)
+				}
+				frame := m.View().Content
+				for tick := 0; tick < 3; tick++ {
+					m = inspectionBackgroundTick(t, m)
+				}
+				if m.View().Content != frame || m.journey.pending == nil {
+					t.Fatal("ticks replaced pending Stop snapshot")
+				}
+				m = journeyFinish(t, m, func() tea.Msg { return message })
+				after := m.journeyRecord()
+				if m.journey.pending != nil || after.page != 0 || len(after.outcomes) != 1 || after.stopOutcome == nil || !reflect.DeepEqual(*after.stopOutcome.stop, result) || calls != 1 {
+					t.Fatal("queued Stop result did not apply/reset exactly once", after.stopOutcome)
+				}
+				if after.uncertain != r.uncertain || after.problem != r.problem || after.problemErr != r.problemErr || *after.stopSelection != target {
+					t.Fatal("Stop result hid original uncertainty or frozen selection")
+				}
+				if effect == domain.ExecutionStopCompleted {
+					if after.fresh || after.state.Active || !reflect.DeepEqual(after.state, result.State) {
+						t.Fatal("completed Stop failed state/freshness invalidation")
+					}
+				} else if !after.stopUnresolved() || after.state != r.state || after.fresh != r.fresh {
+					t.Fatal("pending/uncertain Stop changed execution authority")
+				}
+				if effect == domain.ExecutionStopUncertain && (after.stopOutcome.err == nil || !strings.Contains(after.stopOutcome.err.Error(), "durability unknown")) {
+					t.Fatal("client uncertainty error disappeared")
+				}
+				_, raw := inspectionDocument(t, m)
+				var got struct {
+					Pending *domain.ExecutionStopRequest `json:"pending_stop"`
+					Stops   []struct {
+						Result domain.ExecutionStopResult `json:"result"`
+						Error  string                     `json:"error"`
+					} `json:"stops"`
+				}
+				if err := json.Unmarshal(raw, &got); err != nil || got.Pending != nil || len(got.Stops) != 1 || !reflect.DeepEqual(got.Stops[0].Result, result) {
+					t.Fatal("Stop document did not reconstruct result", err)
+				}
+				if after.stopOutcome.err != nil && got.Stops[0].Error != after.stopOutcome.err.Error() {
+					t.Fatal("Stop document lost independent error")
+				}
+				frame = m.View().Content
+				m = inspectionBackgroundTick(t, m)
+				m = journeyFinish(t, m, func() tea.Msg { return message })
+				if m.View().Content != frame || len(m.journeyRecord().outcomes) != 1 || calls != 1 {
+					t.Fatal("background tick or duplicate result changed retained Stop")
+				}
+			})
+		})
 	}
 }
