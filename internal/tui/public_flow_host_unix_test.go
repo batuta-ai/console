@@ -25,11 +25,13 @@ import (
 	"time"
 
 	"github.com/batuta-ai/console/internal/api"
+	"github.com/batuta-ai/console/internal/domain"
 	consoleruntime "github.com/batuta-ai/console/internal/runtime"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/console/internal/store"
 	"github.com/batuta-ai/console/internal/webui"
+	"github.com/batuta-ai/core/loop"
 )
 
 // The pipe-only entrypoint is deliberately absent from the ordinary test list.
@@ -62,9 +64,15 @@ type publicFlowConfig struct {
 	Web                                                    bool
 }
 
-type publicFlowControl struct{ Op, AccountID string }
+type publicFlowControl struct {
+	Op, AccountID, Delivery, Phase string
+	Ask                            bool
+	Approval                       domain.PlanApproval
+	Births                         []publicFlowBirth
+}
 type publicFlowEvent struct {
 	Kind, Address, Home, Stacks string
+	Data                        any `json:",omitempty"`
 	PID                         int
 	Config                      *publicFlowConfig `json:",omitempty"`
 }
@@ -176,6 +184,9 @@ func publicFlowServe(t *testing.T) {
 		}
 		publicFlowCheck(t, st.Close())
 	}()
+	fixtureControl, releaseFixture := publicFlowBrowserControls(t, cfg)
+	// Release held journal descriptors before native/session/HTTP drain, even on EOF or failure.
+	defer releaseFixture()
 	ln, err := net.Listen("tcp", paths.Listen)
 	publicFlowCheck(t, err)
 	served = make(chan error, 1)
@@ -229,7 +240,11 @@ func publicFlowServe(t *testing.T) {
 		case "drain":
 			return
 		default:
-			t.Fatal("unknown private host command", cmd.Op)
+			data, handled := fixtureControl(cmd)
+			if !handled {
+				t.Fatal("unknown private host command", cmd.Op)
+			}
+			publicFlowCheck(t, enc.Encode(publicFlowEvent{Kind: cmd.Op, Data: data}))
 		}
 	}
 }
@@ -438,4 +453,125 @@ func (h *publicFlowHost) close(t *testing.T) {
 		<-h.done
 	}
 	_ = h.output.Close()
+}
+
+// Browser controls reuse the HTTP fixture's real locks, FIFO protocol and incarnation
+// inspection. They never write approval, execution, journal terminal or review records.
+func publicFlowBrowserControls(t *testing.T, cfg publicFlowConfig) (func(publicFlowControl) (any, bool), func()) {
+	type heldJournal struct {
+		file   *os.File
+		unlock func()
+	}
+	held := map[string]heldJournal{}
+	var foreign []*exec.Cmd
+	cleanup := func() {
+		for key, lock := range held {
+			lock.unlock()
+			delete(held, key)
+		}
+		for _, cmd := range foreign {
+			publicFlowCheck(t, cmd.Process.Kill())
+			err := cmd.Wait()
+			var exited *exec.ExitError
+			if !errors.As(err, &exited) {
+				publicFlowCheck(t, err)
+			}
+		}
+		foreign = nil
+	}
+	control := func(cmd publicFlowControl) (any, bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		a := cmd.Approval
+		key := a.Identity.Binding.CanonicalRoot + "\x00" + cmd.Delivery
+		switch cmd.Op {
+		case "workspace":
+			root := publicFlowWorkspace(t, cfg, cmd.Ask)
+			destination := filepath.Join(cfg.Home, "browser-roots", filepath.Base(filepath.Dir(root))+"-"+filepath.Base(root))
+			publicFlowCheck(t, os.MkdirAll(filepath.Dir(destination), 0700))
+			publicFlowCheck(t, os.Rename(root, destination))
+			return map[string]string{"root": destination, "plan": publicFlowPlan, "path": publicFlowPlanPath}, true
+		case "foreign":
+			child := exec.Command("/bin/sleep", "300")
+			publicFlowCheck(t, child.Start())
+			foreign = append(foreign, child)
+			return publicFlowObserve(t, child.Process.Pid), true
+		case "tree":
+			return publicFlowTree(t, ctx, a, cmd.Phase), true
+		case "alive":
+			publicFlowAlive(t, cmd.Births...)
+			return cmd.Births, true
+		case "retired":
+			publicFlowRetired(t, ctx, cmd.Births)
+			return cmd.Births, true
+		case "hold":
+			if _, ok := held[key]; ok {
+				t.Fatal("journal already held")
+			}
+			f, unlock := publicFlowLock(t, a, cmd.Delivery)
+			held[key] = heldJournal{f, unlock}
+			return map[string]bool{"exclusive": true, "reader_blocked": true}, true
+		case "unlock", "corrupt":
+			lock, ok := held[key]
+			if !ok {
+				t.Fatal("journal not held")
+			}
+			if cmd.Op == "corrupt" {
+				// Same-inode corruption is allowed only after the exact target has retired.
+				if len(cmd.Births) != 2 {
+					t.Fatal("fault requires original provider tree")
+				}
+				publicFlowRetired(t, ctx, cmd.Births)
+				before, err := lock.file.Stat()
+				publicFlowCheck(t, err)
+				_, err = lock.file.WriteString("not-a-journal-record\n")
+				publicFlowCheck(t, err)
+				publicFlowCheck(t, lock.file.Sync())
+				after, err := os.Stat(lock.file.Name())
+				publicFlowCheck(t, err)
+				if !os.SameFile(before, after) {
+					t.Fatal("fault replaced journal inode")
+				}
+			}
+			lock.unlock()
+			delete(held, key)
+			return map[string]bool{"released": true, "same_inode": cmd.Op == "corrupt"}, true
+		case "release":
+			publicFlowRelease(t, a, cmd.Phase)
+			return cmd.Phase, true
+		case "phase":
+			if cmd.Phase != "replacement" {
+				t.Fatal("invalid replacement phase")
+			}
+			publicFlowWrite(t, filepath.Join(publicFlowControlDir(a), "phase"), []byte(cmd.Phase+"\n"), 0600)
+			return cmd.Phase, true
+		case "journal":
+			if _, ok := held[key]; ok {
+				t.Fatal("cannot read held journal")
+			}
+			return publicFlowJournal(t, a, cmd.Delivery), true
+		case "ship":
+			opts := loop.SupervisionOptions{Workspace: a.Identity.Binding.CanonicalRoot, Delivery: cmd.Delivery}
+			observation, err := loop.ObserveSupervision(opts)
+			if err != nil {
+				return map[string]bool{"ready": false}, true
+			}
+			gate, err := loop.CheckSupervisionGate(ctx, opts)
+			if err != nil || observation.Review == nil || observation.Review.State != "reported" || !gate.Required || !gate.Cleared || gate.EvidenceDigest == "" {
+				return map[string]bool{"ready": false}, true
+			}
+			if observation.Review.Outcome != "SHIP" || observation.Review.ApprovalReceiptID != a.ID {
+				t.Fatal("SHIP receipt mismatch")
+			}
+			raw, err := os.ReadFile(filepath.Join(a.Identity.Binding.CanonicalRoot, "out.txt"))
+			publicFlowCheck(t, err)
+			if string(raw) != "approved output\n" {
+				t.Fatal("canonical output mismatch")
+			}
+			return map[string]any{"ready": true, "review": observation.Review, "gate": gate, "output": string(raw)}, true
+		default:
+			return nil, false
+		}
+	}
+	return control, cleanup
 }
