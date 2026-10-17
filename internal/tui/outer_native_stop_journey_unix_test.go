@@ -809,8 +809,9 @@ func (j *outerNativeJourney) ship(m outerNativeMission, run domain.ExecutionStat
 	if visible.Target != m.approval.Identity || visible.ApprovalID != m.approval.ID || visible.Active || visible.RunID != "" || visible.Delivery != run.Delivery || visible.OpenedDigest != run.OpenedDigest || visible.Watch == nil || visible.Watch.Source != domain.SourceCurrent || visible.Watch.Header["state"] != loop.StateDone || visible.Gate == nil || !visible.Gate.Required || !visible.Gate.Cleared || visible.Gate.EvidenceDigest == "" {
 		j.t.Fatal("rendered progress is not actual SHIP", visible)
 	}
-	actual := j.host.state(j.t, m.approval)
-	if !outerNativeExecutionEqual(visible, actual) {
+	actual, err := outerNativeSHIPState(j.t, j.ctx, j.host, m.approval)
+	publicFlowCheck(j.t, err)
+	if !outerNativeExecutionEqual(visible, *actual) {
 		j.t.Fatal("rendered progress differs from public backend", visible, actual)
 	}
 }
@@ -969,4 +970,100 @@ func outerNativeExecutionEqual(visible, actual domain.ExecutionState) bool {
 	left, leftOK := withoutAge(visible)
 	right, rightOK := withoutAge(actual)
 	return leftOK && rightOK && reflect.DeepEqual(left, right)
+}
+
+// Controlled HTTP replies qualify only the independent observation barrier, not Core SHIP.
+func TestOuterNativeSHIPReadiness(t *testing.T) {
+	a := domain.PlanApproval{ID: "receipt"}
+	a.Identity.MissionID = "mission"
+	a.Identity.Binding.WorkspaceID = "workspace"
+	valid := domain.ExecutionState{Target: a.Identity, ApprovalID: a.ID, Delivery: domain.ExecutionDelivery(a.ID, a.Identity)}
+	wrong := valid
+	wrong.ApprovalID = "foreign"
+	for _, tc := range []struct {
+		name   string
+		status int
+		raw    string
+		mode   string
+	}{
+		{"temporary", 503, `{"error":"plan_io","message":"artifact could not be read"}`, "recover"},
+		{"persistent-timeout", 503, `{"error":"plan_io","message":"artifact could not be read"}`, "timeout"},
+		{"persistent-cancel", 503, `{"error":"plan_io","message":"artifact could not be read"}`, "cancel"},
+		{"malformed", 503, `{`, "reject"},
+		{"wrong-status", 500, `{"error":"plan_io","message":"artifact could not be read"}`, "reject"},
+		{"extra-DTO", 503, `{"error":"plan_io","message":"artifact could not be read","state":{}}`, "reject"},
+		{"wrong-reference", 200, string(publicFlowJSON(t, wrong)), "reject"},
+		{"extra-200", 200, strings.TrimSuffix(string(publicFlowJSON(t, valid)), "}") + `,"extra":true}`, "reject"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != http.MethodGet || r.URL.Path != publicFlowBase(a)+"/execution" || r.URL.Query().Get("workspace_id") != a.Identity.Binding.WorkspaceID || r.URL.Query().Get("approval_id") != a.ID {
+					t.Error("unexpected observation request", r.Method, r.URL)
+				}
+				if tc.mode == "recover" && calls > 1 {
+					w.Write(publicFlowJSON(t, valid))
+					return
+				}
+				if tc.mode == "cancel" && calls > 1 {
+					cancel()
+				}
+				if tc.mode == "timeout" && calls > 1 {
+					<-r.Context().Done()
+					return
+				}
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.raw))
+			}))
+			defer srv.Close()
+			if tc.mode == "timeout" {
+				cancel()
+				ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(50*time.Millisecond))
+				defer cancel()
+			}
+			h := &publicFlowHost{address: strings.TrimPrefix(srv.URL, "http://")}
+			state, err := outerNativeSHIPState(t, ctx, h, a)
+			if tc.mode == "recover" {
+				if err != nil || state == nil || !reflect.DeepEqual(*state, valid) || calls != 2 {
+					t.Fatal("matching typed 200 not obtained after temporary plan_io", state, err, calls)
+				}
+			} else {
+				if err == nil || state != nil {
+					t.Fatal("failed observation granted verified state", state, err)
+				}
+				if tc.mode == "cancel" && !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+				if tc.mode == "timeout" && !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal(err)
+				}
+				if tc.mode == "reject" && calls != 1 {
+					t.Fatal("protocol error retried", calls)
+				}
+			}
+		})
+	}
+	t.Run("unbounded", func(t *testing.T) {
+		state, err := outerNativeSHIPState(t, context.Background(), &publicFlowHost{}, a)
+		if err == nil || state != nil {
+			t.Fatal("unbounded observation accepted", state, err)
+		}
+	})
+}
+
+func outerNativeSHIPState(t *testing.T, ctx context.Context, h *publicFlowHost, a domain.PlanApproval) (*domain.ExecutionState, error) {
+	t.Helper()
+	var state *domain.ExecutionState
+	err := publicFlowAwaitResult(ctx, "post-SHIP independent current state", func() (bool, error) {
+		var err error
+		state, err = h.readiness(t, ctx, a)
+		return state != nil, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return state, nil
 }
