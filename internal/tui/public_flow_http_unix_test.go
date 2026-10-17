@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,12 +19,16 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/batuta-ai/console/integrations/batuta"
+	"github.com/batuta-ai/console/internal/api"
+	"github.com/batuta-ai/console/internal/client"
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/service"
 	"github.com/batuta-ai/console/internal/session"
+	"github.com/batuta-ai/console/internal/store"
 	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
 )
@@ -34,26 +39,47 @@ func (h *publicFlowHost) request(t *testing.T, method, path string, body any, ou
 	if body != nil {
 		data = publicFlowJSON(t, body)
 	}
+	status, raw, err := h.requestContext(t, context.Background(), method, path, data)
+	publicFlowCheck(t, err)
+	if out != nil {
+		publicFlowCheck(t, json.Unmarshal(raw, out))
+	}
+	return status
+}
+
+func (h *publicFlowHost) requestContext(t *testing.T, parent context.Context, method, path string, data []byte) (int, []byte, error) {
+	t.Helper()
+	if err := context.Cause(parent); err != nil {
+		return 0, nil, err
+	}
 	// Each call has its own connection. Accepted Stop is observed again by a
 	// fresh caller after the first connection/context has been closed.
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := publicFlowRequestContext(parent)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, "http://"+h.address+path, bytes.NewReader(data))
-	publicFlowCheck(t, err)
+	if err != nil {
+		return 0, nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+h.token)
 	req.Header.Set("Content-Type", "application/json")
-	res, err := (&http.Client{Transport: transport}).Do(req)
-	publicFlowCheck(t, err)
-	raw, err := io.ReadAll(res.Body)
-	publicFlowCheck(t, errors.Join(err, res.Body.Close()))
-	t.Logf("HTTP %s %s request=%s status=%d response=%s", method, path, data, res.StatusCode, raw)
-	if out != nil {
-		publicFlowCheck(t, json.Unmarshal(raw, out))
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Logf("HTTP %s %s request=%s transport_error=%v", method, path, data, err)
+		return 0, nil, err
 	}
-	return res.StatusCode
+	raw, readErr := io.ReadAll(res.Body)
+	closeErr := res.Body.Close()
+	t.Logf("HTTP %s %s request=%s status=%d response=%s read_error=%v", method, path, data, res.StatusCode, raw, readErr)
+	return res.StatusCode, raw, errors.Join(readErr, closeErr, context.Cause(ctx))
 }
+
+func publicFlowRequestContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 10*time.Second)
+}
+
 func (h *publicFlowHost) want(t *testing.T, method, path string, body, out any, status int) {
 	t.Helper()
 	if got := h.request(t, method, path, body, out); got != status {
@@ -62,18 +88,102 @@ func (h *publicFlowHost) want(t *testing.T, method, path string, body, out any, 
 }
 func publicFlowAwait(t *testing.T, ctx context.Context, what string, check func() bool) {
 	t.Helper()
+	publicFlowCheck(t, publicFlowAwaitResult(ctx, what, func() (bool, error) { return check(), nil }))
+}
+
+func publicFlowAwaitResult(ctx context.Context, what string, check func() (bool, error)) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if check() {
-			return
+		if err := context.Cause(ctx); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		ready, err := check()
+		if cause := context.Cause(ctx); cause != nil {
+			return fmt.Errorf("%s: %w", what, cause)
+		}
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal(what, ctx.Err())
+			return fmt.Errorf("%s: %w", what, context.Cause(ctx))
 		case <-ticker.C:
 		}
 	}
+}
+
+func TestPublicFlowAwaitCancellation(t *testing.T) {
+	for _, mode := range []string{"already-canceled", "already-expired", "canceled-during-check", "expired-during-check"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			want := context.Canceled
+			switch mode {
+			case "already-canceled":
+				cancel(want)
+			case "already-expired":
+				var stop context.CancelFunc
+				ctx, stop = context.WithDeadline(context.Background(), time.Time{})
+				defer stop()
+				want = context.DeadlineExceeded
+			case "expired-during-check":
+				want = context.DeadlineExceeded
+			}
+			calls := 0
+			err := publicFlowAwaitResult(ctx, mode, func() (bool, error) {
+				calls++
+				cancel(want)
+				return true, nil
+			})
+			wantCalls := 1
+			if strings.HasPrefix(mode, "already-") {
+				wantCalls = 0
+			}
+			if !errors.Is(err, want) || calls != wantCalls {
+				t.Errorf("late success/inspection: err=%v calls=%d want=%v/%d", err, calls, want, wantCalls)
+			}
+			err = publicFlowAwaitResult(ctx, "subsequent success cannot rescue expired wait", func() (bool, error) {
+				calls++
+				return true, nil
+			})
+			if !errors.Is(err, want) || calls != wantCalls {
+				t.Errorf("expired wait rescued: err=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestPublicFlowRequestContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		if state, err := (&publicFlowHost{}).readiness(t, context.Background(), domain.PlanApproval{}); err == nil || state != nil {
+			t.Fatal("unbounded readiness accepted", state, err)
+		}
+		parent, stop := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+		defer stop()
+		ctx, cancel := publicFlowRequestContext(parent)
+		defer cancel()
+		parentDeadline, _ := parent.Deadline()
+		deadline, ok := ctx.Deadline()
+		if !ok || deadline != parentDeadline {
+			t.Fatal("request inflated poll deadline", deadline, parentDeadline)
+		}
+		stop()
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			t.Fatal("request did not inherit poll cancellation", context.Cause(ctx))
+		}
+		before := time.Now()
+		capped, release := publicFlowRequestContext(context.Background())
+		defer release()
+		after := time.Now()
+		deadline, ok = capped.Deadline()
+		if !ok || deadline.Before(before.Add(10*time.Second)) || deadline.After(after.Add(10*time.Second)) {
+			t.Fatal("request cap changed", deadline)
+		}
+	})
 }
 
 const publicFlowPlan = "# Plan — Public flow\n**Goal:** Use approved bytes\n**Status:** proposed\n\n## Tasks\n- [ ] 1. Create output — backend/low\n  Scope: out.txt\n  Accept: valid diff → git diff --check\n"
@@ -162,6 +272,85 @@ func (h *publicFlowHost) state(t *testing.T, a domain.PlanApproval) domain.Execu
 	}
 	return state
 }
+
+// Only readiness reads may treat the documented, exact plan_io envelope as
+// unavailable. A nil state carries no verified facts or mutation authority.
+func (h *publicFlowHost) readiness(t *testing.T, ctx context.Context, a domain.PlanApproval) (*domain.ExecutionState, error) {
+	t.Helper()
+	if _, bounded := ctx.Deadline(); !bounded {
+		return nil, errors.New("readiness requires a bounded polling context")
+	}
+	status, raw, err := h.requestContext(t, ctx, http.MethodGet, publicFlowBase(a)+"/execution?workspace_id="+a.Identity.Binding.WorkspaceID+"&approval_id="+a.ID, nil)
+	if err != nil {
+		return nil, err
+	}
+	state, err := publicFlowReadinessResponse(ctx, a, status, raw)
+	if err == nil && state == nil {
+		t.Log("readiness unavailable: no verified current state or authority")
+	}
+	return state, err
+}
+
+func publicFlowReadinessResponse(ctx context.Context, a domain.PlanApproval, status int, raw []byte) (*domain.ExecutionState, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
+	decode := func(out any) error {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(out); err != nil {
+			return err
+		}
+		if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+			return errors.New("readiness: trailing response data")
+		}
+		return nil
+	}
+	if status == http.StatusServiceUnavailable {
+		var failure struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if err := decode(&failure); err != nil {
+			return nil, err
+		}
+		if failure.Error != "plan_io" || failure.Message == "" {
+			return nil, fmt.Errorf("readiness: unexpected HTTP 503 payload: %s", raw)
+		}
+		return nil, context.Cause(ctx)
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("readiness: unexpected HTTP %d: %s", status, raw)
+	}
+	var state domain.ExecutionState
+	if err := decode(&state); err != nil {
+		return nil, err
+	}
+	if state.Target != a.Identity || state.ApprovalID != a.ID || state.Delivery != domain.ExecutionDelivery(a.ID, a.Identity) {
+		return nil, errors.New("readiness: state reference drift")
+	}
+	if view := state.Watch; view != nil {
+		if view.Source != domain.SourceCurrent || view.MissionID != a.Identity.MissionID || view.WorkspaceID != a.Identity.Binding.WorkspaceID || view.Delivery != state.Delivery || state.Gate == nil || state.Gate.Delivery != state.Delivery || view.Progression == nil || *view.Progression != *state.Gate {
+			return nil, errors.New("readiness: projection reference drift")
+		}
+	}
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (h *publicFlowHost) awaitReadiness(t *testing.T, ctx context.Context, a domain.PlanApproval, what string, check func(domain.ExecutionState) bool) {
+	t.Helper()
+	publicFlowCheck(t, publicFlowAwaitResult(ctx, what, func() (bool, error) {
+		state, err := h.readiness(t, ctx, a)
+		if err != nil || state == nil {
+			return false, err
+		}
+		return check(*state), nil
+	}))
+}
+
 func (h *publicFlowHost) start(t *testing.T, a domain.PlanApproval) domain.ExecutionResult {
 	t.Helper()
 	var result domain.ExecutionResult
@@ -355,8 +544,7 @@ func publicFlowShip(t *testing.T, ctx context.Context, h *publicFlowHost, a doma
 		gate, err := loop.CheckSupervisionGate(ctx, opts)
 		return err == nil && gate.Required && gate.Cleared && gate.EvidenceDigest != ""
 	})
-	publicFlowAwait(t, ctx, "inactive implementation and public gate", func() bool {
-		s := h.state(t, a)
+	h.awaitReadiness(t, ctx, a, "inactive implementation and public gate", func(s domain.ExecutionState) bool {
 		if s.Active {
 			return false
 		}
@@ -400,8 +588,7 @@ func TestPublicFlowHTTPTwoMissionsStopRestartSHIP(t *testing.T) {
 			defer cancel()
 			first := h.start(t, a)
 			var question domain.PendingQuestion
-			publicFlowAwait(t, ctx, "A question and idle", func() bool {
-				s := h.state(t, a)
+			h.awaitReadiness(t, ctx, a, "A question and idle", func(s domain.ExecutionState) bool {
 				if s.Active || s.Watch == nil || s.Watch.PendingQuestion == nil {
 					return false
 				}
@@ -593,5 +780,377 @@ func TestPublicFlowProviderProtocol(t *testing.T) {
 			}
 			t.Log(fmt.Sprintf("%s exact capability, protocol, question verified", provider))
 		})
+	}
+}
+
+func TestPublicFlowProgressProtocol(t *testing.T) {
+	// Synthetic negative wire controls; these do not qualify a provider or Core.
+	a := domain.PlanApproval{ID: "receipt"}
+	a.Identity.MissionID = "mission"
+	valid := domain.ExecutionState{Target: a.Identity, ApprovalID: a.ID, Delivery: domain.ExecutionDelivery(a.ID, a.Identity)}
+	wrong := valid
+	wrong.ApprovalID = "foreign"
+	for _, tc := range []struct {
+		name   string
+		status int
+		raw    string
+	}{
+		{"malformed-503", 503, `{`},
+		{"missing-message", 503, `{"error":"plan_io"}`},
+		{"other-code", 503, `{"error":"plan_store","message":"unavailable"}`},
+		{"nested-error", 503, `{"error":{"code":"plan_io","message":"unavailable"}}`},
+		{"extra-state", 503, `{"error":"plan_io","message":"unavailable","active":false}`},
+		{"trailing-json", 503, `{"error":"plan_io","message":"unavailable"} {}`},
+		{"redirect", 302, `{"error":"plan_io","message":"unavailable"}`},
+		{"wrong-status", 500, `{"error":"plan_io","message":"unavailable"}`},
+		{"accepted-not-current", 202, string(publicFlowJSON(t, valid))},
+		{"malformed-200", 200, `{`},
+		{"foreign-200", 200, string(publicFlowJSON(t, wrong))},
+		{"empty-200", 200, `{}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			calls := 0
+			err := publicFlowAwaitResult(ctx, tc.name, func() (bool, error) {
+				calls++
+				if calls > 1 {
+					cancel(errors.New("unexpected retry"))
+				}
+				state, err := publicFlowReadinessResponse(ctx, a, tc.status, []byte(tc.raw))
+				if state != nil {
+					t.Error("invalid response granted current state", state)
+				}
+				return state != nil, err
+			})
+			if err == nil || calls != 1 || context.Cause(ctx) != nil {
+				t.Fatal("protocol error did not fail immediately", calls, err)
+			}
+		})
+	}
+}
+
+// This transport calls the actual API handler, with its actual Service/Store/Core.
+// It permits local contract proof without claiming a real HTTP listener journey.
+type publicFlowAPITransport struct {
+	t       *testing.T
+	handler http.Handler
+}
+
+func (p publicFlowAPITransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	p.handler.ServeHTTP(w, req)
+	p.t.Logf("in-process API %s %s status=%d response=%s", req.Method, req.URL.RequestURI(), w.Code, w.Body.Bytes())
+	return w.Result(), nil
+}
+
+type publicFlowLoggedTransport struct {
+	t         *testing.T
+	transport http.RoundTripper
+}
+
+func (p publicFlowLoggedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	res, err := p.transport.RoundTrip(req)
+	if err != nil {
+		p.t.Logf("HTTP %s %s transport_error=%v", req.Method, req.URL.RequestURI(), err)
+		return nil, err
+	}
+	raw, readErr := io.ReadAll(res.Body)
+	closeErr := res.Body.Close()
+	p.t.Logf("HTTP %s %s status=%d response=%s read_error=%v", req.Method, req.URL.RequestURI(), res.StatusCode, raw, readErr)
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, err
+	}
+	res.Body = io.NopCloser(bytes.NewReader(raw))
+	return res, nil
+}
+
+func publicFlowProgressFixture(t *testing.T) (*service.Service, http.Handler, domain.PlanApproval, string) {
+	t.Helper()
+	t.Log("CONTRACT CONTROL: seeded opening/terminal; no provider execution, review receipt, or SHIP evidence")
+	root := publicFlowWorkspace(t, publicFlowConfig{Provider: "codex"}, false)
+	st, err := store.Open(filepath.Join(t.TempDir(), "contract.db"))
+	publicFlowCheck(t, err)
+	svc := service.New(st, nil, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.ShutdownNative(ctx); err != nil {
+			t.Error("contract drain failed; retaining store", err)
+			return
+		}
+		publicFlowCheck(t, st.Close())
+	})
+	publicFlowCheck(t, st.PutWorkspace(domain.Workspace{ID: "w", Root: root, CreatedAt: domain.Now()}))
+	publicFlowCheck(t, st.PutMission(domain.Mission{ID: "m", WorkspaceID: "w", CreatedAt: domain.Now()}))
+	_, err = svc.BindMission("m", service.MissionBindingRequest{WorkspaceID: "w", PlanPath: publicFlowPlanPath})
+	publicFlowCheck(t, err)
+	handler := (&api.Server{Svc: svc, Token: "contract"}).Handler()
+	c := client.New("http://contract.invalid", "contract")
+	c.HTTP.Transport = publicFlowAPITransport{t, handler}
+	detail, err := c.PlanDetail(context.Background(), "m", "w")
+	publicFlowCheck(t, err)
+	approved, err := c.ApprovePlan(context.Background(), detail.Identity)
+	publicFlowCheck(t, err)
+	if approved.Receipt == nil || approved.Receipt.Identity != detail.Identity || !bytes.Equal(approved.Receipt.Content, detail.Content) {
+		t.Fatal("contract approval mismatch", approved)
+	}
+	a := *approved.Receipt
+	binding := a.Identity.Binding
+	binding.DeliveryID = domain.ExecutionDelivery(a.ID, a.Identity)
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = root
+	head, err := cmd.Output()
+	publicFlowCheck(t, err)
+	js, err := journal.Open(root)
+	publicFlowCheck(t, err)
+	opened, err := js.Append(binding.DeliveryID, journal.Record{Kind: loop.KindOpened, Detail: publicFlowJSON(t, map[string]any{
+		"slug": binding.PlanSlug, "plan_path": binding.PlanPath, "plan_digest": binding.PlanDigest,
+		"workspace": binding.CanonicalRoot, "approval_receipt_id": a.ID, "plan_content_digest": a.Identity.Version,
+		"head": strings.TrimSpace(string(head)), "supervision": true,
+	}), Graph: json.RawMessage(`{"tasks":[],"waves":[]}`)})
+	publicFlowCheck(t, err)
+	binding.OpenedDigest = opened.Digest
+	_, err = js.Append(binding.DeliveryID, journal.Record{Kind: loop.KindTerminal, Detail: publicFlowJSON(t, map[string]string{"state": loop.StateDone, "final_commit": strings.TrimSpace(string(head))}), Graph: opened.Graph})
+	publicFlowCheck(t, err)
+	publicFlowCheck(t, st.BindMission("m", binding))
+	gate, err := loop.CheckSupervisionGate(context.Background(), loop.SupervisionOptions{Workspace: root, Delivery: binding.DeliveryID})
+	publicFlowCheck(t, err)
+	if !gate.Required || gate.Cleared || gate.ReviewID == "" || gate.EvidenceDigest != "" {
+		t.Fatal("contract must retain uncleared supervision", gate)
+	}
+	// Core has created this exact published review guard; it is not the journal lock.
+	guard := filepath.Join(root, ".batuta", "reviews", "supervision", gate.ReviewID, "ownership.guard")
+	return svc, handler, a, guard
+}
+
+func publicFlowReviewGuard(t *testing.T, path string) func() {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	publicFlowCheck(t, err)
+	publicFlowCheck(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			publicFlowCheck(t, errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close()))
+		}
+	}
+	t.Cleanup(release)
+	witness, err := os.OpenFile(path, os.O_RDWR, 0)
+	publicFlowCheck(t, err)
+	defer witness.Close()
+	first, err := f.Stat()
+	publicFlowCheck(t, err)
+	second, err := witness.Stat()
+	publicFlowCheck(t, err)
+	if !os.SameFile(first, second) {
+		t.Fatal("review guard witness opened a different inode")
+	}
+	err = syscall.Flock(int(witness.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		t.Fatal("independent review guard descriptor did not block", err)
+	}
+	t.Log("actual review ownership.guard held; independent fd/inode witness returned EWOULDBLOCK")
+	return release
+}
+
+func TestPublicFlowProgressAPIControl(t *testing.T) {
+	publicFlowProgressControl(t, false)
+}
+
+func TestPublicFlowProgressHTTPControl(t *testing.T) {
+	publicFlowProgressControl(t, true)
+}
+
+func publicFlowContractStateMatches(got, want *domain.ExecutionState) bool {
+	return got != nil && want != nil && got.Target == want.Target && got.ApprovalID == want.ApprovalID &&
+		got.Delivery == want.Delivery && got.OpenedDigest == want.OpenedDigest && got.Bound == want.Bound &&
+		!got.Active && got.RunID == "" && reflect.DeepEqual(got.Gate, want.Gate) &&
+		got.Watch != nil && got.Watch.Source == domain.SourceCurrent && got.Watch.MissionID == got.Target.MissionID &&
+		got.Watch.WorkspaceID == got.Target.Binding.WorkspaceID && got.Watch.Delivery == got.Delivery &&
+		got.Watch.Header["state"] == loop.StateReviewBlocked && reflect.DeepEqual(got.Watch.Progression, got.Gate)
+}
+
+func publicFlowProgressControl(t *testing.T, realHTTP bool) {
+	svc, handler, a, guard := publicFlowProgressFixture(t)
+	c := client.New("http://contract.invalid", "contract")
+	c.HTTP.Transport = publicFlowAPITransport{t, handler}
+	read := func(ctx context.Context) (*domain.ExecutionState, error) {
+		req := httptest.NewRequest(http.MethodGet, publicFlowBase(a)+"/execution?workspace_id=w&approval_id="+a.ID, nil).WithContext(ctx)
+		req.Header.Set("Authorization", "Bearer contract")
+		res, err := (publicFlowAPITransport{t, handler}).RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := io.ReadAll(res.Body)
+		err = errors.Join(err, res.Body.Close())
+		if err != nil {
+			return nil, err
+		}
+		return publicFlowReadinessResponse(ctx, a, res.StatusCode, raw)
+	}
+	if realHTTP {
+		srv := httptest.NewServer(handler)
+		t.Cleanup(srv.Close)
+		h := &publicFlowHost{address: strings.TrimPrefix(srv.URL, "http://"), token: "contract"}
+		read = func(ctx context.Context) (*domain.ExecutionState, error) { return h.readiness(t, ctx, a) }
+		c = client.New(srv.URL, "contract")
+		transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+		c.HTTP.Transport = publicFlowLoggedTransport{t, transport}
+		t.Cleanup(transport.CloseIdleConnections)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	baseline, err := read(ctx)
+	publicFlowCheck(t, err)
+	if baseline == nil || baseline.Active || baseline.RunID != "" || !baseline.Bound || baseline.OpenedDigest == "" || baseline.Gate == nil || !baseline.Gate.Required || baseline.Gate.Cleared || baseline.Gate.EvidenceDigest != "" || baseline.Watch == nil || baseline.Watch.Source != domain.SourceCurrent || baseline.Watch.Header["state"] != loop.StateReviewBlocked || baseline.Gate.Delivery != baseline.Delivery || baseline.Watch.Progression == nil || *baseline.Watch.Progression != *baseline.Gate {
+		t.Fatal("contract baseline is not an exact, uncleared current projection", baseline)
+	}
+	records := publicFlowJournal(t, a, baseline.Delivery)
+	mission, err := svc.Store.GetMission(a.Identity.MissionID)
+	publicFlowCheck(t, err)
+	release := publicFlowReviewGuard(t, guard)
+	// The ordinary public client stays strict and exposes a typed plan_io error.
+	state, err := c.ExecutionState(ctx, a.Identity.MissionID, a.Identity.Binding.WorkspaceID, a.ID)
+	var executionErr *client.ExecutionError
+	var planErr *client.PlanError
+	if !errors.As(err, &executionErr) || executionErr.Status != 503 || !errors.As(err, &planErr) || planErr.Code != "plan_io" || !reflect.DeepEqual(state, domain.ExecutionState{}) {
+		t.Fatal("held real guard did not produce typed unavailable state", state, err)
+	}
+	t.Log("strict public client: actual typed HTTP 503 plan_io, zero state; no busy inference")
+	unavailable := false
+	err = publicFlowAwaitResult(ctx, "held guard then fresh recovery", func() (bool, error) {
+		current, err := read(ctx)
+		if err != nil {
+			return false, err
+		}
+		if !unavailable {
+			if current != nil {
+				return false, errors.New("held guard granted cached/current state")
+			}
+			unavailable = true
+			release()
+			return false, nil
+		}
+		if current == nil || !publicFlowContractStateMatches(current, baseline) {
+			return false, errors.New("fresh recovery changed exact target/receipt/uncleared gate")
+		}
+		return true, nil
+	})
+	publicFlowCheck(t, err)
+	if !unavailable {
+		t.Fatal("guard control never observed unavailable response")
+	}
+
+	for _, fault := range []string{"held-guard", "nonlock-corrupt-review"} {
+		t.Run(fault, func(t *testing.T) {
+			recoverFault := func() {}
+			if fault == "held-guard" {
+				recoverFault = publicFlowReviewGuard(t, guard)
+			} else {
+				// Invalid owned review JSON is an actual non-lock Core I/O failure.
+				path := filepath.Join(filepath.Dir(guard), "job.json")
+				publicFlowWrite(t, path, []byte("{invalid-review-json\n"), 0600)
+				recoverFault = func() { publicFlowCheck(t, os.Remove(path)) }
+				defer func() { recoverFault() }()
+			}
+			// A controlled deadline cause expires the budget only after the actual
+			// response. No wall-clock race or arbitrary tolerated-response limit.
+			budget, stop := context.WithCancelCause(ctx)
+			defer stop(nil)
+			observed := false
+			err := publicFlowAwaitResult(budget, "persistent unavailability", func() (bool, error) {
+				current, err := read(budget)
+				if err != nil || current != nil {
+					return current != nil, errors.Join(err, errors.New("persistent fault must yield exact 503 and no verified state"))
+				}
+				observed = true
+				stop(context.DeadlineExceeded)
+				return false, nil
+			})
+			if !observed || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("persistent unavailability passed or failed for wrong reason", observed, err)
+			}
+			// Recovery happens strictly after the wait has failed, never rescuing it.
+			recoverFault()
+			if fault == "nonlock-corrupt-review" {
+				recoverFault = func() {}
+			}
+			calls := 0
+			err = publicFlowAwaitResult(budget, "recovered after expiry", func() (bool, error) {
+				calls++
+				current, err := read(ctx)
+				return current != nil, err
+			})
+			if !errors.Is(err, context.DeadlineExceeded) || calls != 0 {
+				t.Fatal("later recovery rescued expired wait", calls, err)
+			}
+			fresh, err := read(ctx)
+			publicFlowCheck(t, err)
+			if !publicFlowContractStateMatches(fresh, baseline) {
+				t.Fatal("independent fresh observation changed required gate", fresh)
+			}
+		})
+	}
+
+	budget, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	err = publicFlowAwaitResult(budget, "200 obtained while check expires", func() (bool, error) {
+		fresh, err := read(budget)
+		if err != nil || !publicFlowContractStateMatches(fresh, baseline) {
+			return false, errors.Join(err, errors.New("missing fresh 200 before expiry barrier"))
+		}
+		stop(context.DeadlineExceeded)
+		return true, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("late actual 200 accepted", err)
+	}
+	after, err := svc.Store.GetMission(a.Identity.MissionID)
+	publicFlowCheck(t, err)
+	saved, err := svc.PlanApproval(ctx, a.Identity.MissionID, a.Identity.Binding.WorkspaceID, a.ID)
+	publicFlowCheck(t, err)
+	if !reflect.DeepEqual(after, mission) || !reflect.DeepEqual(saved, a) || !reflect.DeepEqual(records, publicFlowJournal(t, a, baseline.Delivery)) {
+		t.Fatal("readiness changed binding, receipt, or journal")
+	}
+	if _, err := os.Stat(filepath.Join(publicFlowControlDir(a), "first.birth")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("readiness launched a provider", err)
+	}
+}
+
+func TestPublicFlowProgressHTTPCancellation(t *testing.T) {
+	// Synthetic streaming negative control, solely for actual request cancellation.
+	entered, joined := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(joined)
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(entered)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h := &publicFlowHost{address: strings.TrimPrefix(srv.URL, "http://")}
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.readiness(t, ctx, domain.PlanApproval{ID: "negative-control"})
+		done <- err
+	}()
+	started := false
+	select {
+	case <-entered:
+		started = true
+		cancel()
+	case <-ctx.Done():
+		t.Error("stream handler never entered", ctx.Err())
+	}
+	err := <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Error("readiness request did not inherit cancellation", err)
+	}
+	if started {
+		<-joined
 	}
 }
