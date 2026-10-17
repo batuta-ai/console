@@ -821,7 +821,7 @@ func (c *winFlowControls) workspace(t *testing.T, ask, core bool) string {
 	routing += "| critical | * | self | session |\n\n| Role | Executor | Model |\n|---|---|---|\n| review | " + c.cfg.Provider + " | " + model + " |\n"
 	winFlowWrite(t, filepath.Join(root, ".batuta", "routing.md"), []byte(routing))
 	winFlowWrite(t, filepath.Join(root, ".gitignore"), []byte(".batuta/journal/\n.batuta/runs/\n.batuta/worktrees/\n"))
-	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.name", "fixture"}, {"config", "user.email", "fixture@example.invalid"}, {"config", "commit.gpgsign", "false"}, {"add", "-A"}, {"commit", "-qm", "chore: native public fixture"}} {
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.name", "fixture"}, {"config", "user.email", "fixture@example.invalid"}, {"config", "commit.gpgsign", "false"}, {"config", "core.autocrlf", "false"}, {"add", "-A"}, {"commit", "-qm", "chore: native public fixture"}} {
 		winFlowGit(t, c.cfg, root, args...)
 	}
 	common := winFlowGit(t, c.cfg, root, "rev-parse", "--path-format=absolute", "--git-common-dir")
