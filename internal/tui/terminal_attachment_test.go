@@ -4,9 +4,13 @@ import (
 	"bytes"
 	tea "charm.land/bubbletea/v2"
 	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
 	"github.com/charmbracelet/x/ansi"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -76,9 +80,158 @@ func (l *terminalPipeListener) dial(ctx context.Context, _, _ string) (net.Conn,
 		return nil, net.ErrClosed
 	}
 }
+
+// terminalFixtureLifecycle owns the dependency order shared by both PTY fixtures.
+// Caller cancellation ends only the diagnostic wait. The final verdict comes
+// from actual joins, bounded by the test deadline rather than a fixture timer.
+type terminalFixtureLifecycle struct {
+	manager     *session.Manager
+	server      *http.Server
+	listener    *terminalPipeListener
+	transport   *http.Transport
+	served      <-chan error
+	closeStore  func() error
+	root        string
+	handlers    terminalFixtureHandlers
+	managerOnce sync.Once
+	managerJoin terminalFixtureResult
+	httpOnce    sync.Once
+	httpJoin    terminalFixtureResult
+}
+
+type terminalFixtureResult struct {
+	done chan struct{}
+	err  error
+}
+
+func (r *terminalFixtureResult) wait(ctx context.Context) (error, bool) {
+	select {
+	case <-r.done:
+		return r.err, true
+	default:
+	}
+	select {
+	case <-r.done:
+		return r.err, true
+	case <-ctx.Done():
+		select {
+		case <-r.done:
+			return r.err, true
+		default:
+			return context.Cause(ctx), false
+		}
+	}
+}
+
+// Seal admission before Wait: Serve returning does not join handlers, and
+// Server.Close does not close hijacked WebSocket connections.
+type terminalFixtureHandlers struct {
+	mu      sync.Mutex
+	closing bool
+	active  sync.WaitGroup
+}
+
+func (h *terminalFixtureHandlers) wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		if h.closing {
+			h.mu.Unlock()
+			http.Error(w, "fixture closing", http.StatusServiceUnavailable)
+			return
+		}
+		h.active.Add(1)
+		h.mu.Unlock()
+		defer h.active.Done()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (f *terminalFixtureLifecycle) startManager() {
+	f.managerOnce.Do(func() {
+		f.managerJoin.done = make(chan struct{})
+		go func() {
+			f.managerJoin.err = f.manager.Shutdown(context.Background())
+			close(f.managerJoin.done)
+		}()
+	})
+}
+
+func (f *terminalFixtureLifecycle) startHTTP() {
+	f.httpOnce.Do(func() {
+		f.httpJoin.done = make(chan struct{})
+		f.handlers.mu.Lock()
+		f.handlers.closing = true
+		f.handlers.mu.Unlock()
+		go func() {
+			serverErr := f.server.Close()
+			listenerErr := f.listener.Close()
+			f.transport.CloseIdleConnections()
+			serveErr := <-f.served
+			if serveErr == http.ErrServerClosed || serveErr == net.ErrClosed {
+				serveErr = nil
+			}
+			f.handlers.active.Wait()
+			f.httpJoin.err = errors.Join(serverErr, listenerErr, serveErr)
+			close(f.httpJoin.done)
+		}()
+	})
+}
+
+func (f *terminalFixtureLifecycle) finish(initial, drain context.Context, waited func(error)) error {
+	f.startManager()
+	managerErr, managerJoined := f.managerJoin.wait(initial)
+	if waited != nil {
+		waited(managerErr)
+	}
+	if !managerJoined {
+		managerErr, managerJoined = f.managerJoin.wait(drain)
+	}
+	// HTTP has its own join even if Manager's wait failed. Only the overall test
+	// deadline can end this wait; an earlier caller cancellation is not its budget.
+	f.startHTTP()
+	httpErr, httpJoined := f.httpJoin.wait(drain)
+	if !managerJoined || !httpJoined {
+		return errors.Join(managerErr, httpErr, fmt.Errorf("fixture drain incomplete; retaining Store and owned root %s", f.root))
+	}
+	err := errors.Join(managerErr, httpErr, f.closeStore())
+	if err == nil && f.root != "" {
+		err = os.RemoveAll(f.root)
+	}
+	return err
+}
+
+func terminalFixtureRoot(t *testing.T) string {
+	t.Helper()
+	// No TempDir cleanup may remove callback/transcript dependencies after an
+	// incomplete drain. The existing platform helper creates private Windows ACLs.
+	root := filepath.Join(os.TempDir(), "console-terminal-fixture-"+rand.Text())
+	if err := testfixture.MakePrivateDirectory(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func terminalFixtureCleanup(t *testing.T, f *terminalFixtureLifecycle) {
+	t.Helper()
+	t.Cleanup(func() {
+		deadline, ok := t.Deadline()
+		if !ok {
+			t.Errorf("fixture cleanup requires go test -timeout; retaining %s", f.root)
+			return
+		}
+		// t.Context is already canceled when Cleanup starts.
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		if err := f.finish(ctx, ctx, nil); err != nil {
+			terminalLogGoroutineStacks(t, "fixture drain error")
+			t.Error(err)
+		}
+	})
+}
+
 func terminalFixture(t *testing.T, commands ...map[string][]string) (*client.Client, *session.Manager) {
 	t.Helper()
-	root := t.TempDir()
+	root := terminalFixtureRoot(t)
 	st, err := store.Open(filepath.Join(root, "fixture.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,32 +241,13 @@ func terminalFixture(t *testing.T, commands ...map[string][]string) (*client.Cli
 	listener := &terminalPipeListener{incoming: make(chan net.Conn), done: make(chan struct{})}
 	server := &http.Server{Handler: (&api.Server{Svc: svc, Token: "disposable-terminal-fixture"}).Handler()}
 	joined := make(chan error, 1)
-	go func() { joined <- server.Serve(listener) }()
 	httpTransport := &http.Transport{DialContext: listener.dial}
 	c := client.New("http://terminal-fixture", "disposable-terminal-fixture")
 	c.HTTP = &http.Client{Transport: httpTransport, Timeout: 5 * time.Second}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := manager.Shutdown(ctx); err != nil {
-			terminalLogGoroutineStacks(t, "fixture manager.Shutdown error")
-			t.Error(err)
-		}
-		_ = server.Close()
-		_ = listener.Close()
-		httpTransport.CloseIdleConnections()
-		select {
-		case err := <-joined:
-			if err != http.ErrServerClosed && err != net.ErrClosed {
-				t.Error(err)
-			}
-		case <-ctx.Done():
-			t.Error("HTTP server did not join")
-		}
-		if err := st.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	lifecycle := &terminalFixtureLifecycle{manager: manager, server: server, listener: listener, transport: httpTransport, served: joined, closeStore: st.Close, root: root}
+	server.Handler = lifecycle.handlers.wrap(server.Handler)
+	go func() { joined <- server.Serve(listener) }()
+	terminalFixtureCleanup(t, lifecycle)
 	for _, id := range []string{"a-unrelated", "z-selected"} {
 		argv := testfixture.Argv(t, []string{"/bin/sh", "-c", "stty raw -echo; printf READY; exec /bin/cat"})
 		if len(commands) != 0 && commands[0][id] != nil {

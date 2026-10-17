@@ -26,7 +26,7 @@ func TestWorkspaceInitActualHTTPWebSocketPTY(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	for _, adapter := range []string{"codex", "claude"} {
 		t.Run(adapter, func(t *testing.T) {
-			root := t.TempDir()
+			root := terminalFixtureRoot(t)
 			st, err := store.Open(filepath.Join(root, "catalog.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -59,23 +59,14 @@ func TestWorkspaceInitActualHTTPWebSocketPTY(t *testing.T) {
 					baseHandler.ServeHTTP(w, r)
 				}
 			})}
-			joined := make(chan struct{})
-			go func() { defer close(joined); _ = server.Serve(listener) }()
+			joined := make(chan error, 1)
 			transport := &http.Transport{DialContext: listener.dial}
 			c := client.New("http://account-fixture", token)
 			c.HTTP = &http.Client{Transport: transport, Timeout: 5 * time.Second}
-			t.Cleanup(func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := manager.Shutdown(ctx); err != nil {
-					t.Error(err)
-				}
-				_ = server.Close()
-				_ = listener.Close()
-				transport.CloseIdleConnections()
-				<-joined
-				_ = st.Close()
-			})
+			lifecycle := &terminalFixtureLifecycle{manager: manager, server: server, listener: listener, transport: transport, served: joined, closeStore: st.Close, root: root}
+			server.Handler = lifecycle.handlers.wrap(server.Handler)
+			go func() { joined <- server.Serve(listener) }()
+			terminalFixtureCleanup(t, lifecycle)
 			for _, id := range []string{"unrelated", "actual-init"} {
 				work, account := "mission", "other"
 				if id == "actual-init" {
