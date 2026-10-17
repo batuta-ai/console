@@ -253,12 +253,66 @@ jobs:
             ${{ env.WINDOWS_EVIDENCE }}/*.stderr
             ${{ env.WINDOWS_EVIDENCE }}/*.exit
           if-no-files-found: error
+      - name: Collect NEVER-SHIP native Core phase captures from the owned fixture
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/batuta/native-core-cancel-observation' && !inputs.ref
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $captureCount = 0
+          $captureOutput = Join-Path $env:WINDOWS_EVIDENCE 'native-core-observation'
+          New-Item -ItemType Directory -Path $captureOutput | Out-Null
+          $captureLog = Join-Path $captureOutput 'collection.log'
+          'NEVER-SHIP: capture absence is unknown; telemetry may perturb timing.' | Set-Content $captureLog
+          try {
+            $fixtureLines = @(Get-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE 'ancestor-acls.log') |
+              Where-Object { $_ -cmatch '^fixture=(.+)$' })
+            if ($fixtureLines.Count -ne 1) { throw 'Exact owned fixture record unavailable' }
+            $captureFixture = $fixtureLines[0].Substring('fixture='.Length)
+            $captureProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+            if ([System.IO.Path]::GetDirectoryName($captureFixture) -cne $captureProfile -or
+                [System.IO.Path]::GetFileName($captureFixture) -cnotmatch '^cw-[a-f0-9]{12}$') { throw 'Owned fixture namespace mismatch' }
+            function Assert-CaptureDirectory([string]$path) {
+              $item = Get-Item -LiteralPath $path
+              if (-not $item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { throw 'Capture directory is not an ordinary directory' }
+            }
+            Assert-CaptureDirectory $captureFixture
+            $captureParents = @($captureFixture)
+            # Public HTTP hosts have an explicit TEMP beneath their retained cpf fixture.
+            foreach ($child in @(Get-ChildItem -LiteralPath $captureFixture -Directory)) {
+              if ($child.Name -cmatch '^cpf-[A-Z2-7]{26}$') {
+                Assert-CaptureDirectory $child.FullName
+                $hostTemp = Join-Path $child.FullName 'tmp'
+                if (Test-Path -LiteralPath $hostTemp) {
+                  Assert-CaptureDirectory $hostTemp
+                  $captureParents += $hostTemp
+                }
+              }
+            }
+            foreach ($captureParent in $captureParents) {
+              $captureSource = Join-Path $captureParent 'batuta-native-core-observation'
+              if (-not (Test-Path -LiteralPath $captureSource)) { continue }
+              Assert-CaptureDirectory $captureSource
+              foreach ($captureFile in @(Get-ChildItem -LiteralPath $captureSource -File)) {
+                if ($captureFile.Name -cnotmatch '^native-core-observation-([a-f0-9]{32}-(parent|helper)|limit)\.jsonl$') { continue }
+                if ($captureFile.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Capture file is a reparse point' }
+                $captureTarget = Join-Path $captureOutput ("$captureCount-" + $captureFile.Name)
+                Copy-Item -LiteralPath $captureFile.FullName -Destination $captureTarget
+                $captureCount++
+              }
+            }
+            "collection=complete copied-files=$captureCount; missing records or output failures remain unknown" | Add-Content $captureLog
+            if ($captureCount -eq 0) { Write-Warning 'No native Core phase captures retained; absence is not evidence of no frames' }
+          } catch {
+            "collection=incomplete copied-files=$captureCount; collection/output failure; remaining capture unknown" | Add-Content $captureLog
+            Write-Warning 'Native Core capture collection failed; inspect collection.log and original test evidence'
+          }
       - name: Retain NEVER-SHIP native Core phase captures
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/batuta/native-core-cancel-observation' && !inputs.ref
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: never-ship-native-core-observation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/**/batuta-native-core-observation/*.jsonl
+          path: |
+            ${{ env.WINDOWS_EVIDENCE }}/native-core-observation/*.jsonl
+            ${{ env.WINDOWS_EVIDENCE }}/native-core-observation/collection.log
           if-no-files-found: warn
   package-snapshot:
     runs-on: ubuntu-24.04

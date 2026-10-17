@@ -120,6 +120,27 @@ func TestNativeCoreObservationDisabledProtocolParity(t *testing.T) {
 	if !nativeCoreObservationEnabled && newNativeCoreObservation(false) != nil {
 		t.Fatal("default observer")
 	}
+	if !nativeCoreObservationEnabled {
+		if n := testing.AllocsPerRun(100, func() {
+			if newNativeCoreObservation(false) != nil || newNativeCoreObservation(true) != nil {
+				t.Fatal("disabled initialization")
+			}
+		}); n != 0 {
+			t.Fatal("disabled initialization allocations", n)
+		}
+	} else {
+		t.Log("disabled initialization cost requires process-start flag off")
+	}
+	var disabled *nativeCoreObservation
+	ctx := context.Background()
+	if n := testing.AllocsPerRun(100, func() {
+		if disabled.context(ctx) != ctx || disabled.observer() != nil {
+			t.Fatal("disabled observer/context identity")
+		}
+		disabled.close()
+	}); n != 0 {
+		t.Fatal("disabled service seam allocations", n)
+	}
 }
 
 func TestNativeCoreObservationRealPipeBoundaries(t *testing.T) {
