@@ -69,6 +69,8 @@ type winFlowConfig struct {
 	GoVersion, CoreVersion                                             string
 	SourceRoot, SourceMode                                             string
 	Race                                                               bool
+
+	ObserveStops bool `json:",omitempty"`
 }
 type winFlowCommand struct {
 	Op                               string
@@ -83,6 +85,8 @@ type winFlowEvent struct {
 	Config                        *winFlowConfig `json:",omitempty"`
 	Tree                          *winFlowTree   `json:",omitempty"`
 	Blocked, SameFile, Joined     bool           `json:",omitempty"`
+
+	Stops *winFlowStopSnapshot `json:",omitempty"`
 }
 
 func winFlowCheck(t *testing.T, err error) {
@@ -633,7 +637,7 @@ func winFlowServe(t *testing.T, events *os.File) {
 	closing := false
 	var handlers sync.WaitGroup
 	base, cancelHTTP := context.WithCancel(context.Background())
-	handler := (&api.Server{Svc: svc, Token: token}).Handler()
+	handler, stopObserver := winFlowObserveStops((&api.Server{Svc: svc, Token: token}).Handler(), cfg.ObserveStops)
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, BaseContext: func(net.Listener) context.Context { return base }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		if closing {
@@ -720,6 +724,9 @@ func winFlowServe(t *testing.T, events *os.File) {
 		switch command.Op {
 		case "drain":
 			return
+		case "stop_observations":
+			snapshot := stopObserver.snapshot()
+			event.Stops = &snapshot
 		case "authenticate":
 			account, err := st.GetAccount(command.AccountID)
 			winFlowCheck(t, err)
