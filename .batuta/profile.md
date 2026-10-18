@@ -2,7 +2,7 @@
 
 Stack: Go 1.27.2 daemon/client + React 19.3, TypeScript 7.0.2, Vite 8.3.2, Bubble Tea 2.0.10 TUI, SQLite 1.60.1, xterm 6; Lyra React/styles 1.1.0 and existing CSS.
 Methodology: TDD always: write the behavioral/regression test first, run it and observe the expected failure, implement the smallest correction, rerun to green, then refactor; retain red/green commands and output. Conventional commits; feature branches; keep existing architecture and styling/state conventions.
-Test: go test ./... && npm --prefix web run test:run && npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json
+Test: go test -race -count=1 -timeout=10m ./... && npm --prefix web run test:run && npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json
 Build: npm --prefix web run build && go build -o bin/console ./cmd/console && go build -o bin/consoled ./cmd/consoled
 Install: go mod download && npm --prefix web ci
 Execution: sequential
