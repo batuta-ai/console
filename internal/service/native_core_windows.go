@@ -299,7 +299,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 	var state string
 	var outcome, parentCause, cleanup error
 	completed := false
-	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).Exchange(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(callback context.Context, input io.Reader, output io.WriteCloser) error {
+	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).ExchangeFinalizing(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(finalization session.NativeExchangeFinalization, input io.Reader, output io.WriteCloser) (callbackErr error) {
 		stream := &nativeCoreStream{reader: input, writer: output}
 		frame, err := stream.receive()
 		if err != nil {
@@ -313,15 +313,20 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 			return err
 		}
 		stopCancel, cancelJoined := make(chan struct{}), make(chan struct{})
+		var cancelErr error
 		go func() {
 			defer close(cancelJoined)
 			select {
-			case <-callback.Done():
-				_ = stream.send(nativeCoreFrame{Type: "cancel"})
+			case <-finalization.Control.Done():
+				cancelErr = stream.send(nativeCoreFrame{Type: "cancel"})
 			case <-stopCancel:
 			}
 		}()
-		defer func() { close(stopCancel); <-cancelJoined }()
+		defer func() {
+			close(stopCancel)
+			<-cancelJoined
+			callbackErr = errors.Join(callbackErr, cancelErr)
+		}()
 		var last uint64
 		ready := false
 		for {
@@ -341,9 +346,9 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 					if resume == "" {
-						_, response = s.executionApproval(job.ctx, req)
+						_, response = s.executionApproval(finalization.Control, req)
 					} else {
-						response = job.ctx.Err()
+						response = finalization.Control.Err()
 					}
 					if response == nil {
 						active.Store(true)
@@ -354,12 +359,12 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 					request := frame.Guard
-					if request.Cleanup && job.ctx.Err() == nil {
+					if request.Cleanup && finalization.Control.Err() == nil {
 						return domain.ErrInvalidReference
 					}
-					checkCtx := job.ctx
+					checkCtx := finalization.Control
 					if request.Cleanup {
-						checkCtx = context.WithoutCancel(job.ctx)
+						checkCtx = finalization.Cleanup
 					}
 					for _, a := range selected.byCLI {
 						if request.Executable == a.executable {
@@ -392,6 +397,7 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 						return domain.ErrInvalidReference
 					}
 				}
+				finalization.ProtocolDone()
 				completed = true
 				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
