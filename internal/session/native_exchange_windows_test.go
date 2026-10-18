@@ -20,6 +20,171 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// NativeExchangeTestObserver retains the original owner, but only duplicates
+// query/synchronize rights. It cannot request cancellation or terminate a job.
+type NativeExchangeTestObserver struct {
+	manager *Manager
+	owner   *ownedProcess
+	witness windows.Handle
+}
+
+type NativeExchangeTestState struct {
+	Forced, Signaled, Retired, Registered, Exited bool
+	TerminationError                              error
+	ExitCode                                      uint32
+}
+
+func ObserveNativeExchangeForTest(m *Manager, pid uint32, creation uint64) (*NativeExchangeTestObserver, error) {
+	if m == nil || pid == 0 || creation == 0 {
+		return nil, errors.New("missing native owner identity")
+	}
+	m.mu.Lock()
+	owners := make([]*ownedProcess, 0, len(m.probes))
+	for p := range m.probes {
+		owners = append(owners, p)
+	}
+	m.mu.Unlock()
+	var observer *NativeExchangeTestObserver
+	for _, p := range owners {
+		p.mu.Lock()
+		if p.retired || p.root == 0 {
+			p.mu.Unlock()
+			continue
+		}
+		observedPID, err := windows.GetProcessId(p.root)
+		if err != nil || observedPID != pid {
+			p.mu.Unlock()
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		var born, exited, kernel, user windows.Filetime
+		err = windows.GetProcessTimes(p.root, &born, &exited, &kernel, &user)
+		if err == nil && uint64(born.HighDateTime)<<32|uint64(born.LowDateTime) == creation {
+			if observer != nil {
+				p.mu.Unlock()
+				return nil, errors.Join(errors.New("multiple native owners match birth"), observer.Close())
+			}
+			observer = &NativeExchangeTestObserver{manager: m, owner: p}
+			err = windows.DuplicateHandle(windows.CurrentProcess(), p.root, windows.CurrentProcess(), &observer.witness, windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, 0)
+		}
+		p.mu.Unlock()
+		if err != nil {
+			if observer != nil {
+				err = errors.Join(err, observer.Close())
+			}
+			return nil, err
+		}
+	}
+	if observer == nil {
+		return nil, errors.New("no native owner matches birth")
+	}
+	return observer, nil
+}
+
+func (o *NativeExchangeTestObserver) Snapshot() (NativeExchangeTestState, error) {
+	p := o.owner
+	p.mu.Lock()
+	s := NativeExchangeTestState{Forced: p.forced, Signaled: p.signaled, Retired: p.retired, TerminationError: p.err}
+	p.mu.Unlock()
+	o.manager.mu.Lock()
+	_, s.Registered = o.manager.probes[p]
+	o.manager.mu.Unlock()
+	status, err := windows.WaitForSingleObject(o.witness, 0)
+	if err != nil {
+		return s, err
+	}
+	switch status {
+	case windows.WAIT_OBJECT_0:
+		s.Exited = true
+		err = windows.GetExitCodeProcess(o.witness, &s.ExitCode)
+	case uint32(windows.WAIT_TIMEOUT):
+	default:
+		err = fmt.Errorf("unexpected witness wait status %d", status)
+	}
+	return s, err
+}
+
+func (o *NativeExchangeTestObserver) Close() error {
+	if o.witness == 0 {
+		return nil
+	}
+	err := windows.CloseHandle(o.witness)
+	o.witness = 0
+	return err
+}
+
+func TestNativeCoreOwnerObservationControls(t *testing.T) {
+	for _, forced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("forced=%t", forced), func(t *testing.T) {
+			runner := task43WindowsNativeRunner(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			mode := "cooperative"
+			if forced {
+				mode = "hold"
+			}
+			var observer *NativeExchangeTestObserver
+			result, err := runner.Exchange(ctx, task43ExchangeCommand(t, mode, "observer-control"), func(_ context.Context, output io.Reader, input io.WriteCloser) error {
+				birth, err := task43ExchangeReceiveBirth(output)
+				if err != nil {
+					return err
+				}
+				var pid uint32
+				var creation uint64
+				if _, err := fmt.Sscanf(birth.Root, "LIFETIME-CHILD:%d:%d", &pid, &creation); err != nil {
+					return err
+				}
+				if wrong, err := ObserveNativeExchangeForTest(runner.Manager, pid, creation+1); err == nil {
+					return errors.Join(errors.New("observer accepted wrong creation"), wrong.Close())
+				}
+				observer, err = ObserveNativeExchangeForTest(runner.Manager, pid, creation)
+				if err != nil {
+					return err
+				}
+				before, err := observer.Snapshot()
+				if err != nil || before.Forced || before.Retired || before.Exited || !before.Registered {
+					return errors.Join(fmt.Errorf("invalid live owner: %+v", before), err)
+				}
+				if forced {
+					cancel()
+					_, err := task43ExchangeRead(output)
+					return err
+				}
+				if err := task43ExchangeWrite(input, []byte("stop")); err != nil {
+					return err
+				}
+				reply, err := task43ExchangeRead(output)
+				if err != nil || string(reply) != "released" {
+					return errors.Join(errors.New("missing cooperative reply"), err)
+				}
+				return nil
+			})
+			if observer == nil {
+				t.Fatal("no original owner retained", result, err)
+			}
+			defer func() {
+				if err := observer.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			state, observeErr := observer.Snapshot()
+			t.Logf("joined owner forced=%t state=%+v exchange=%v", forced, state, err)
+			if observeErr != nil || state.TerminationError != nil || !state.Retired || !state.Signaled || !state.Exited || state.Registered || state.Forced != forced {
+				t.Fatal("original owner observation failed", state, observeErr)
+			}
+			if forced {
+				if !errors.Is(err, context.Canceled) || result.ExitCode != -1 {
+					t.Fatal(result, err)
+				}
+			} else if err != nil || result.ExitCode != 0 || state.ExitCode != 0 {
+				t.Fatal(result, state, err)
+			}
+		})
+	}
+}
+
 func task43ExchangeWrite(w io.Writer, data []byte) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
 		return err
