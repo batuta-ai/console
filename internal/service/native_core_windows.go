@@ -318,12 +318,17 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 			defer close(cancelJoined)
 			select {
 			case <-finalization.Control.Done():
-				cancelErr = stream.send(nativeCoreFrame{Type: "cancel"})
 			case <-stopCancel:
+			}
+			// Stopping the writer must not lose an already eligible cancellation.
+			if finalization.Control.Err() != nil {
+				cancelErr = stream.send(nativeCoreFrame{Type: "cancel"})
 			}
 		}()
 		defer func() {
-			close(stopCancel)
+			if !completed {
+				close(stopCancel)
+			}
 			<-cancelJoined
 			callbackErr = errors.Join(callbackErr, cancelErr)
 		}()
@@ -400,6 +405,8 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 				finalization.ProtocolDone()
 				completed = true
 				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
+				close(stopCancel)
+				<-cancelJoined
 				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
 					return err
 				}

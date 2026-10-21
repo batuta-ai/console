@@ -25,6 +25,13 @@ import (
 // A copied test PE is the local selected CLI fixture. Core's public inventory
 // adapter invokes its native diagnostic argv before any test flags exist.
 func TestMain(m *testing.M) {
+	if strings.EqualFold(filepath.Base(os.Args[0]), "native-core-finalization-peer.exe") && len(os.Args) == 2 && os.Args[1] == "--native-core" {
+		if err := task2CoreFinalizationPeer(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(93)
+		}
+		os.Exit(0)
+	}
 	if handled, err := task43CoreReviewEnginePE(); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
