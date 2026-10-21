@@ -213,6 +213,20 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		}
 		return result, runErr
 	}
+	return m.waitNativeLegacyExchange(stopContext, cancelCallback, pipes, owned, callbackDone, processDone, stderrDone, cmd, stderr, result)
+}
+
+func (m *Manager) waitNativeLegacyExchange(
+	stopContext context.Context,
+	cancelCallback context.CancelFunc,
+	pipes nativeExchangePipes,
+	owned *ownedProcess,
+	callbackDone, processDone, stderrDone <-chan error,
+	cmd *exec.Cmd,
+	stderr *nativeOutput,
+	result publication.CommandResult,
+) (publication.CommandResult, error) {
+	var runErr error
 	var callbackErr, processErr, stderrErr, stopErr, protocolErr error
 	stopOwned := func() {
 		if err := owned.stop(); err != nil {
