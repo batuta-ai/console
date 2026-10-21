@@ -723,3 +723,49 @@ func TestTask43WindowsNativeCorePreparedSuccessHoldsCapacity(t *testing.T) {
 		t.Fatal("direct successful Core duplicated or escaped selected submission", string(launches), err)
 	}
 }
+
+// The wrapper owns and waits for the real daemon. It never reads or writes a
+// protocol frame; after the daemon returns it retains its own stdout and exit.
+func task3CoreLifetimeImage(t *testing.T, consoled, home string, durable bool) string {
+	t.Helper()
+	_, build := task43CoreHome(t)
+	source := fmt.Sprintf(`package main
+import (
+ "encoding/json"
+ "fmt"
+ "os"
+ "os/exec"
+ "runtime"
+ "golang.org/x/sys/windows"
+)
+func run() error {
+ if os.Getenv("OPENAI_API_KEY")!="" || os.Getenv("ANTHROPIC_API_KEY")!="" {return fmt.Errorf("ambient credentials")}
+ open:=func(name string)(windows.Handle,error){p,e:=windows.UTF16PtrFromString(name);if e!=nil{return 0,e};return windows.OpenEvent(windows.EVENT_MODIFY_STATE,false,p)}
+ ready,err:=open(%q);if err!=nil{return err};defer windows.CloseHandle(ready)
+ terminal,err:=open(%q);if err!=nil{return err};defer windows.CloseHandle(terminal)
+ held,err:=windows.CreateEvent(nil,1,0,nil);if err!=nil{return err};defer windows.CloseHandle(held)
+ var born,ended,kernel,user windows.Filetime
+ if err:=windows.GetProcessTimes(windows.CurrentProcess(),&born,&ended,&kernel,&user);err!=nil{return err}
+ data,err:=json.Marshal(struct{PID uint32;Created uint64;Home,Version string;Procs,CPUs int}{uint32(os.Getpid()),uint64(born.HighDateTime)<<32|uint64(born.LowDateTime),os.Getenv("HOME"),runtime.Version(),runtime.GOMAXPROCS(0),runtime.NumCPU()});if err!=nil{return err}
+ if err:=os.WriteFile(%q,data,0600);err!=nil{return err}
+ if err:=windows.SetEvent(ready);err!=nil{return err}
+ if %t {
+  c:=exec.Command(%q,"--native-core");c.Stdin,c.Stdout,c.Stderr=os.Stdin,os.Stdout,os.Stderr;c.Env=os.Environ()
+  if err:=c.Run();err!=nil{return err}
+  if err:=windows.SetEvent(terminal);err!=nil{return err}
+ }
+ status,err:=windows.WaitForSingleObject(held,windows.INFINITE)
+ return fmt.Errorf("unreleased lifetime returned: status=%%d err=%%v",status,err)
+}
+func main(){if err:=run();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(94)}}
+`, nativeStopWindowsEvent(home+"-ready"), nativeStopWindowsEvent(home+"-terminal"), filepath.Join(home, "task3-helper-birth.json"), durable, consoled)
+	path := filepath.Join(build, "main.go")
+	task43CoreWriteFile(t, path, source)
+	image := filepath.Join(build, "task3-lifetime.exe")
+	command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-mod=readonly", "-o", image, path)
+	command.Dir = filepath.Join("..", "..")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("SETUP: owned lifetime wrapper build: %v %s", err, out)
+	}
+	return image
+}

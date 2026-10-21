@@ -18,7 +18,9 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/session"
 	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
 	"golang.org/x/sys/windows"
@@ -502,6 +504,233 @@ func TestNativeStopWindowsContradictoryCancellationMetadataIsNotPure(t *testing.
 			if onlyNativeCancellation(test.encoded.cause()) {
 				t.Fatal("contradictory or legacy opaque metadata hid a cause", test.encoded)
 			}
+		})
+	}
+}
+
+func TestTask3WindowsNativeCoreExpiryPublicService(t *testing.T) {
+	for _, durable := range []bool{false, true} {
+		name := "without_done"
+		if durable {
+			name = "real_durable_terminal"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Logf("parent runtime=%s GOMAXPROCS=%d NumCPU=%d", runtime.Version(), runtime.GOMAXPROCS(0), runtime.NumCPU())
+			svc, approval, skills, _, _ := task43CoreApprovedFixture(t)
+			_, svc.Home = task43CoreHome(t)
+			t.Setenv("BATUTA_SKILLS", skills)
+			adapter := filepath.Join(skills, "adapters", "codex.md")
+			data, err := os.ReadFile(adapter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := strings.ReplaceAll(string(data), "-test.run=^TestTask43WindowsNativeCoreProviderFixture$", "-test.run=^$")
+			body = strings.ReplaceAll(body, "task43-core-provider", "native-stop-provider")
+			if err := os.Remove(adapter); err != nil {
+				t.Fatal(err)
+			}
+			task43CoreWriteFile(t, adapter, body)
+			account := domain.Account{ID: "acct_task3", Adapter: "codex", Connected: true, SessionCap: 1}
+			if err := svc.Store.PutAccount(account); err != nil {
+				t.Fatal(err)
+			}
+			authenticateFixtureAccount(t, svc, account, "task3-synthetic")
+			mission, err := svc.Store.GetMission(approval.Identity.MissionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mission.SquadSnapshot = domain.Squad{ID: "task3-squad", Members: []domain.Member{{ID: "member", CLI: "codex", Model: "qa-native", AccountID: account.ID, Skills: []string{"batuta-loop", "batuta-review"}, Maestro: true}}}
+			mission.SquadID = mission.SquadSnapshot.ID
+			if err := svc.Store.PutMission(mission); err != nil {
+				t.Fatal(err)
+			}
+			_, home := task43CoreHome(t)
+			var events []windows.Handle
+			for _, suffix := range []string{"-ready", "-terminal"} {
+				ptr, err := windows.UTF16PtrFromString(nativeStopWindowsEvent(home + suffix))
+				if err != nil {
+					t.Fatal(err)
+				}
+				h, err := windows.CreateEvent(nil, 1, 0, ptr)
+				if err != nil {
+					t.Fatal(err)
+				}
+				events = append(events, h)
+				t.Cleanup(func() {
+					if err := windows.CloseHandle(h); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			consoled := ""
+			if durable {
+				consoled = task43CoreImage(t)
+			}
+			svc.NativeExecutorExecutable = task3CoreLifetimeImage(t, consoled, home, durable)
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			started := make(chan nativeStartOutcome, 1)
+			startJoined := make(chan struct{})
+			var serviceJoined <-chan struct{}
+			req := domain.ExecutionRequest{Target: approval.Identity, ApprovalID: approval.ID}
+			go func() {
+				defer close(startJoined)
+				result, err := svc.StartExecution(ctx, req)
+				started <- nativeStartOutcome{result: result, err: err}
+			}()
+			t.Cleanup(func() {
+				cancel()
+				// A failed assertion still joins every admitted worker. Root's suite
+				// watchdog, not a shortened product cutoff, bounds broken cleanup.
+				if err := svc.ShutdownNative(context.Background()); err != nil {
+					t.Error(err)
+				}
+				<-startJoined
+				if serviceJoined != nil {
+					<-serviceJoined
+				}
+				if err := svc.Session.Shutdown(context.Background()); err != nil {
+					t.Error(err)
+				}
+			})
+			wait := func(h windows.Handle, label string) {
+				t.Helper()
+				nativeStopAwait(t, ctx, label, func() bool {
+					status, err := windows.WaitForSingleObject(h, 0)
+					if err != nil || status != windows.WAIT_OBJECT_0 && status != uint32(windows.WAIT_TIMEOUT) {
+						t.Fatalf("%s: status=%d err=%v", label, status, err)
+					}
+					return status == windows.WAIT_OBJECT_0
+				})
+			}
+			wait(events[0], "owned wrapper ready")
+			var birth struct {
+				task43CoreBirth
+				Home, Version string
+				Procs, CPUs   int
+			}
+			data, err = os.ReadFile(filepath.Join(home, "task3-helper-birth.json"))
+			if err != nil {
+				t.Fatal("SETUP: owned wrapper birth", err)
+			}
+			if err := json.Unmarshal(data, &birth); err != nil || !filepath.IsAbs(birth.Home) || birth.Home == home {
+				t.Fatal("SETUP: owned wrapper birth/private HOME", birth, err)
+			}
+			witness, err := task43CoreWitness(birth.task43CoreBirth)
+			if err != nil {
+				t.Fatal("SETUP: retained observation-only wrapper handle", err)
+			}
+			defer windows.CloseHandle(witness)
+			t.Logf("wrapper pid=%d creation=%d runtime=%s GOMAXPROCS=%d NumCPU=%d", birth.PID, birth.Created, birth.Version, birth.Procs, birth.CPUs)
+			delivery := domain.ExecutionDelivery(approval.ID, approval.Identity)
+			svc.native.mu.Lock()
+			job := svc.native.jobs[delivery]
+			svc.native.mu.Unlock()
+			if job == nil || job.request != req || !domain.ValidExecutionRunID(job.runID) {
+				t.Fatal("SETUP: exact admitted public attempt missing")
+			}
+			stop := domain.ExecutionStopRequest{Target: approval.Identity, ApprovalID: approval.ID, Delivery: delivery, RunID: job.runID}
+			var tree []windows.Handle
+			if durable {
+				select {
+				case outcome := <-started:
+					if outcome.err != nil || outcome.result.Effect != domain.ExecutionStarted || outcome.result.RunID != stop.RunID || outcome.result.Delivery != delivery || outcome.result.OpenedDigest == "" {
+						t.Fatal("SETUP: actual public Core start", outcome)
+					}
+				case <-ctx.Done():
+					t.Fatal("SETUP: public start", ctx.Err())
+				}
+				tree = nativeStopWindowsTree(t, ctx, approval)
+			}
+			// Hold only this attempt's real outcome recorder. No outcome is
+			// injected. Its Service worker and active.Wait join must remain owned
+			// even after the helper and Exchange have finished.
+			job.outcomeMu.Lock()
+			locked := true
+			t.Cleanup(func() {
+				if locked {
+					job.outcomeMu.Unlock()
+				}
+			})
+			joined := make(chan struct{})
+			serviceJoined = joined
+			go func() { svc.native.active.Wait(); close(joined) }()
+			pending := func(label string) {
+				t.Helper()
+				out, err := svc.StopExecution(ctx, stop)
+				if err != nil || out.ExecutionStopRequest != stop || out.Effect != domain.ExecutionStopPending || out.Finalized || out.Durable {
+					t.Fatalf("%s: public pending lost: %+v err=%v", label, out, err)
+				}
+				select {
+				case <-joined:
+					t.Fatal("Service forgot its held finalization worker")
+				default:
+				}
+				if info, err := os.Stat(birth.Home); err != nil || !info.IsDir() {
+					t.Fatal("held Service worker lost its private HOME", err)
+				}
+			}
+			pending("before helper expiry")
+			terminalDigest := ""
+			if durable {
+				wait(events[1], "real daemon RunNativeCore returned and process joined")
+				state, err := svc.ExecutionState(ctx, approval.Identity.MissionID, approval.Identity.Binding.WorkspaceID, approval.ID)
+				if err != nil || !state.Active || state.RunID != stop.RunID || !state.Bound || state.Delivery != delivery || state.OpenedDigest == "" {
+					t.Fatal("real terminal attempt association", state, err)
+				}
+				binding := approval.Identity.Binding
+				binding.DeliveryID, binding.OpenedDigest = delivery, state.OpenedDigest
+				evidence, err := batuta.ObserveApprovedExecutionContext(ctx, binding.CanonicalRoot, binding, approval)
+				if err != nil || evidence.OpenedDigest != binding.OpenedDigest || evidence.TerminalState != loop.StateCanceled || evidence.TerminalDigest == "" || evidence.CleanupPending {
+					t.Fatal("actual synchronized Core55 terminal missing", evidence, err)
+				}
+				terminalDigest = evidence.TerminalDigest
+				nativeStopWindowsHandles(t, tree, false)
+			}
+			wait(witness, "held wrapper terminated by production lifetime owner")
+			pending("helper exited; Service worker join still held")
+			job.outcomeMu.Unlock()
+			locked = false
+			select {
+			case <-joined:
+			case <-ctx.Done():
+				t.Fatal("Service did not join released finalization", ctx.Err())
+			}
+			final := nativeStopFinal(t, ctx, svc, stop)
+			job.outcomeMu.Lock()
+			runErr := job.runErr
+			job.outcomeMu.Unlock()
+			if !errors.Is(runErr, session.ErrNativeExchangeExpired) || !errors.Is(runErr, context.DeadlineExceeded) || !errors.Is(runErr, context.Canceled) {
+				t.Fatal("independent expiry lost after all Service joins", runErr)
+			}
+			if final.Effect != domain.ExecutionStopUncertain || !final.Finalized || final.Error == nil || !strings.Contains(strings.Join(final.Causes, "\n"), session.ErrNativeExchangeExpired.Error()) {
+				t.Fatal("expiry incorrectly completed", final)
+			}
+			if durable {
+				if !final.Durable || final.CoreState != loop.StateCanceled || final.State == nil || final.State.Active || final.State.RunID != "" || final.State.Delivery != delivery {
+					t.Fatal("expiry erased verified durability/identity", final)
+				}
+				binding := approval.Identity.Binding
+				binding.DeliveryID, binding.OpenedDigest = delivery, final.State.OpenedDigest
+				evidence, err := batuta.ObserveApprovedExecutionContext(ctx, binding.CanonicalRoot, binding, approval)
+				if err != nil || evidence.TerminalDigest != terminalDigest || evidence.TerminalState != final.CoreState || evidence.CleanupPending {
+					t.Fatal("terminal evidence changed across finalization", evidence, err)
+				}
+			} else {
+				exists, err := batuta.DeliveryEvidenceExists(approval.Identity.Binding.CanonicalRoot, delivery)
+				if err != nil || exists || final.CoreState != "" {
+					t.Fatal("pre-Hello expiry invented Core evidence", final, err)
+				}
+			}
+			if err := svc.ShutdownNative(ctx); err != nil {
+				t.Fatal("public native joins", err)
+			}
+			if err := svc.Session.Shutdown(ctx); err != nil {
+				t.Fatal("Manager joins", err)
+			}
+			if _, err := os.Stat(birth.Home); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("owned helper HOME cleanup not joined", err)
+			}
+			t.Logf("approval=%s delivery=%s run=%s terminal=%s final=%s durable=%t; all joins complete", approval.ID, delivery, stop.RunID, terminalDigest, final.Effect, final.Durable)
 		})
 	}
 }
