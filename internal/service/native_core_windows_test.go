@@ -980,3 +980,115 @@ func TestTask43WindowsNativeCoreErrorCauses(t *testing.T) {
 		})
 	}
 }
+
+func TestTask4WindowsNativeCoreDoneRegistrationBeforeFinalDrain(t *testing.T) {
+	svc, approval, skills, env, values := task43CoreApprovedFixture(t)
+	req := domain.ExecutionRequest{Target: approval.Identity, ApprovalID: approval.ID}
+	job, err := svc.native.admitExecution(req, batuta.ExecutionDelivery(approval))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.native.finish(job)
+	config := task2CorePeerConfig{
+		Mode: "no_cancel", RunID: job.runID,
+		Start:   nativeCoreStart{Receipt: approval, Delivery: job.delivery, Skills: skills, Environment: env, Accounts: values},
+		Ready:   `Local\batuta-task4-ready-` + job.runID,
+		Proceed: `Local\batuta-task4-proceed-` + job.runID,
+		Closed:  `Local\batuta-task4-closed-` + job.runID,
+		Release: `Local\batuta-task4-release-` + job.runID,
+	}
+	ready := task2CoreEvent(t, config.Ready)
+	proceed := task2CoreEvent(t, config.Proceed)
+	closed := task2CoreEvent(t, config.Closed)
+	release := task2CoreEvent(t, config.Release)
+	home := accounts.ExplicitHome(env)
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task43CoreWriteFile(t, filepath.Join(home, "finalization-peer.json"), string(data))
+	image, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.NativeExecutorExecutable = filepath.Join(home, "native-core-finalization-peer.exe")
+	task43CoreWriteFile(t, svc.NativeExecutorExecutable, string(data))
+	selected := task43CoreSelected(svc, values)
+	var active atomic.Bool
+	var handled bool
+	var state string
+	var runErr error
+	var witness windows.Handle
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		handled, state, runErr = svc.runNativeWindowsExecution(job, req, approval, "", selected, skills, env, &active, func(context.Context) error {
+			return errors.New("scripted peer unexpectedly requested a guard")
+		})
+	}()
+	defer func() {
+		for _, barrier := range []windows.Handle{release, proceed} {
+			if err := windows.SetEvent(barrier); err != nil {
+				t.Error(err)
+			}
+		}
+		job.cancel()
+		// Preserve attempt, peer events and witness until every production join
+		// returns, including on failure; a broken join belongs to the suite watchdog.
+		<-finished
+		if witness != 0 {
+			if err := windows.CloseHandle(witness); err != nil {
+				t.Error(err)
+			}
+		}
+		if t.Failed() {
+			t.Logf("joined attempt=%s handled=%t state=%q err=%v", job.runID, handled, state, runErr)
+		}
+	}()
+	task2CoreWaitEvent(t, ready, "actual ready response before held final drain")
+	data, err = os.ReadFile(filepath.Join(home, "finalization-peer-birth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	witness, err = task43CoreHello(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !active.Load() || job.request != req || job.runID != config.RunID || job.delivery != config.Start.Delivery || job.ctx.Err() != nil {
+		t.Fatalf("SETUP: actual readiness/attempt/Control changed: active=%t Control=%v", active.Load(), job.ctx.Err())
+	}
+	if wait, err := windows.WaitForSingleObject(witness, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+		t.Fatalf("SETUP: original peer not alive before Done: wait=%d err=%v", wait, err)
+	}
+	if err := windows.SetEvent(proceed); err != nil {
+		t.Fatal(err)
+	}
+	task2CoreWaitEvent(t, closed, "peer validated Done/ACK/input EOF with output/exit held")
+	// This proves registration before final drain completes, not before ACK:
+	// registration immediately after ACK would satisfy the same observation.
+	if job.ctx.Err() != nil {
+		t.Fatalf("Control canceled before observing held final drain: %v", job.ctx.Err())
+	}
+	if wait, err := windows.WaitForSingleObject(release, 0); err != nil || wait != uint32(windows.WAIT_TIMEOUT) {
+		t.Fatalf("peer output/exit release barrier changed: wait=%d err=%v", wait, err)
+	}
+	t.Logf("attempt=%s approval=%s delivery=%s: Done/ACK/input EOF; release unset; Control live", job.runID, approval.ID, job.delivery)
+	watchdog := time.NewTimer(30 * time.Second)
+	defer watchdog.Stop()
+	select {
+	case <-finished:
+	case <-watchdog.C:
+		t.Fatal("actual Service did not join while final output/exit held; operational watchdog, not deadline measurement")
+	}
+	if job.ctx.Err() != nil || !handled || state != loop.StateDone || !errors.Is(runErr, session.ErrNativeExchangeExpired) || !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("Service lost validated Done/expiry with live Control: Control=%v handled=%t state=%q err=%v", job.ctx.Err(), handled, state, runErr)
+	}
+	if wait, err := windows.WaitForSingleObject(witness, 0); err != nil || wait != windows.WAIT_OBJECT_0 {
+		t.Fatalf("Service returned before original peer was signaled: wait=%d err=%v; handler=%v", wait, err, runErr)
+	}
+	t.Logf("joined actual Service with validated Done, held release and signaled original peer: state=%q err=%v", state, runErr)
+}
