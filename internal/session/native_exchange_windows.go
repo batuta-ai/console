@@ -65,6 +65,14 @@ func (p nativeExchangePipes) Close() error {
 	return errors.Join(p.inputRead.Close(), p.inputWrite.Close(), p.outputRead.Close(), p.outputWrite.Close(), p.stderrRead.Close(), p.stderrWrite.Close())
 }
 
+func newNativeProtocolCompletion() (func(), <-chan time.Time) {
+	protocolClosed := make(chan time.Time, 1)
+	var closeProtocol sync.Once
+	return func() {
+		closeProtocol.Do(func() { protocolClosed <- time.Now().Add(2 * time.Second) })
+	}, protocolClosed
+}
+
 func (r NativeRunner) runNativeExchange(ctx context.Context, command publication.Command, handler func(context.Context, io.Reader, io.WriteCloser) error, finalizing func(NativeExchangeFinalization, io.Reader, io.WriteCloser) error) (result publication.CommandResult, runErr error) {
 	result.ExitCode = -1
 	if r.Manager == nil || (handler == nil && finalizing == nil) || !filepath.IsAbs(command.Executable) || r.Graceful || len(command.Stdin) != 0 || command.Observer != nil || command.StdoutLimit != 0 || command.StderrLimit < 0 || command.StderrLimit > 16<<20 {
@@ -166,15 +174,12 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 	callbackDone := make(chan error, 1)
 	cleanupContext, cancelCleanup := context.WithCancel(context.WithoutCancel(stopContext))
 	defer cancelCleanup()
-	protocolClosed := make(chan time.Time, 1)
-	var closeProtocol sync.Once
+	protocolDone, protocolClosed := newNativeProtocolCompletion()
 	go func() {
 		if finalizing != nil {
 			callbackDone <- finalizing(NativeExchangeFinalization{
 				Control: stopContext, Cleanup: cleanupContext,
-				ProtocolDone: func() {
-					closeProtocol.Do(func() { protocolClosed <- time.Now().Add(2 * time.Second) })
-				},
+				ProtocolDone: protocolDone,
 			}, pipes.outputRead, pipes.inputWrite)
 		} else {
 			callbackDone <- handler(callbackContext, pipes.outputRead, pipes.inputWrite)
