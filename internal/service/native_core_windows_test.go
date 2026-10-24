@@ -14,8 +14,10 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -1091,4 +1093,557 @@ func TestTask4WindowsNativeCoreDoneRegistrationBeforeFinalDrain(t *testing.T) {
 		t.Fatalf("Service returned before original peer was signaled: wait=%d err=%v; handler=%v", wait, err, runErr)
 	}
 	t.Logf("joined actual Service with validated Done, held release and signaled original peer: state=%q err=%v", state, runErr)
+}
+
+// These units call the complete production callback. Task1 tests the concrete
+// registrator; the unchanged real Exchange/Service tests establish its wiring.
+type nativeCoreCallbackObservation struct {
+	registrations int
+	ackEntries    int
+	atACK         int
+	closes        int
+	drains        int
+	frames        []nativeCoreFrame
+	events        []string
+}
+
+type nativeCoreCallbackLog struct {
+	mu sync.Mutex
+	nativeCoreCallbackObservation
+}
+
+func (l *nativeCoreCallbackLog) snapshot() nativeCoreCallbackObservation {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	got := l.nativeCoreCallbackObservation
+	got.frames = append([]nativeCoreFrame(nil), got.frames...)
+	got.events = append([]string(nil), got.events...)
+	return got
+}
+
+type nativeCoreCallbackBarrier struct {
+	channel chan struct{}
+	once    sync.Once
+}
+
+func newNativeCoreCallbackBarrier() *nativeCoreCallbackBarrier {
+	return &nativeCoreCallbackBarrier{channel: make(chan struct{})}
+}
+
+func (b *nativeCoreCallbackBarrier) release() {
+	b.once.Do(func() { close(b.channel) })
+}
+
+type nativeCoreCallbackOptions struct {
+	phases    []string
+	ackErr    error
+	cancelErr error
+	closeErr  error
+	drainErr  error
+	tail      []byte
+	guardErr  error
+}
+
+type nativeCoreCallbackWriter struct {
+	log           *nativeCoreCallbackLog
+	options       nativeCoreCallbackOptions
+	ackRelease    *nativeCoreCallbackBarrier
+	cancelRelease *nativeCoreCallbackBarrier
+	phase         int
+	remaining     uint32
+	wire          bytes.Buffer
+}
+
+func (w *nativeCoreCallbackWriter) Write(p []byte) (int, error) {
+	if w.phase >= len(w.options.phases) {
+		return 0, errors.New("unexpected output after final callback phase")
+	}
+	phase := w.options.phases[w.phase]
+	if w.remaining == 0 {
+		if len(p) != 4 {
+			return 0, fmt.Errorf("%s header Write length = %d, want 4", phase, len(p))
+		}
+		size := binary.LittleEndian.Uint32(p)
+		if size == 0 || size > nativeCoreFrameLimit {
+			return 0, fmt.Errorf("%s header has invalid size %d", phase, size)
+		}
+		if phase == "ack" {
+			ack, err := json.Marshal(nativeCoreFrame{Type: "ack"})
+			if err != nil || size != uint32(len(ack)) {
+				return 0, fmt.Errorf("actual ACK header size = %d, want %d: %v", size, len(ack), err)
+			}
+			w.log.mu.Lock()
+			w.log.ackEntries++
+			w.log.atACK = w.log.registrations
+			w.log.events = append(w.log.events, "ack-header")
+			w.log.mu.Unlock()
+			// No observation mutex is held while the controller releases Write.
+			<-w.ackRelease.channel
+			if w.options.ackErr != nil {
+				return 0, w.options.ackErr
+			}
+		}
+		w.remaining = size
+		w.wire.Write(p)
+		return len(p), nil
+	}
+	if uint32(len(p)) > w.remaining {
+		return 0, fmt.Errorf("%s payload exceeds its decoded header", phase)
+	}
+	w.wire.Write(p)
+	w.remaining -= uint32(len(p))
+	if w.remaining != 0 {
+		return len(p), nil
+	}
+	frame, err := (&nativeCoreStream{reader: bytes.NewReader(w.wire.Bytes())}).receive()
+	if err != nil || frame.Type != phase {
+		return 0, fmt.Errorf("decoded output phase = %q, want %q: %v", frame.Type, phase, err)
+	}
+	w.wire.Reset()
+	w.phase++
+	w.log.mu.Lock()
+	w.log.frames = append(w.log.frames, frame)
+	w.log.events = append(w.log.events, frame.Type)
+	w.log.mu.Unlock()
+	if phase == "cancel" {
+		// The controller observes the decoded cancel before feeding Done, but
+		// can retain this actual writer call to prove the callback's join.
+		<-w.cancelRelease.channel
+		if w.options.cancelErr != nil {
+			return len(p), w.options.cancelErr
+		}
+	}
+	return len(p), nil
+}
+
+func (w *nativeCoreCallbackWriter) Close() error {
+	w.log.mu.Lock()
+	w.log.closes++
+	w.log.events = append(w.log.events, "close")
+	w.log.mu.Unlock()
+	return w.options.closeErr
+}
+
+type nativeCoreCallbackInput struct {
+	wire  []byte
+	final bool
+}
+
+type nativeCoreCallbackReader struct {
+	log          *nativeCoreCallbackLog
+	options      nativeCoreCallbackOptions
+	inputs       chan nativeCoreCallbackInput
+	stop         *nativeCoreCallbackBarrier
+	drainRelease *nativeCoreCallbackBarrier
+	current      *bytes.Reader
+	final        bool
+	drained      bool
+}
+
+func (r *nativeCoreCallbackReader) Read(p []byte) (int, error) {
+	if r.current == nil || r.current.Len() == 0 {
+		if r.final {
+			if r.drained {
+				return 0, io.EOF
+			}
+			r.drained = true
+			r.log.mu.Lock()
+			r.log.drains++
+			r.log.events = append(r.log.events, "drain")
+			r.log.mu.Unlock()
+			<-r.drainRelease.channel
+			r.current = bytes.NewReader(r.options.tail)
+			if r.current.Len() == 0 {
+				if r.options.drainErr != nil {
+					return 0, r.options.drainErr
+				}
+				return 0, io.EOF
+			}
+		} else {
+			select {
+			case input := <-r.inputs:
+				r.current, r.final = bytes.NewReader(input.wire), input.final
+			case <-r.stop.channel:
+				return 0, io.EOF
+			}
+		}
+	}
+	return r.current.Read(p)
+}
+
+type nativeCoreCallbackHarness struct {
+	log           *nativeCoreCallbackLog
+	input         *nativeCoreCallbackReader
+	output        *nativeCoreCallbackWriter
+	control       context.Context
+	cancel        context.CancelFunc
+	active        atomic.Bool
+	joined        chan struct{}
+	report        nativeCoreCallbackReport
+	err           error
+	start         nativeCoreStart
+	guardContexts chan context.Context
+}
+
+func newNativeCoreCallbackHarness(options nativeCoreCallbackOptions) *nativeCoreCallbackHarness {
+	control, cancel := context.WithCancel(context.Background())
+	log := &nativeCoreCallbackLog{}
+	h := &nativeCoreCallbackHarness{
+		log: log, control: control, cancel: cancel, joined: make(chan struct{}),
+		// The outer function validates Start. A nonempty resume selects the
+		// callback's existing readiness path without a Store/provider fixture.
+		start:         nativeCoreStart{Delivery: "callback-delivery", Resume: "callback-delivery"},
+		guardContexts: make(chan context.Context, 1),
+	}
+	h.input = &nativeCoreCallbackReader{log: log, options: options, inputs: make(chan nativeCoreCallbackInput, 1), stop: newNativeCoreCallbackBarrier(), drainRelease: newNativeCoreCallbackBarrier()}
+	h.output = &nativeCoreCallbackWriter{log: log, options: options, ackRelease: newNativeCoreCallbackBarrier(), cancelRelease: newNativeCoreCallbackBarrier()}
+	finalization := session.NativeExchangeFinalization{
+		Control: control, Cleanup: context.Background(),
+		ProtocolDone: func() {
+			log.mu.Lock()
+			log.registrations++
+			log.events = append(log.events, "protocol-done")
+			log.mu.Unlock()
+		},
+	}
+	go func() {
+		defer close(h.joined)
+		h.report, h.err = (&Service{}).runNativeCoreCallback(finalization, h.input, h.output, h.start, domain.ExecutionRequest{}, h.start.Resume, nativeAccounts{}, &h.active, func(ctx context.Context) error {
+			h.guardContexts <- ctx
+			return options.guardErr
+		})
+	}()
+	return h
+}
+
+func (h *nativeCoreCallbackHarness) finish() {
+	h.output.ackRelease.release()
+	h.output.cancelRelease.release()
+	h.input.drainRelease.release()
+	h.input.stop.release()
+	h.cancel()
+	<-h.joined
+}
+
+func (h *nativeCoreCallbackHarness) feed(t *testing.T, frame nativeCoreFrame, final bool) {
+	t.Helper()
+	var wire bytes.Buffer
+	// Raw framing permits deliberately invalid envelopes to reach receive().
+	if err := task43CoreSend(&wire, frame); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case h.input.inputs <- nativeCoreCallbackInput{wire: wire.Bytes(), final: final}:
+	case <-h.joined:
+		t.Fatalf("callback returned before input %s: %v", frame.Type, h.err)
+	}
+	synctest.Wait()
+}
+
+func (h *nativeCoreCallbackHarness) expectFrames(t *testing.T, kinds ...string) {
+	t.Helper()
+	got := h.log.snapshot()
+	var names []string
+	for _, frame := range got.frames {
+		names = append(names, frame.Type)
+	}
+	if !reflect.DeepEqual(names, kinds) {
+		t.Fatalf("decoded callback phases = %v, want %v", names, kinds)
+	}
+}
+
+func (h *nativeCoreCallbackHarness) hello(t *testing.T) {
+	t.Helper()
+	hello := nativeCoreHello{Protocol: 1, PID: 1, Created: 1, CorePath: "github.com/batuta-ai/core", CoreVersion: "v1.1.0-beta.55", CoreSum: "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y="}
+	h.feed(t, nativeCoreFrame{Type: "hello", Hello: &hello}, false)
+	h.expectFrames(t, "start")
+	if got := h.log.snapshot().frames[0].Start; got == nil || !reflect.DeepEqual(*got, h.start) {
+		t.Fatalf("actual start frame = %+v, want %+v", got, h.start)
+	}
+}
+
+func (h *nativeCoreCallbackHarness) ready(t *testing.T) {
+	t.Helper()
+	h.feed(t, nativeCoreFrame{Type: "ready", ID: 1}, false)
+	h.expectFrames(t, "start", "response")
+	frame := h.log.snapshot().frames[1]
+	if frame.ID != 1 || frame.Error != nil || !h.active.Load() {
+		t.Fatalf("actual ready response = %+v, active=%t", frame, h.active.Load())
+	}
+}
+
+func (h *nativeCoreCallbackHarness) expectPending(t *testing.T, phase string) {
+	t.Helper()
+	select {
+	case <-h.joined:
+		t.Fatalf("callback returned while %s held: %v", phase, h.err)
+	default:
+	}
+}
+
+func (h *nativeCoreCallbackHarness) expectACKHeld(t *testing.T) {
+	t.Helper()
+	synctest.Wait()
+	got := h.log.snapshot()
+	if got.ackEntries != 1 {
+		t.Fatalf("actual ACK header entries = %d, want 1; events=%v", got.ackEntries, got.events)
+	}
+	// Frozen counterproof markers: afterACK, afterClose/drain and duplicate.
+	if got.atACK != 1 {
+		t.Errorf("ProtocolDone calls at actual ACK header entry = %d, want exactly 1", got.atACK)
+	}
+	if got.registrations != 1 {
+		t.Errorf("ProtocolDone calls while actual ACK header held = %d, want exactly 1", got.registrations)
+	}
+	if got.closes != 0 || got.drains != 0 {
+		t.Errorf("Close/drain before ACK release = %d/%d, want 0/0", got.closes, got.drains)
+	}
+	h.expectPending(t, "actual ACK header Write")
+}
+
+func (h *nativeCoreCallbackHarness) releaseACKToDrain(t *testing.T) {
+	t.Helper()
+	h.output.ackRelease.release()
+	synctest.Wait()
+	got := h.log.snapshot()
+	if got.closes != 1 || got.drains != 1 {
+		t.Fatalf("Close/drain after ACK release = %d/%d, want 1/1; events=%v", got.closes, got.drains, got.events)
+	}
+	if len(got.events) < 4 || !reflect.DeepEqual(got.events[len(got.events)-4:], []string{"ack-header", "ack", "close", "drain"}) {
+		t.Errorf("actual ACK -> Close -> drain order = %v", got.events)
+	}
+	if got.frames[len(got.frames)-1].Type != "ack" {
+		t.Error("held header was not followed by the decoded actual ACK")
+	}
+	h.expectPending(t, "tail drain")
+	h.input.drainRelease.release()
+}
+
+func (h *nativeCoreCallbackHarness) result(t *testing.T) (nativeCoreCallbackReport, error) {
+	t.Helper()
+	synctest.Wait()
+	select {
+	case <-h.joined:
+		return h.report, h.err
+	default:
+		t.Fatal("callback did not join after all required releases")
+		return nativeCoreCallbackReport{}, nil
+	}
+}
+
+func TestNativeCoreCallbackProtocolDoneBeforeACK(t *testing.T) {
+	for _, name := range []string{"noStop", "eligibleCancel", "errorBeforeReady"} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				phases := []string{"start"}
+				if name != "errorBeforeReady" {
+					phases = append(phases, "response")
+				}
+				if name == "eligibleCancel" {
+					phases = append(phases, "cancel")
+				}
+				phases = append(phases, "ack")
+				h := newNativeCoreCallbackHarness(nativeCoreCallbackOptions{phases: phases})
+				defer h.finish()
+				h.hello(t)
+				if name != "errorBeforeReady" {
+					h.ready(t)
+				}
+				if name == "eligibleCancel" {
+					h.cancel()
+					synctest.Wait()
+					h.expectFrames(t, "start", "response", "cancel")
+					h.output.cancelRelease.release()
+				}
+				done := &nativeCoreDone{State: loop.StateDone}
+				if name == "errorBeforeReady" {
+					done.State, done.Error = "", nativeCoreEncodeError(context.Canceled)
+				}
+				h.feed(t, nativeCoreFrame{Type: "done", Done: done}, true)
+				h.expectACKHeld(t)
+				h.releaseACKToDrain(t)
+				report, err := h.result(t)
+				if err != nil || !report.completed || report.state != done.State || report.parentCause != nil || report.cleanup != nil {
+					t.Errorf("accepted callback report = %+v, err=%v", report, err)
+				}
+				if name == "errorBeforeReady" {
+					if !errors.Is(report.outcome, context.Canceled) || h.active.Load() {
+						t.Errorf("allowed pre-ready error lost: report=%+v active=%t", report, h.active.Load())
+					}
+				} else if report.outcome != nil {
+					t.Errorf("unexpected accepted outcome: %v", report.outcome)
+				}
+				if name != "eligibleCancel" && h.control.Err() != nil {
+					t.Errorf("noStop control changed: %v", h.control.Err())
+				}
+				h.expectFrames(t, phases...)
+				if got := h.log.snapshot().registrations; got != 1 {
+					t.Errorf("ProtocolDone calls after callback join = %d, want exactly 1", got)
+				}
+			})
+		})
+	}
+}
+
+func TestNativeCoreCallbackRejectsUnvalidatedDone(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		ready bool
+		frame nativeCoreFrame
+	}{
+		{"invalidEnvelope", true, nativeCoreFrame{Type: "done", Done: &nativeCoreDone{State: loop.StateDone}, Guard: &nativeCoreGuard{}}},
+		{"invalidDoneID", true, nativeCoreFrame{Type: "done", ID: 1, Done: &nativeCoreDone{State: loop.StateDone}}},
+		{"doneBeforeReady", false, nativeCoreFrame{Type: "done", Done: &nativeCoreDone{State: loop.StateDone}}},
+		{"invalidState", true, nativeCoreFrame{Type: "done", Done: &nativeCoreDone{State: "unvalidated-state"}}},
+		{"invalidReadyID", false, nativeCoreFrame{Type: "ready", ID: 2}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				phases := []string{"start"}
+				if test.ready {
+					phases = append(phases, "response")
+				}
+				h := newNativeCoreCallbackHarness(nativeCoreCallbackOptions{phases: phases})
+				defer h.finish()
+				h.hello(t)
+				if test.ready {
+					h.ready(t)
+				}
+				h.feed(t, test.frame, true)
+				report, err := h.result(t)
+				if !errors.Is(err, domain.ErrInvalidReference) || report.completed || report.state != "" || report.outcome != nil || report.parentCause != nil || report.cleanup != nil {
+					t.Errorf("invalid input report = %+v, err=%v", report, err)
+				}
+				got := h.log.snapshot()
+				// Frozen counterproof marker: registration before state validation.
+				if got.registrations != 0 {
+					t.Errorf("ProtocolDone calls for unvalidated Done = %d, want 0", got.registrations)
+				}
+				if got.ackEntries != 0 || got.closes != 0 || got.drains != 0 {
+					t.Errorf("invalid input reached ACK/Close/drain: %+v", got)
+				}
+				h.expectFrames(t, phases...)
+			})
+		})
+	}
+}
+
+func TestNativeCoreCallbackPreservesAcceptedReport(t *testing.T) {
+	for _, name := range []string{"ackFailure", "closeFailure", "drainFailure", "trailingData"} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sentinel := errors.New("callback " + name)
+				options := nativeCoreCallbackOptions{phases: []string{"start", "response", "response", "ack"}, guardErr: domain.ErrBindingConflict}
+				switch name {
+				case "ackFailure":
+					options.ackErr = sentinel
+				case "closeFailure":
+					options.closeErr = sentinel
+				case "drainFailure":
+					options.drainErr = sentinel
+				case "trailingData":
+					options.tail = []byte("unexpected tail")
+					sentinel = domain.ErrInvalidReference
+				}
+				h := newNativeCoreCallbackHarness(options)
+				defer h.finish()
+				h.hello(t)
+				h.ready(t)
+				h.feed(t, nativeCoreFrame{Type: "guard", ID: 2, Guard: &nativeCoreGuard{}}, false)
+				h.expectFrames(t, "start", "response", "response")
+				response := h.log.snapshot().frames[2]
+				if response.ID != 2 || !errors.Is(response.Error.cause(), domain.ErrBindingConflict) {
+					t.Fatalf("actual guard response = %+v", response)
+				}
+				select {
+				case ctx := <-h.guardContexts:
+					if ctx != h.control {
+						t.Fatal("guard lost actual Control context")
+					}
+				default:
+					t.Fatal("guard callback not called")
+				}
+				done := &nativeCoreDone{State: loop.StateCanceled, Error: nativeCoreEncodeError(context.Canceled), Cleanup: nativeCoreEncodeError(session.ErrNativeCleanupUnresolved)}
+				h.feed(t, nativeCoreFrame{Type: "done", Done: done}, true)
+				h.expectACKHeld(t)
+				if name == "drainFailure" || name == "trailingData" {
+					h.releaseACKToDrain(t)
+				} else {
+					h.output.ackRelease.release()
+				}
+				report, err := h.result(t)
+				if !errors.Is(err, sentinel) || !report.completed || report.state != loop.StateCanceled || !errors.Is(report.outcome, context.Canceled) || !errors.Is(report.parentCause, domain.ErrBindingConflict) || !errors.Is(report.cleanup, session.ErrNativeCleanupUnresolved) {
+					t.Errorf("accepted report lost on %s: report=%+v err=%v", name, report, err)
+				}
+				got := h.log.snapshot()
+				wantCloses, wantDrains := 1, 1
+				if name == "ackFailure" {
+					wantCloses, wantDrains = 0, 0
+				} else if name == "closeFailure" {
+					wantDrains = 0
+				}
+				if got.registrations != 1 || got.closes != wantCloses || got.drains != wantDrains {
+					t.Errorf("post-error registration/Close/drain = %d/%d/%d, want 1/%d/%d", got.registrations, got.closes, got.drains, wantCloses, wantDrains)
+				}
+			})
+		})
+	}
+}
+
+func TestNativeCoreCallbackJoinsCancelWriter(t *testing.T) {
+	for _, name := range []string{"ackFailure", "invalidState"} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cancelErr, ackErr := errors.New("independent cancel writer failure"), errors.New("independent ACK failure")
+				h := newNativeCoreCallbackHarness(nativeCoreCallbackOptions{phases: []string{"start", "response", "cancel", "ack"}, cancelErr: cancelErr, ackErr: ackErr})
+				defer h.finish()
+				h.hello(t)
+				h.ready(t)
+				h.cancel()
+				synctest.Wait()
+				h.expectFrames(t, "start", "response", "cancel")
+				done := &nativeCoreDone{State: loop.StateDone}
+				if name == "invalidState" {
+					done.State = "unvalidated-state"
+				}
+				h.feed(t, nativeCoreFrame{Type: "done", Done: done}, true)
+				h.expectPending(t, "decoded cancel payload Write")
+				got := h.log.snapshot()
+				wantCalls := 1
+				if name == "invalidState" {
+					wantCalls = 0
+				}
+				if got.registrations != wantCalls || got.ackEntries != 0 || got.closes != 0 || got.drains != 0 {
+					t.Errorf("cancel writer join ordering: got=%+v, want calls=%d and no ACK/Close/drain", got, wantCalls)
+				}
+				h.output.cancelRelease.release()
+				if name == "ackFailure" {
+					h.expectACKHeld(t)
+					h.output.ackRelease.release()
+				}
+				report, err := h.result(t)
+				wanted := ackErr
+				if name == "invalidState" {
+					wanted = domain.ErrInvalidReference
+				}
+				if !errors.Is(err, cancelErr) || !errors.Is(err, wanted) {
+					t.Errorf("joined callback lost independent cancel writer error: %v", err)
+				}
+				if name == "ackFailure" {
+					if !report.completed || report.state != loop.StateDone {
+						t.Errorf("cancel/ACK failure lost accepted report: %+v", report)
+					}
+				} else if report.completed || report.state != "" {
+					t.Errorf("invalid state accepted after cancel writer join: %+v", report)
+				}
+				if report.outcome != nil || report.parentCause != nil || report.cleanup != nil {
+					t.Errorf("unexpected cancel writer report causes: %+v", report)
+				}
+				got = h.log.snapshot()
+				if got.registrations != wantCalls || got.closes != 0 || got.drains != 0 || name == "invalidState" && got.ackEntries != 0 {
+					t.Errorf("cancel writer failure reached unexpected finalization: %+v", got)
+				}
+			})
+		})
+	}
 }
