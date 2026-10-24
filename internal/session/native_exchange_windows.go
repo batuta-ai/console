@@ -298,6 +298,17 @@ func (m *Manager) waitNativeLegacyExchange(
 }
 
 func (m *Manager) waitNativeFinalization(control context.Context, cancelCleanup context.CancelFunc, closed <-chan time.Time, pipes nativeExchangePipes, owned *ownedProcess, callbackDone, processDone, stderrDone <-chan error) error {
+	return m.waitNativeFinalizationOperations(control, cancelCleanup, closed, nativeFinalizationOperations{
+		stop: owned.stop, closeInput: pipes.inputWrite.Close,
+		closeOutput: pipes.outputRead.Close, closeStderr: pipes.stderrRead.Close,
+	}, callbackDone, processDone, stderrDone)
+}
+
+type nativeFinalizationOperations struct {
+	stop, closeInput, closeOutput, closeStderr func() error
+}
+
+func (m *Manager) waitNativeFinalizationOperations(control context.Context, cancelCleanup context.CancelFunc, closed <-chan time.Time, ops nativeFinalizationOperations, callbackDone, processDone, stderrDone <-chan error) error {
 	var deadline time.Time
 	var timer *time.Timer
 	var expired <-chan time.Time
@@ -332,13 +343,13 @@ func (m *Manager) waitNativeFinalization(control context.Context, cancelCleanup 
 	closeInput := func() {
 		if !inputClosing {
 			inputClosing = true
-			launch(pipes.inputWrite.Close)
+			launch(ops.closeInput)
 		}
 	}
 	closeOutput := func() {
 		if !outputClosing {
 			outputClosing = true
-			launch(pipes.outputRead.Close)
+			launch(ops.closeOutput)
 		}
 	}
 	terminate := func() {
@@ -347,10 +358,10 @@ func (m *Manager) waitNativeFinalization(control context.Context, cancelCleanup 
 		}
 		terminating = true
 		cancelCleanup()
-		launch(owned.stop)
+		launch(ops.stop)
 		closeInput()
 		closeOutput()
-		launch(pipes.stderrRead.Close)
+		launch(ops.closeStderr)
 	}
 	recordCleanup := func(err error) {
 		if err != nil {
