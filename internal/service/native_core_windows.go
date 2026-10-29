@@ -229,7 +229,7 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 		Workspace: start.Receipt.Identity.Binding.CanonicalRoot, Skills: start.Skills, Plan: start.Receipt.Identity.Binding.PlanPath,
 		ApprovedSnapshot: &loop.ApprovedPlanSnapshot{Slug: start.Receipt.Identity.Binding.PlanSlug, Path: start.Receipt.Identity.Binding.PlanPath, ReceiptID: start.Receipt.ID, ContentDigest: start.Receipt.Identity.Version, Content: start.Receipt.Content},
 		DeliveryID:       start.Delivery, Parallel: 1, KeepWorktrees: true, Supervision: true,
-		Runner: commands, Environment: []string{"GIT_CONFIG_COUNT=0"}, Transport: transport, VerifierTransport: transport,
+		Runner: nativeCoreGitRunner{commands: commands}, Environment: []string{"GIT_CONFIG_COUNT=0"}, Transport: transport, VerifierTransport: transport,
 		Inventory: func(ctx context.Context) (inventory.InventorySnapshot, error) {
 			return selected.inventory(ctx, start.Receipt.Identity.Binding.CanonicalRoot)
 		},
