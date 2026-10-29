@@ -1143,3 +1143,8 @@ The active dependency is [Core v1.1.0-beta.55.1](https://github.com/batuta-ai/co
 Unix CLI admission now requires exactly beta.55.1 and the required capabilities. Windows requires the embedded SDK's exact version and checksum, without replacement, alongside its existing protocol and process-identity checks. Earlier beta.55 and other dated qualification results remain historical and do not qualify beta.55.1.
 
 The Core candidate passed 4,126 macOS Go 1.27.2 race test nodes without failure or skip, five causal mutation checks, and independent Codex review. Linux CI passed after one controlled rerun of an intermittent existing ACP cleanup test; its cause remains unknown and no ACP fix is claimed. Windows Console runtime, complete provider journeys, package qualification and Console beta publication remain separate pending gates. These checks do not change the 5-second cancellation or 2-second protocol-completion deadlines.
+
+
+## Go 1.27.3 maintenance update — 2026-10-29
+
+The current exact compiler is Go 1.27.3. The previous Go 1.27.2 CI vulnerability scan reported [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in crypto/x509; the [official release history](https://go.dev/doc/devel/release#go1.27.3) identifies the patched release. Module and npm dependency checksums, including Core beta.55.1, remain unchanged. Tooling, CI and binary qualification require the exact patched compiler. Earlier Go 1.27.2 evidence remains historical and does not qualify Go 1.27.3; native ordinary-user, provider, package and Stop-margin gates remain separate. No default user toolchain is changed by task-local SDK preparation.

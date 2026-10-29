@@ -1,6 +1,6 @@
 # Profile — Batuta Console
 
-Stack: Go 1.27.2 daemon/client + React 19.3, TypeScript 7.0.2, Vite 8.3.2, Bubble Tea 2.0.10 TUI, SQLite 1.60.1, xterm 6; Lyra React/styles 1.1.0 and existing CSS.
+Stack: Go 1.27.3 daemon/client + React 19.3, TypeScript 7.0.2, Vite 8.3.2, Bubble Tea 2.0.10 TUI, SQLite 1.60.1, xterm 6; Lyra React/styles 1.1.0 and existing CSS.
 Methodology: TDD always: write the behavioral/regression test first, run it and observe the expected failure, implement the smallest correction, rerun to green, then refactor; retain red/green commands and output. Conventional commits; feature branches; keep existing architecture and styling/state conventions.
 Test: go test -race -count=1 -timeout=10m ./... && npm --prefix web run test:run && npm --prefix web exec -- tsc --noEmit -p web/tsconfig.json
 Build: npm --prefix web run build && go build -o bin/console ./cmd/console && go build -o bin/consoled ./cmd/consoled
@@ -16,7 +16,7 @@ Configured on 2026-10-03 using the defaults proposed during the audit and the us
 ## Project map
 
 This map was first verified against Console HEAD 0461003 on 2026-10-03; dependency and test entries were refreshed after tasks 1–4. Start from source, not generated assets.
-The root go.mod/go.sum define the Go module and pin published core v1.1.0-beta.49; the adoption was qualified on2026-10-06 and there is no local core replacement. scripts/check-standalone.sh verifies an isolated test/build/install of both commands.
+The root go.mod/go.sum define the Go module and pin published Core v1.1.0-beta.55.1 without replacement. The beta.49 qualification from 2026-10-06 is historical; current SDK and native runtime evidence is recorded in WORK.md. scripts/check-standalone.sh verifies an isolated test/build/install of both commands.
 cmd/console/main.go is the user CLI entry point and selects web or Bubble Tea mode.
 cmd/console/ensure.go starts/finds consoled; daemon/open platform files handle process detachment and browser launching.
 cmd/consoled/main.go wires runtime paths, store, sessions, limits, service and HTTP server.

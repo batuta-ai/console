@@ -356,7 +356,7 @@ try {
     }
     if ((Get-Command go -CommandType Application | Select-Object -First 1).Source -ine $Go -or (Get-Command git -CommandType Application | Select-Object -First 1).Source -ine $Git) { throw 'Process-local tool resolution differs' }
     $version = & $Go version
-    if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.2 windows/amd64') { throw 'Pinned native compiler required' }
+    if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.3 windows/amd64') { throw 'Pinned native compiler required' }
     $goroot = & $Go env GOROOT
     if ($LASTEXITCODE -ne 0) { throw 'GOROOT unavailable' }
     $test2json = & $Go tool -n test2json

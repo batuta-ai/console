@@ -112,7 +112,7 @@ func publicFlowVerifyBinary(t *testing.T, path, digest, pkg string) {
 	}
 	info, err := buildinfo.ReadFile(path)
 	publicFlowCheck(t, err)
-	if info.Path != pkg || info.GoVersion != "go1.27.2" {
+	if info.Path != pkg || info.GoVersion != "go1.27.3" {
 		t.Fatal("unexpected build provenance", info)
 	}
 	modules := append(info.Deps, &info.Main)

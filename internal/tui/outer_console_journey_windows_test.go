@@ -499,8 +499,8 @@ func windowsOuterWrite(t *testing.T, path string, data []byte) {
 
 func windowsOuterBuild(t *testing.T, ctx context.Context, root, moduleCache, goRoot string, env []string) string {
 	t.Helper()
-	if runtime.Version() != "go1.27.2" {
-		t.Fatalf("requires pinned native Go 1.27.2, got %s", runtime.Version())
+	if runtime.Version() != "go1.27.3" {
+		t.Fatalf("requires pinned native Go 1.27.3, got %s", runtime.Version())
 	}
 	_, file, _, ok := runtime.Caller(0)
 	if !ok || !filepath.IsAbs(file) {
@@ -554,7 +554,7 @@ func windowsOuterBuild(t *testing.T, ctx context.Context, root, moduleCache, goR
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.GoVersion != "go1.27.2" || info.Path != "github.com/batuta-ai/console/cmd/console" {
+	if info.GoVersion != "go1.27.3" || info.Path != "github.com/batuta-ai/console/cmd/console" {
 		t.Fatalf("binary provenance mismatch: %s", info)
 	}
 	data, err := os.ReadFile(binary)

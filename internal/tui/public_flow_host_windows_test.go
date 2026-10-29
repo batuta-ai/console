@@ -194,8 +194,8 @@ func winFlowFixture(t *testing.T, provider string, build bool) winFlowConfig {
 }
 func winFlowBuild(t *testing.T, c *winFlowConfig) {
 	t.Helper()
-	if runtime.Version() != "go1.27.2" {
-		t.Fatal("native Go1.27.2 required")
+	if runtime.Version() != "go1.27.3" {
+		t.Fatal("native Go1.27.3 required")
 	}
 	_, caller, _, ok := runtime.Caller(0)
 	if !ok {
@@ -274,7 +274,7 @@ func winFlowBinaryRace(info *debug.BuildInfo) bool {
 }
 
 func winFlowBuildIdentity(info *debug.BuildInfo, pkg string, race bool) error {
-	if info.GoVersion != "go1.27.2" || info.Path != pkg {
+	if info.GoVersion != "go1.27.3" || info.Path != pkg {
 		return errors.New("binary toolchain/package identity mismatch")
 	}
 	main := "github.com/batuta-ai/console"

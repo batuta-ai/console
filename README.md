@@ -41,8 +41,8 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 ## Build and install from source
 
-Use Go 1.27.2 or newer and run these commands from a checkout of the desired
-Console revision (the qualified SDK here is Go 1.27.2). `go.mod` and `go.sum` pin the dependency graph, including
+Use Go 1.27.3 or newer and run these commands from a checkout of the desired
+Console revision (the qualified SDK here is Go 1.27.3). `go.mod` and `go.sum` pin the dependency graph, including
 Batuta core `v1.1.0-beta.55.1`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 Git must support `git show-ref --exists` for native mission review; the shared
@@ -227,7 +227,7 @@ Core version. The first published version will be `v0.1.0-beta.1`; the manifest
 seed `0.1.0-beta.0` is unpublished bookkeeping. No Console release has been
 published. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console).
 
-With Go 1.27.2, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
+With Go 1.27.3, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
 
 ```sh
 sh scripts/check-release.sh       # non-root source checks; failures stop the run

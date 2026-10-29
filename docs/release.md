@@ -246,3 +246,8 @@ with the Console image, with strict version, public module checksum and no-repla
 checks, and needs no external Core CLI. Native Windows qualification remains open.
 Earlier native package evidence does not qualify beta55.
 For full details on the Core beta55 adoption, verified checksums, Core CI provenance limits, local bounded checks, and failed Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954), see the [Published Core beta55 adoption and native runtime qualification — 2026-10-15 section in dependency-policy.md](dependency-policy.md#published-core-beta55-adoption-and-native-runtime-qualification--2026-10-15).
+
+
+## Go 1.27.3 maintenance update — 2026-10-29
+
+The current exact compiler is Go 1.27.3. The previous Go 1.27.2 CI vulnerability scan reported [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in crypto/x509; the [official release history](https://go.dev/doc/devel/release#go1.27.3) identifies the patched release. Module and npm dependency checksums, including Core beta.55.1, remain unchanged. Tooling, CI and binary qualification require the exact patched compiler. Earlier Go 1.27.2 evidence remains historical and does not qualify Go 1.27.3; native ordinary-user, provider, package and Stop-margin gates remain separate. No default user toolchain is changed by task-local SDK preparation.

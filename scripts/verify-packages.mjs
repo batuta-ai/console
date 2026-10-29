@@ -39,7 +39,7 @@ function verifyPackages() {
       for (const binary of binaries) {
         const metadata = execFileSync('go', ['version', '-m', join(extracted, binary)], { encoding: 'utf8' });
         const buildInfo = JSON.parse(execFileSync('go', ['version', '-m', '-json', join(extracted, binary)], { encoding: 'utf8' }));
-        assert.equal(buildInfo.GoVersion, 'go1.27.2');
+        assert.equal(buildInfo.GoVersion, 'go1.27.3');
         const settings = new Map(buildInfo.Settings.map(({ Key, Value }) => [Key, Value]));
         assert.equal(settings.get('GOOS'), goos, 'Binary GOOS must match its archive');
         assert.equal(settings.get('GOARCH'), goarch, 'Binary GOARCH must match its archive');

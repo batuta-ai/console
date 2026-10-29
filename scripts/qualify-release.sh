@@ -114,7 +114,7 @@ try {
     environment.GOMODCACHE = (await run("cached modules", "go", ["env", "GOMODCACHE"], 10000, cacheEnv)).trim();
   }
   const goVersion = (await run("Go toolchain", "go", ["version"])).trim();
-  assert.match(goVersion, /^go version go1\.27\.2 /);
+  assert.match(goVersion, /^go version go1\.27\.3 /);
   await run("cached module integrity", "go", ["mod", "verify"]);
   const coreDirectory = (await run("Core module directory", "go", ["list", "-m", "-f", "{{.Dir}}", "github.com/batuta-ai/core"], 10000)).trim();
   assert(path.isAbsolute(coreDirectory), "resolved Core module directory required");
@@ -131,7 +131,7 @@ try {
     const output = path.join(temporary, binary);
     await run(`build ${binary}`, "go", ["build", "-buildvcs=true", "-o", output, `./cmd/${binary}`]);
     const embedded = JSON.parse(await run(`Go build information ${binary}`, "go", ["version", "-m", "-json", output], 10000));
-    assert.equal(embedded.GoVersion, "go1.27.2");
+    assert.equal(embedded.GoVersion, "go1.27.3");
     assert.equal(embedded.Path, `github.com/batuta-ai/console/cmd/${binary}`);
     assert.equal(embedded.Main.Path, "github.com/batuta-ai/console");
     assert.equal(embedded.Main.Replace, undefined);
