@@ -172,34 +172,85 @@ jobs:
               $rules[0].InheritanceFlags -ne $rule.InheritanceFlags -or
               $rules[0].PropagationFlags -ne $rule.PropagationFlags -or
               $rules[0].AccessControlType -ne $rule.AccessControlType) { throw 'Fixture owner/ACL verification failed' }
-          & {
-            go mod download
-            go mod verify
-            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'console.exe') ./cmd/console
-            go build -o (Join-Path $env:WINDOWS_EVIDENCE 'consoled.exe') ./cmd/consoled
-            go vet ./...
-          } *> (Join-Path $env:WINDOWS_EVIDENCE 'go-checks.log')
-          $saved = @{ TEMP = $env:TEMP; TMP = $env:TMP; LOCALAPPDATA = $env:LOCALAPPDATA }
+          # Build/test one exact HEAD archive; ConPTY fixtures require external full-source provenance.
+          $revision = (git rev-parse --verify HEAD).Trim()
+          if ($revision -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact source revision required' }
+          $sourceArchive = Join-Path $fixture 'source'
+          $archivePath = Join-Path $env:WINDOWS_EVIDENCE 'source.zip'
+          $manifestPath = Join-Path $fixture 'source.manifest.json'
+          if ((Test-Path $sourceArchive) -or (Test-Path $archivePath) -or (Test-Path $manifestPath)) { throw 'Source outputs must be new' }
+          git archive --format=zip --output=$archivePath $revision
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $sourceArchive
+          $tree = @(git -c core.quotepath=false ls-tree -r $revision)
+          $sourceEntries = @(Get-ChildItem -LiteralPath $sourceArchive -Recurse -Force)
+          if (@($sourceEntries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'Source archive contains a reparse point' }
+          $manifest = [ordered]@{}
+          foreach ($entry in $tree) {
+            if ($entry -cnotmatch '^(100644|100755) blob ([0-9a-f]{40})\t(.+)$') { throw 'Regular source blobs required' }
+            $expectedBlob = $Matches[2]
+            $name = $Matches[3]
+            # Quoted/control/Windows-invalid Git names cannot represent native source paths.
+            if ($name -match '[\\:"<>|?*\x00-\x1f]' -or [IO.Path]::IsPathFullyQualified($name)) { throw 'Portable unquoted Windows source name required' }
+            foreach ($component in $name.Split('/')) {
+              if ($component -in @('', '.', '..') -or $component.EndsWith('.') -or $component.EndsWith(' ')) { throw 'Invalid source component' }
+            }
+            $file = Join-Path $sourceArchive $name
+            $info = Get-Item -LiteralPath $file -Force
+            if ($info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Plain source files required' }
+            $body = [IO.File]::ReadAllBytes($file)
+            $header = [Text.Encoding]::ASCII.GetBytes("blob $($body.Length)`0")
+            $payload = [byte[]]::new($header.Length + $body.Length)
+            [Buffer]::BlockCopy($header, 0, $payload, 0, $header.Length)
+            [Buffer]::BlockCopy($body, 0, $payload, $header.Length, $body.Length)
+            $blob = [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData($payload)).ToLowerInvariant()
+            if ($blob -cne $expectedBlob) { throw "Source bytes differ from HEAD: $name" }
+            $manifest.Add($name, (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
+          }
+          $actualFiles = @($sourceEntries | Where-Object { -not $_.PSIsContainer } | ForEach-Object { $_.FullName.Substring($sourceArchive.Length + 1).Replace('\', '/') })
+          if ($manifest.Count -eq 0 -or @(Compare-Object @($manifest.Keys) $actualFiles -CaseSensitive).Count) { throw 'Archive source paths differ from HEAD' }
+          $manifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+          Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $env:WINDOWS_EVIDENCE 'source.manifest.json')
+          $expectedSources = @($manifest.Keys | ForEach-Object { @{ Path = Join-Path $sourceArchive $_; Hash = $manifest[$_].ToUpperInvariant() } })
+          $savedSource = @{ Revision = $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_REVISION; Manifest = $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_MANIFEST }
+          $sourcePushed = $false
           try {
-            $env:TEMP = $fixture
-            $env:TMP = $fixture
-            $env:LOCALAPPDATA = $fixture
-            # Keep both original streams even when Go returns a failing exit code.
-            $PSNativeCommandUseErrorActionPreference = $false
-            $tokens = $parseErrors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/check-windows-msys-owner.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-            $parseErrors | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-parser.log')
-            if ($parseErrors.Count) { throw 'MSYS controller parse failed' }
-            $fixtureBinary = Join-Path $env:WINDOWS_EVIDENCE 'msys-original.test.exe'
-            go test -c -o $fixtureBinary ./internal/testfixture 1> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stdout') 2> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stderr')
-            $compileExit = $LASTEXITCODE
-            $compileExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.exit')
-            if ($compileExit -ne 0) { throw 'Original testfixture compilation failed' }
-            $testExit = & ./scripts/check-windows-msys-owner.ps1 -Evidence $env:WINDOWS_EVIDENCE -FixtureBinary $fixtureBinary -Source $PWD.Path -Go (Get-Command go -CommandType Application | Select-Object -First 1).Source -Git (Get-Command git -CommandType Application | Select-Object -First 1).Source -FullSuite
+            $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_REVISION = $revision
+            $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_MANIFEST = $manifestPath
+            Push-Location $sourceArchive
+            $sourcePushed = $true
+            & {
+              go mod download
+              go mod verify
+              go build -o (Join-Path $env:WINDOWS_EVIDENCE 'console.exe') ./cmd/console
+              go build -o (Join-Path $env:WINDOWS_EVIDENCE 'consoled.exe') ./cmd/consoled
+              go vet ./...
+            } *> (Join-Path $env:WINDOWS_EVIDENCE 'go-checks.log')
+            $saved = @{ TEMP = $env:TEMP; TMP = $env:TMP; LOCALAPPDATA = $env:LOCALAPPDATA }
+            try {
+              $env:TEMP = $fixture
+              $env:TMP = $fixture
+              $env:LOCALAPPDATA = $fixture
+              # Keep both original streams even when Go returns a failing exit code.
+              $PSNativeCommandUseErrorActionPreference = $false
+              $tokens = $parseErrors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/check-windows-msys-owner.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+              $parseErrors | Out-String | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-parser.log')
+              if ($parseErrors.Count) { throw 'MSYS controller parse failed' }
+              $fixtureBinary = Join-Path $env:WINDOWS_EVIDENCE 'msys-original.test.exe'
+              go test -c -o $fixtureBinary ./internal/testfixture 1> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stdout') 2> (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.stderr')
+              $compileExit = $LASTEXITCODE
+              $compileExit | Set-Content (Join-Path $env:WINDOWS_EVIDENCE 'msys-compile.exit')
+              if ($compileExit -ne 0) { throw 'Original testfixture compilation failed' }
+              $testExit = & ./scripts/check-windows-msys-owner.ps1 -Evidence $env:WINDOWS_EVIDENCE -FixtureBinary $fixtureBinary -Source $PWD.Path -Go (Get-Command go -CommandType Application | Select-Object -First 1).Source -Git (Get-Command git -CommandType Application | Select-Object -First 1).Source -ExpectedSources $expectedSources -FullSuite
+            } finally {
+              $env:TEMP = $saved.TEMP
+              $env:TMP = $saved.TMP
+              $env:LOCALAPPDATA = $saved.LOCALAPPDATA
+            }
           } finally {
-            $env:TEMP = $saved.TEMP
-            $env:TMP = $saved.TMP
-            $env:LOCALAPPDATA = $saved.LOCALAPPDATA
+            $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_REVISION = $savedSource.Revision
+            $env:BATUTA_TEST_WINDOWS_PUBLIC_FLOW_SOURCE_MANIFEST = $savedSource.Manifest
+            if ($sourcePushed) { Pop-Location }
           }
           $badEvents = 0
           $passEvents = 0
