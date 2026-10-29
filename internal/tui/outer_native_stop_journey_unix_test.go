@@ -549,6 +549,9 @@ func (j *outerNativeJourney) refresh(m outerNativeMission) {
 		return !strings.Contains(s, "Request failed") && strings.Contains(s, "Last verified effect: read_only") && strings.Contains(s, "Immutable approved snapshot "+m.approval.ID+" "+m.approval.Identity.Version) && !strings.Contains(s, "refresh required")
 	}
 	for {
+		j.console.screen(j.t, ctx, "mission ready for inspection "+m.mission.ID, func(s string) bool {
+			return strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) && !strings.Contains(s, "Confirm:")
+		})
 		// Establish a visible stale frame before inspecting; identical final frames
 		// otherwise give no indication that any read completed.
 		j.console.key(j.t, "w")
