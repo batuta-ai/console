@@ -160,8 +160,42 @@ func winFlowEnvironment(c winFlowConfig) []string {
 		"TEMP=" + filepath.Join(c.Root, "tmp"), "TMP=" + filepath.Join(c.Root, "tmp"), "TMPDIR=" + filepath.Join(c.Root, "tmp"),
 		"PATH=" + c.Bin + ";" + filepath.Dir(c.Git) + ";" + filepath.Join(filepath.Dir(filepath.Dir(c.Git)), "usr", "bin"),
 		"BATUTA_SKILLS=" + filepath.Join(c.Skills, "batuta"), "BATUTA_LANG=en", "LANG=C", "LC_ALL=C",
-		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(c.Root, "gitconfig"), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
 }
+func TestWindowsPublicFlowGitGlobalConfig(t *testing.T) {
+	c := winFlowFixture(t, "codex", false)
+	path := filepath.Join(c.Root, "gitconfig")
+	env := winFlowEnvironment(c)
+	var global string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_CONFIG_GLOBAL=") {
+			global = strings.TrimPrefix(entry, "GIT_CONFIG_GLOBAL=")
+		}
+	}
+	if global != path {
+		t.Fatalf("GIT_CONFIG_GLOBAL = %q, want owned file %q", global, path)
+	}
+	info, err := os.Lstat(global)
+	winFlowCheck(t, err)
+	if !info.Mode().IsRegular() {
+		t.Fatalf("global Git config is not a regular file: %v", info.Mode())
+	}
+	raw, err := os.ReadFile(global)
+	winFlowCheck(t, err)
+	if len(raw) != 0 {
+		t.Fatalf("global Git config is not empty: %q", raw)
+	}
+	for _, args := range [][]string{{"config", "--global", "--list", "--show-origin"}, {"config", "--file", global, "--list"}} {
+		cmd := exec.Command(c.Git, args...)
+		cmd.Dir = c.Root
+		cmd.Env = env
+		raw, err := cmd.CombinedOutput()
+		if err != nil || len(raw) != 0 {
+			t.Fatalf("Git %q reading empty global config: output=%q err=%v", args, raw, err)
+		}
+	}
+}
+
 func winFlowFixture(t *testing.T, provider string, build bool) winFlowConfig {
 	t.Helper()
 	if provider != "codex" && provider != "claude" {
@@ -174,6 +208,7 @@ func winFlowFixture(t *testing.T, provider string, build bool) winFlowConfig {
 	for _, path := range []string{c.Home, c.Bin, filepath.Join(root, "tmp"), filepath.Join(root, "user", "roaming"), filepath.Join(root, "user", "local")} {
 		winFlowCheck(t, consoleruntime.EnsurePrivateDirectory(path))
 	}
+	winFlowWrite(t, filepath.Join(root, "gitconfig"), nil)
 	exe, err := os.Executable()
 	winFlowCheck(t, err)
 	c.HostSHA256 = winFlowHash(t, exe)
