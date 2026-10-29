@@ -88,7 +88,9 @@ func task55CapabilityEnvironment(t *testing.T) ([]string, string) {
 	t.Helper()
 	env, home := task43CoreHome(t)
 	env = accounts.RuntimeEnvironment(os.Environ(), env)
-	return append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_OPTIONAL_LOCKS=0"), home
+	config := filepath.Join(home, "gitconfig-empty")
+	task43CoreWriteFile(t, config, "")
+	return append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+config, "GIT_OPTIONAL_LOCKS=0"), home
 }
 
 func task55CapabilityGit(t *testing.T, env []string, root string, args ...string) string {
@@ -114,7 +116,11 @@ func task55CapabilityRepository(t *testing.T, env []string) string {
 
 func task55CapabilityCommit(t *testing.T, env []string, root, message string) {
 	t.Helper()
-	task55CapabilityGit(t, env, root, "-c", "user.name=capability-fixture", "-c", "user.email=qa@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="+os.DevNull, "commit", "-q", "--allow-empty", "-m", message)
+	hooks := filepath.Join(t.TempDir(), "empty-hooks")
+	if err := os.Mkdir(hooks, 0700); err != nil {
+		t.Fatal(err)
+	}
+	task55CapabilityGit(t, env, root, "-c", "user.name=capability-fixture", "-c", "user.email=qa@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath="+hooks, "commit", "-q", "--allow-empty", "-m", message)
 }
 
 func task55CapabilityFiles(t *testing.T, roots ...string) map[string][32]byte {
