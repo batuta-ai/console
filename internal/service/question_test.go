@@ -12,6 +12,7 @@ import (
 
 	"github.com/batuta-ai/console/integrations/batuta"
 	"github.com/batuta-ai/console/internal/domain"
+	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
 	"github.com/batuta-ai/core/routing"
@@ -19,6 +20,10 @@ import (
 
 func questionFixture(t *testing.T, svc *Service, root, workspace, mission, delivery string) (*journal.Store, map[string]any) {
 	t.Helper()
+	physical, err := testfixture.ResolvePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := serviceBindingFixture(t, root, delivery, delivery)
 	if err := svc.Store.PutWorkspace(domain.Workspace{ID: workspace, Root: root, CreatedAt: domain.Now()}); err != nil {
 		t.Fatal(err)
@@ -30,11 +35,11 @@ func questionFixture(t *testing.T, svc *Service, root, workspace, mission, deliv
 	if err != nil {
 		t.Fatal(err)
 	}
-	js, err := journal.Open(root)
+	js, err := journal.Open(physical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := json.Marshal(routing.DeliveryGraph{Tasks: []routing.GraphTask{{TaskID: "task_1", State: routing.GraphTaskWaitingInput, Attempts: []routing.GraphTaskAttempt{{Execution: 1, State: routing.GraphTaskWaitingInput, ChildRunID: "run", WorktreeID: "worktree", WorktreeRoot: root, BaseHeadSHA: strings.Repeat("b", 40), Runtime: routing.RuntimeValue{Provider: "codex", Model: "fixture", Reasoning: "medium"}, Question: &routing.TaskQuestion{RequestID: "sha256:" + strings.Repeat("a", 64), Prompt: "Choose " + mission, ContextDigest: "sha256:" + strings.Repeat("c", 64)}}}}}})
+	graph, err := json.Marshal(routing.DeliveryGraph{Tasks: []routing.GraphTask{{TaskID: "task_1", State: routing.GraphTaskWaitingInput, Attempts: []routing.GraphTaskAttempt{{Execution: 1, State: routing.GraphTaskWaitingInput, ChildRunID: "run", WorktreeID: "worktree", WorktreeRoot: physical, BaseHeadSHA: strings.Repeat("b", 40), Runtime: routing.RuntimeValue{Provider: "codex", Model: "fixture", Reasoning: "medium"}, Question: &routing.TaskQuestion{RequestID: "sha256:" + strings.Repeat("a", 64), Prompt: "Choose " + mission, ContextDigest: "sha256:" + strings.Repeat("c", 64)}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,11 +316,11 @@ func TestQuestionConcurrentAndCanceled(t *testing.T) {
 	}
 }
 
-func TestQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T) {
+func checkQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T, linkDirectory func(string, string) error) {
 	svc := setupService(t)
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "workspace")
-	if err := os.Symlink(root, alias); err != nil {
+	if err := linkDirectory(root, alias); err != nil {
 		t.Fatal(err)
 	}
 	_, firstValues := questionFixture(t, svc, alias, "w", "m", "first")
@@ -332,7 +337,7 @@ func TestQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T) {
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(foreignRoot, alias); err != nil {
+	if err := linkDirectory(foreignRoot, alias); err != nil {
 		t.Fatal(err)
 	}
 	view, err := svc.WatchMission("m", "w", "first")
@@ -361,7 +366,7 @@ func TestQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T) {
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(root, alias); err != nil {
+	if err := linkDirectory(root, alias); err != nil {
 		t.Fatal(err)
 	}
 	unchangedPaths := []string{original.Path("second"), third.Path("third")}
@@ -405,4 +410,8 @@ func TestQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T) {
 	if err != nil || len(records) != 3 || records[2].Kind != loop.KindAnswer {
 		t.Fatalf("second native answer %v %v", records, err)
 	}
+}
+
+func TestQuestionMissionIsolationAndWorkspaceReplacement(t *testing.T) {
+	checkQuestionMissionIsolationAndWorkspaceReplacement(t, testfixture.DirectoryLink)
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/batuta-ai/console/internal/domain"
 	"github.com/batuta-ai/console/internal/store"
+	"github.com/batuta-ai/console/internal/testfixture"
 	"github.com/batuta-ai/core/journal"
 	"github.com/batuta-ai/core/loop"
 	"github.com/batuta-ai/core/routing"
@@ -19,6 +20,11 @@ import (
 
 func serviceBindingFixture(t *testing.T, root, slug, delivery string) string {
 	t.Helper()
+	physical, err := testfixture.ResolvePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = physical
 	body := []byte("# Plan — " + slug + "\n**Status:** approved\n- [ ] 1. " + slug + " — data/high\n  Accept: verified\n")
 	if err := os.MkdirAll(filepath.Join(root, ".batuta/plans"), 0700); err != nil {
 		t.Fatal(err)
@@ -36,7 +42,7 @@ func serviceBindingFixture(t *testing.T, root, slug, delivery string) string {
 		t.Fatal(err)
 	}
 	if delivery != "" {
-		canonical, err := filepath.EvalSymlinks(root)
+		canonical, err := testfixture.ResolvePath(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +62,7 @@ func TestMissionBindingCanonicalCoreWorkspace(t *testing.T) {
 	svc := setupService(t)
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(root, alias); err != nil {
+	if err := testfixture.DirectoryLink(root, alias); err != nil {
 		t.Fatal(err)
 	}
 	path := serviceBindingFixture(t, root, "alpha", "run")
@@ -80,7 +86,7 @@ func TestMissionBindingPlanOnlyRootReplacement(t *testing.T) {
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
 	other := t.TempDir()
-	if err := os.Symlink(root, alias); err != nil {
+	if err := testfixture.DirectoryLink(root, alias); err != nil {
 		t.Fatal(err)
 	}
 	path := serviceBindingFixture(t, root, "alpha", "")
@@ -97,7 +103,7 @@ func TestMissionBindingPlanOnlyRootReplacement(t *testing.T) {
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(other, alias); err != nil {
+	if err := testfixture.DirectoryLink(other, alias); err != nil {
 		t.Fatal(err)
 	}
 	view, err := svc.WatchMission("m", "", "")
@@ -166,7 +172,7 @@ func TestMissionBindingAliasCannotStealDelivery(t *testing.T) {
 	svc := setupService(t)
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(root, alias); err != nil {
+	if err := testfixture.DirectoryLink(root, alias); err != nil {
 		t.Fatal(err)
 	}
 	path := serviceBindingFixture(t, root, "alpha", "run")

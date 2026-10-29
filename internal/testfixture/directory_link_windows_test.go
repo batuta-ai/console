@@ -47,16 +47,16 @@ func TestDirectoryLinkNativeReparseIdentity(t *testing.T) {
 	checkNativeDirectoryLinkIdentity(t, DirectoryLink)
 }
 func TestDirectoryJunctionNativeReparseIdentity(t *testing.T) {
-	if tag := checkNativeDirectoryLinkIdentity(t, directoryJunction); tag != windows.IO_REPARSE_TAG_MOUNT_POINT {
+	if tag := checkNativeDirectoryLinkIdentity(t, DirectoryJunction); tag != windows.IO_REPARSE_TAG_MOUNT_POINT {
 		t.Fatalf("direct junction produced tag %#x", tag)
 	}
 }
 func TestDirectoryJunctionReadsActualTarget(t *testing.T) {
-	checkDirectoryLinkReadsActualTarget(t, directoryJunction)
+	checkDirectoryLinkReadsActualTarget(t, DirectoryJunction)
 }
 func TestDirectoryJunctionParentRemovalPreservesTarget(t *testing.T) {
-	checkDirectoryLinkParentRemovalPreservesTarget(t, directoryJunction)
+	checkDirectoryLinkParentRemovalPreservesTarget(t, DirectoryJunction)
 }
 func TestDirectoryJunctionRejectsExistingDestination(t *testing.T) {
-	checkDirectoryLinkRejectsExistingDestination(t, directoryJunction)
+	checkDirectoryLinkRejectsExistingDestination(t, DirectoryJunction)
 }

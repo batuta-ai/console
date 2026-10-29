@@ -18,13 +18,14 @@ func DirectoryLink(target, link string) error {
 	if !errors.Is(err, windows.ERROR_PRIVILEGE_NOT_HELD) {
 		return err
 	}
-	if fallback := directoryJunction(target, link); fallback != nil {
+	if fallback := DirectoryJunction(target, link); fallback != nil {
 		return errors.Join(err, fallback)
 	}
 	return nil
 }
 
-func directoryJunction(target, link string) (err error) {
+// DirectoryJunction creates a real local mount-point alias for native fixtures.
+func DirectoryJunction(target, link string) (err error) {
 	absolute := target
 	if !filepath.IsAbs(absolute) {
 		absolute = filepath.Join(filepath.Dir(link), absolute)
