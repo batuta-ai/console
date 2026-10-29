@@ -76,10 +76,18 @@ func TestSetupReadinessRegularBoundedFiles(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			svc := setupService(t)
 			root := t.TempDir()
+			preparedLink := false
+			if kind == "symlink" {
+				if supplied := setupFileLinkWorkspace(t); supplied != "" {
+					root, preparedLink = supplied, true
+				}
+			}
 			setupFiles(t, root, completeProfile, completeRouting, completeWork)
 			path := filepath.Join(root, ".batuta/profile.md")
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
+			if !preparedLink {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
 			}
 			switch kind {
 			case "directory":
@@ -91,12 +99,26 @@ func TestSetupReadinessRegularBoundedFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "symlink":
-				target := filepath.Join(t.TempDir(), "profile")
-				if err := os.WriteFile(target, []byte(completeProfile), 0600); err != nil {
-					t.Fatal(err)
+				if !preparedLink {
+					target := filepath.Join(t.TempDir(), "profile")
+					if err := os.WriteFile(target, []byte(completeProfile), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(target, path); err != nil {
+						t.Fatal(err)
+					}
 				}
-				if err := os.Symlink(target, path); err != nil {
-					t.Fatal(err)
+				link, err := os.Lstat(path)
+				if err != nil || link.Mode()&os.ModeSymlink == 0 {
+					t.Fatal("actual profile file-symlink required", err)
+				}
+				target, err := os.Stat(path)
+				if err != nil || !target.Mode().IsRegular() {
+					t.Fatal("actual regular profile target required", err)
+				}
+				body, err := os.ReadFile(path)
+				if err != nil || string(body) != completeProfile {
+					t.Fatal("file-symlink must expose complete profile", err)
 				}
 			}
 			if svc.DecorateWorkspace(domain.Workspace{Root: root}).Profile {
