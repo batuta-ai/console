@@ -71,8 +71,8 @@ func (s *Service) qualifiedNativeCore(ctx context.Context, runner publication.Co
 		Version  string   `json:"version"`
 		Commands []string `json:"commands"`
 	}
-	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.55" {
-		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.55", domain.ErrExecutionUnavailable)
+	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.55.1" {
+		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.55.1", domain.ErrExecutionUnavailable)
 	}
 	for _, required := range []string{"loop", "review", "inventory"} {
 		found := false

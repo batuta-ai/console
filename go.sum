@@ -18,8 +18,8 @@ github.com/batuta-ai/core v1.1.0-beta.47 h1:y5l1B96NyLcUEWJ8DX0hvViojmpeaj+RAEhk
 github.com/batuta-ai/core v1.1.0-beta.47/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
 github.com/batuta-ai/core v1.1.0-beta.49 h1:GnPVZNM1wbIapKJJoNDc7WQXQNpiWQIWCkkpz1yMWaE=
 github.com/batuta-ai/core v1.1.0-beta.49/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
-github.com/batuta-ai/core v1.1.0-beta.55 h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=
-github.com/batuta-ai/core v1.1.0-beta.55/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
+github.com/batuta-ai/core v1.1.0-beta.55.1 h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=
+github.com/batuta-ai/core v1.1.0-beta.55.1/go.mod h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=
 github.com/charmbracelet/bubbletea v1.3.10 h1:otUDHWMMzQSB0Pkc87rm691KZ3SWa4KUlvF9nRvCICw=
 github.com/charmbracelet/bubbletea v1.3.10/go.mod h1:ORQfo0fk8U+po9VaNvnV95UPWA1BitP1E0N6xJPlHr4=
 github.com/charmbracelet/colorprofile v0.4.3 h1:QPa1IWkYI+AOB+fE+mg/5/4HRMZcaXex9t5KX76i20Q=

@@ -1,6 +1,6 @@
 # Routing — Batuta Console
 
-<!-- inputs: profile.md@sha256:007e2ce0c8b9 -->
+<!-- inputs: profile.md@sha256:4541669f7097 -->
 
 | Lane | Domain | Executor | Model | Effort |
 | --- | --- | --- | --- | --- |
@@ -14,7 +14,9 @@
 | --- | --- | --- | --- |
 | research | low | opencode | opencode/ling-3.1-flash-free |
 | research | medium | codex | gpt-6.1-sol |
-| review | — | claude | claude-opus-5-5 |
+| review | — | codex | gpt-6-astra |
+
+Review policy updated on 2026-10-28 at the maintainer's request: all project reviews, including deep and final reviews, use Codex with `gpt-6-astra`. This supersedes earlier Claude/Opus review requirements in conducting plans and proposals. Keep historical review evidence unchanged. Reviews remain independent and read-only; do not fall back to Claude unless the maintainer changes this policy. The model ID was confirmed with `codex debug models --bundled`, and Codex is logged in through ChatGPT.
 
 Native model IDs verified in batuta inventory on 2026-10-03. Installed and used: opencode, agy, codex, claude. cursor-agent is missing and is not routed. The inventory also reports compozy with no resolved model set; it is outside the shipped skill adapters and is not proposed. CLI availability/model listing does not qualify product account isolation or authentication.
 
@@ -23,5 +25,3 @@ The Effort column records the conductor's invocation choice; the core table pars
 For scope containing hidden directories, do not use agy; route through codex or the conductor as required by the skill. Unavailable executor or two failed verifications escalates one lane with an announcement. Never silently replace a model. Research uses its own ladder; two low failures move to medium, then top-lane failure permits a self sweep. Review is read-only.
 
 The project-map sweep on 2026-10-03 used a clean, isolated snapshot because the audit docs in the original checkout are untracked. Two low research attempts timed out without a complete report, then the top configured research lane also timed out with a clean guard. The conductor verified the map from source. These probe failures do not imply the CLIs are uninstalled; recheck readiness before actual work.
-
-Loop local aprovado em18/10: as tarefas high usam codex/gpt-6-astra e a tarefa medium codex/gpt-6.1-sol; a revisão independente usa o modelo exato Opus5.5 pedido pelo mantenedor. Esta configuração é restrita ao checkout de execução.

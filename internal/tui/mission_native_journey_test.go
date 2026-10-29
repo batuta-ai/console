@@ -25,7 +25,7 @@ import (
 func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
+	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.1", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
 	if raw, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("frozen public Core build: %s %v", raw, err)
 	}

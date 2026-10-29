@@ -9,7 +9,7 @@ and Go module checks; never use floating installs for qualification or disable
 checksum, peer, type, test or vulnerability checks. Keep migrations separate
 from product redesign.
 
-Development tracks `github.com/batuta-ai/core v1.1.0-beta.55` without `replace`.
+Development tracks `github.com/batuta-ai/core v1.1.0-beta.55.1` without `replace`.
 Go's `@latest` selects older stable v1.0.1; do not downgrade to it. Stable Console
 publication requires a qualified stable core/plugin contract. Source checks
 below do not establish release readiness or completion of the stabilization plan.
@@ -319,3 +319,12 @@ deltas. Bounded local checks covered service and integration tests with syntheti
 These local bounded checks do not establish full Windows runtime support, real provider qualification, full web/TUI operation, or completion of Task38/43/44/Beta.
 Console CI run [38754176954](https://github.com/batuta-ai/console/actions/runs/38754176954) on candidate `20ae827bbf5ebe72eb46cff986ce5956b92b7321` has finished: all 5 jobs failed. Linux and macOS native API and TUI fixtures still stamp Core 49 or lack capability response; the snapshot verifier escaped regex for 49 rejects 55; ordinary test runs are blocked by the failed producer; Windows also failed (3,530 passing and 22 failing test records, no skips), with detailed analysis pending. The four earlier Windows service failures involving Git exit 128 and Stop remain unresolved. Corrective compatibility work is ongoing.
 Normal CI and bundle qualification remain open. Core publication is finished, but Console publication is not (`v0.1.0-beta.1` is not published or installed). No release-ready claim is made for Console.
+
+
+## Core beta.55.1 maintenance adoption — 2026-10-29
+
+The active dependency is [Core v1.1.0-beta.55.1](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.1), published from `a841b2803b68cbbf9125f3f72797f78379c89fc0` after [PR 186](https://github.com/batuta-ai/core/pull/186). This maintenance release preserves the beta.55 API and adds a clean-worktree snapshot optimization. The Go module checksum is `h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=`; its go.mod checksum remains `h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. The official proxy and checksum database verified this module; its 309 Go files match the reviewed release source. No local replacement is accepted.
+
+Unix CLI admission now requires exactly beta.55.1 and the required capabilities. Windows requires the embedded SDK's exact version and checksum, without replacement, alongside its existing protocol and process-identity checks. Earlier beta.55 and other dated qualification results remain historical and do not qualify beta.55.1.
+
+The Core candidate passed 4,126 macOS Go 1.27.2 race test nodes without failure or skip, five causal mutation checks, and independent Codex review. Linux CI passed after one controlled rerun of an intermittent existing ACP cleanup test; its cause remains unknown and no ACP fix is claimed. Windows Console runtime, complete provider journeys, package qualification and Console beta publication remain separate pending gates. These checks do not change the 5-second cancellation or 2-second protocol-completion deadlines.

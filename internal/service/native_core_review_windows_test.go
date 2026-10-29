@@ -645,7 +645,7 @@ func TestTask43WindowsNativeCoreReviewCLIParity(t *testing.T) {
 		Version  string   `json:"version"`
 		Commands []string `json:"commands"`
 	}
-	if err := json.Unmarshal(data, &public); err != nil || strings.TrimPrefix(public.Version, "v") != "1.1.0-beta.55" {
+	if err := json.Unmarshal(data, &public); err != nil || strings.TrimPrefix(public.Version, "v") != "1.1.0-beta.55.1" {
 		t.Fatal("actual public Core capability version", public, err)
 	}
 	found := false

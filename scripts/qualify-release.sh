@@ -140,7 +140,7 @@ try {
     assert.equal(settings["vcs.revision"], revision);
     assert(["true", "false"].includes(settings["vcs.modified"]), "embedded VCS modified state required");
     const core = embedded.Deps.find(module => module.Path === "github.com/batuta-ai/core");
-    assert.equal(core?.Version, "v1.1.0-beta.55");
+    assert.equal(core?.Version, "v1.1.0-beta.55.1");
     assert.equal(core.Replace, undefined);
     const info = JSON.parse(await run(`provenance ${binary}`, output, ["-version"], 10000));
     assert.equal(info.binary, binary);

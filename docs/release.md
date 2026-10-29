@@ -238,8 +238,8 @@ No stable release, complete native support or successful publication is claimed.
 ## Current Core beta55 adoption guidance — 2026-10-15
 
 Current dependency policy and runtime expectations supersede earlier historical pins.
-The active repository graph pins [Core v1.1.0-beta.55](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55) without replacement.
-On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55` with the required
+The active repository graph pins [Core v1.1.0-beta.55.1](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.1) without replacement.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55.1` with the required
 capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
 executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK included
 with the Console image, with strict version, public module checksum and no-replacement

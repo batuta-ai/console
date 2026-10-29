@@ -288,7 +288,7 @@ function Assert-Provenance($Info, [string]$Binary) {
         $Info.go_version -cne 'go1.27.2' -or $Info.go_authority -cne 'runtime.Version' -or
         $Info.core.authority -cne 'go_build_info' -or $Info.core.replacement_version -cne 'none') { throw 'Unexpected binary provenance' }
     if ($Binary -ceq 'consoled' -or $Info.core.status -cne 'missing') {
-        if ($Info.core.status -cne 'linked' -or $Info.core.version -cne 'v1.1.0-beta.55') { throw 'Unexpected linked Core provenance' }
+        if ($Info.core.status -cne 'linked' -or $Info.core.version -cne 'v1.1.0-beta.55.1') { throw 'Unexpected linked Core provenance' }
     } elseif ($Info.core.version -cne 'unknown') { throw 'Unexpected absent Core provenance' }
 }
 function Bind-Daemon($Parent) {

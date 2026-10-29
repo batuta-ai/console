@@ -136,8 +136,8 @@ func task2CoreFinalizationPeer() error {
 	// A scripted protocol identity, not a claim to run/qualify Core. Test PEs
 	// need not expose dependency build metadata; PID and creation are real.
 	hello := nativeCoreHello{
-		Protocol: 1, CorePath: "github.com/batuta-ai/core", CoreVersion: "v1.1.0-beta.55",
-		CoreSum: "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=", PID: birthIdentity.PID, Created: birthIdentity.Created,
+		Protocol: 1, CorePath: "github.com/batuta-ai/core", CoreVersion: "v1.1.0-beta.55.1",
+		CoreSum: "h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=", PID: birthIdentity.PID, Created: birthIdentity.Created,
 	}
 	var birth bytes.Buffer
 	if err := task43CoreSend(&birth, nativeCoreFrame{Type: "hello", Hello: &hello}); err != nil {
@@ -537,7 +537,7 @@ func task43CoreHello(r io.Reader) (windows.Handle, error) {
 	if err := json.Unmarshal(frame["hello"], &h); err != nil {
 		return 0, err
 	}
-	if h.Protocol != 1 || h.CorePath != "github.com/batuta-ai/core" || h.CoreVersion != "v1.1.0-beta.55" || h.CoreSum != "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=" || h.CoreReplaced || h.PID == 0 || h.Created == 0 {
+	if h.Protocol != 1 || h.CorePath != "github.com/batuta-ai/core" || h.CoreVersion != "v1.1.0-beta.55.1" || h.CoreSum != "h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=" || h.CoreReplaced || h.PID == 0 || h.Created == 0 {
 		return 0, fmt.Errorf("unqualified actual linked Core hello %+v", h)
 	}
 	witness, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, h.PID)
@@ -1354,7 +1354,7 @@ func (h *nativeCoreCallbackHarness) expectFrames(t *testing.T, kinds ...string) 
 
 func (h *nativeCoreCallbackHarness) hello(t *testing.T) {
 	t.Helper()
-	hello := nativeCoreHello{Protocol: 1, PID: 1, Created: 1, CorePath: "github.com/batuta-ai/core", CoreVersion: "v1.1.0-beta.55", CoreSum: "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y="}
+	hello := nativeCoreHello{Protocol: 1, PID: 1, Created: 1, CorePath: "github.com/batuta-ai/core", CoreVersion: "v1.1.0-beta.55.1", CoreSum: "h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0="}
 	h.feed(t, nativeCoreFrame{Type: "hello", Hello: &hello}, false)
 	h.expectFrames(t, "start")
 	if got := h.log.snapshot().frames[0].Start; got == nil || !reflect.DeepEqual(*got, h.start) {

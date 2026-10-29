@@ -118,7 +118,7 @@ func publicFlowVerifyBinary(t *testing.T, path, digest, pkg string) {
 	modules := append(info.Deps, &info.Main)
 	qualified := false
 	for _, mod := range modules {
-		if mod.Path == "github.com/batuta-ai/core" && mod.Version == "v1.1.0-beta.55" && mod.Sum == "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=" && mod.Replace == nil {
+		if mod.Path == "github.com/batuta-ai/core" && mod.Version == "v1.1.0-beta.55.1" && mod.Sum == "h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=" && mod.Replace == nil {
 			qualified = true
 		}
 	}
@@ -305,7 +305,7 @@ func publicFlowBuildAt(t *testing.T, provider, dir string) publicFlowConfig {
 		return raw
 	}
 	publicFlowWrite(t, filepath.Join(dir, "core-module.json"), run(root, "list", "-m", "-json", "github.com/batuta-ai/core"), 0600)
-	run(root, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55", "-o", cfg.Core, "github.com/batuta-ai/core/cmd/batuta")
+	run(root, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.1", "-o", cfg.Core, "github.com/batuta-ai/core/cmd/batuta")
 	run(root, "build", "-o", cfg.Helper, "./cmd/consoled")
 	cfg.CoreSHA256, cfg.HelperSHA256 = publicFlowHash(t, cfg.Core), publicFlowHash(t, cfg.Helper)
 	git := exec.Command("git", "rev-parse", "HEAD")
