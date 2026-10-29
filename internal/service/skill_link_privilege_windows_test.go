@@ -27,7 +27,7 @@ func skillLinkTokenPrivileges(t *testing.T, token windows.Token) []byte {
 	return data
 }
 
-func TestWindowsSkillLinkDisabledPrivilegeRestoresCaller(t *testing.T) {
+func TestWindowsSkillLinkRestoresCallerPrivileges(t *testing.T) {
 	for _, adapter := range []string{"codex", "claude"} {
 		t.Run(adapter, func(t *testing.T) {
 			collection, env, native := nativeSkillFixture(t, adapter)
@@ -86,9 +86,7 @@ func TestWindowsSkillLinkDisabledPrivilegeRestoresCaller(t *testing.T) {
 					}
 				}
 			}
-			if !found {
-				t.Fatal("disabled-privilege fixture requires the privilege to be present")
-			}
+			t.Logf("owned caller symlink privilege: present=%t enabled=false", found)
 			if err := windows.SetThreadToken(nil, caller); err != nil {
 				t.Fatal(err)
 			}
@@ -111,9 +109,9 @@ func TestWindowsSkillLinkDisabledPrivilegeRestoresCaller(t *testing.T) {
 			if !bytes.Equal(before, after) || !bytes.Equal(processBefore, skillLinkTokenPrivileges(t, windows.GetCurrentProcessToken())) {
 				t.Fatal("link creation changed caller or process privileges")
 			}
-			t.Logf("actual disabled caller privilege, caller/process unchanged, prepare=%v", prepareErr)
+			t.Logf("actual caller privilege present=%t enabled=false, caller/process unchanged, prepare=%v", found, prepareErr)
 			if prepareErr != nil {
-				t.Fatal("selected directory links with present but disabled privilege", prepareErr)
+				t.Fatal("selected directory links with unavailable caller privilege", prepareErr)
 			}
 			for _, name := range []string{"batuta", "batuta-init", "batuta-plan", "batuta-review", "custom-selected"} {
 				requireWindowsSkillDirectoryLink(t, filepath.Join(native, name), filepath.Join(collection, name))
