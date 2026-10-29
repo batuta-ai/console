@@ -46,7 +46,7 @@ function verifyPackages() {
         assert.equal(settings.get('CGO_ENABLED'), '0');
         // The TUI may not link Core; never invent a dependency for diagnostics.
         if (binary === 'consoled' || binary === 'consoled.exe' || metadata.includes('github.com/batuta-ai/core')) {
-          assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.55\s/);
+          assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.55\.1\s/);
         }
         assert.ok(metadata.includes(`ReleaseVersion=${version}`));
         assert.ok(metadata.includes(`ReleaseRevision=${revision}`));
