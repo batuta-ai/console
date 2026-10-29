@@ -324,10 +324,35 @@ func main() {
 	path := filepath.Join(build, "main.go")
 	task43CoreWriteFile(t, path, source)
 	image := filepath.Join(build, "parent.exe")
-	command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-mod=readonly", "-o", image, path)
+	goExe := filepath.Join(runtime.GOROOT(), "bin", "go.exe")
+	args := []string{"build", "-mod=readonly", "-o", image, path}
+	if mode == "relay" {
+		// This transport fixture would add its race-runtime exit sleep after
+		// the contained Core's sleep. Keep the measured Core and tests under
+		// -race, and build the single-threaded relay as a normal tool.
+		args = append([]string{"build", "-race=false"}, args[1:]...)
+	}
+	command := exec.Command(goExe, args...)
 	command.Dir = filepath.Join("..", "..")
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("actual native parent fixture build: %v %s", err, out)
+	}
+	if mode == "relay" {
+		metadata, err := exec.Command(goExe, "version", "-m", image).CombinedOutput()
+		if err != nil || strings.Contains(string(metadata), "-race=true") {
+			t.Fatal("transport relay race metadata", string(metadata), err)
+		}
+		coreMetadata, err := exec.Command(goExe, "version", "-m", consoled).CombinedOutput()
+		if err != nil {
+			t.Fatal("contained Core metadata", err)
+		}
+		coreRace := strings.Contains(string(coreMetadata), "-race=true")
+		for _, flag := range strings.Fields(os.Getenv("GOFLAGS")) {
+			if (flag == "-race" || flag == "-race=true") && !coreRace {
+				t.Fatal("contained Core lost required race instrumentation", string(coreMetadata))
+			}
+		}
+		t.Logf("actual transport relay race=false; contained Core race=%t; package instrumentation unchanged", coreRace)
 	}
 	return image
 }
