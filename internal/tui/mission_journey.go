@@ -532,7 +532,9 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 		m.saveJourney(req.key, r)
 		return m, nil
 	}
-	r.effect = out.effect
+	if req.kind != "refresh" || r.effect == "" {
+		r.effect = out.effect
+	}
 	if !read {
 		r.outcomes = append(append([]journeyResult{}, r.outcomes...), out)
 	}

@@ -161,6 +161,12 @@ from an uncertain result after dispatch. Lost replies, malformed/foreign respons
 identities, cancellation and store failures can leave effects that are not yet
 confirmed. Retain confirmed facts and the submitted target/draft; quarantine replay
 and explicitly inspect the actual session, receipt or original native delivery.
+Automatic TUI polling preserves nonempty operation feedback while updating current
+facts, freshness, errors and warnings. An initial read with no prior effect keeps
+the read-only caption; explicit inspection records its own read-only effect.
+Preserved feedback is historical and grants no active, completion or permission
+claim. Current execution and Stop facts and warnings remain authoritative.
+
 Read refresh/acknowledgment is not mutation success. A retry control is not evidence
 that redispatch is safe. Reconnect restores observation and never replays input or
 a mission mutation automatically.

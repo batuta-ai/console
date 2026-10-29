@@ -142,7 +142,7 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 			m = journeyKey(t, m, "e")
 			m = journeyKey(t, m, "enter")
 			original := m.journeyRecord()
-			if original.state == nil || original.state.OpenedDigest == "" {
+			if original.state == nil || original.state.OpenedDigest == "" || original.effect != "started" {
 				t.Fatal("native start failed", m.View().Content)
 			}
 			waitQuestion := func(after int) {
@@ -152,6 +152,9 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 				for {
 					m = journeyFinish(t, m, m.readJourney("refresh"))
 					r := m.journeyRecord()
+					if r.effect != "started" || !strings.Contains(m.View().Content, "Last verified effect: started") {
+						t.Fatalf("automatic native read erased Start feedback: %q", r.effect)
+					}
 					if r.fresh && r.state != nil && !r.state.Active && r.state.Watch != nil && r.state.Watch.PendingQuestion != nil && r.state.Watch.PendingQuestion.Target.Execution > after {
 						return
 					}
@@ -164,6 +167,13 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 			}
 			waitQuestion(0)
 			firstQuestion := m.journeyRecord().state.Watch.PendingQuestion.Target
+			if r := m.journeyRecord(); r.state.Active || r.state.OpenedDigest != original.state.OpenedDigest || r.state.Delivery != original.state.Delivery || r.watch.PendingQuestion == nil || r.watch.PendingQuestion.Target != firstQuestion || len(mutations) != 3 {
+				t.Fatal("automatic native reads lost authoritative facts or mutated", mutations)
+			}
+			m = journeyKey(t, m, "f")
+			if r := m.journeyRecord(); r.effect != "read_only" || !r.fresh || r.state.Watch.PendingQuestion.Target != firstQuestion || len(mutations) != 3 {
+				t.Fatal("explicit inspection did not acknowledge native facts", m.View().Content, mutations)
+			}
 			// Preserve the source artifact; external deletion is simulated by moving it.
 			if err := os.Rename(filepath.Join(root, planPath), filepath.Join(home, "preserved-original-plan.md")); err != nil {
 				t.Fatal(err)

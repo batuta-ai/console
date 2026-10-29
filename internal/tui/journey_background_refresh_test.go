@@ -2,7 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,7 +38,7 @@ func TestJourneyBackgroundRefreshPreservesUncertainFailure(t *testing.T) {
 	apply("start", "uncertain", errors.New("transport interrupted"))
 	apply("refresh", "rejected", errors.New("temporary read failure"))
 	apply("refresh", "read_only", nil)
-	if m.journeyRecord().problem != "journey_uncertain" || m.journeyRecord().uncertain != "start" || !strings.Contains(m.View().Content, i18n.T("journey_uncertain")) || !strings.Contains(m.View().Content, "transport interrupted") || strings.Contains(m.View().Content, "temporary read failure") {
+	if m.journeyRecord().effect != "uncertain" || m.journeyRecord().problem != "journey_uncertain" || m.journeyRecord().uncertain != "start" || !strings.Contains(m.View().Content, i18n.T("journey_uncertain")) || !strings.Contains(m.View().Content, "transport interrupted") || strings.Contains(m.View().Content, "temporary read failure") {
 		t.Fatal("read recovery lost the uncertain action notice or displayed the read error")
 	}
 }
@@ -84,7 +87,7 @@ func TestJourneyBackgroundRefreshPreservesMutationFailure(t *testing.T) {
 		m, _ = m.applyJourney(journeyResult{request: req, effect: "read_only"})
 	}
 	apply("refresh")
-	if !strings.Contains(m.View().Content, "credential_missing") || m.journeyRecord().effect != "read_only" || len(m.journeyRecord().outcomes) != 1 {
+	if !strings.Contains(m.View().Content, "credential_missing") || m.journeyRecord().effect != "rejected" || len(m.journeyRecord().outcomes) != 1 {
 		t.Fatal("automatic read erased the mutation refusal or changed its history")
 	}
 	failRefresh := func() {
@@ -109,5 +112,67 @@ func TestJourneyBackgroundRefreshPreservesMutationFailure(t *testing.T) {
 	apply("refresh")
 	if strings.Contains(m.View().Content, "credential_missing") || len(m.journeyRecord().outcomes) != 1 {
 		t.Fatal("automatic read resurrected an acknowledged failure or changed its history")
+	}
+}
+
+func TestJourneyBackgroundRefreshPreservesEffectAndCurrentFacts(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, effect := range []string{"recorded", "rejected", "started", "uncertain", ""} {
+		t.Run(effect, func(t *testing.T) {
+			m := backgroundRefreshModel(t)
+			r := m.journeyRecord()
+			r.mode, r.effect = "", effect
+			r.sourceFresh = true
+			r.detail = &domain.PlanDetail{Title: "cached source"}
+			cached := r.detail
+			m.putJourney(r)
+			fail, reads := false, 0
+			watch := domain.WatchView{MissionID: r.mission.ID, WorkspaceID: r.mission.WorkspaceID, Scope: "mission", Message: "current warning"}
+			m.api = accountFixture(t, func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != "GET" || req.URL.Path != "/v0/missions/"+r.mission.ID+"/watch" {
+					t.Errorf("unexpected request %s %s", req.Method, req.URL)
+					http.Error(w, "unexpected", 500)
+					return
+				}
+				reads++
+				if fail {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporary read failure"})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(watch)
+			})
+			expected := effect
+			if expected == "" {
+				expected = "read_only"
+			}
+			for step, failed := range []bool{false, true, false} {
+				fail = failed
+				if step == 2 {
+					watch.Message = "updated warning"
+				}
+				m = journeyFinish(t, m, m.readJourney("refresh"))
+				got := m.journeyRecord()
+				if got.effect != expected || !strings.Contains(m.View().Content, "Last verified effect: "+expected) {
+					t.Fatalf("automatic refresh caption = %q, want %q", got.effect, expected)
+				}
+				if got.fresh == failed || (got.problemErr != nil) != failed || got.detail != cached || !reflect.DeepEqual(got.watch, watch) || !reflect.DeepEqual(m.watch, watch) || len(got.outcomes) != 0 {
+					t.Fatalf("refresh lost current facts, cached source, errors or history: %+v", got)
+				}
+				if failed && !strings.Contains(m.View().Content, "temporary read failure") {
+					t.Fatal("automatic read failure is not visible")
+				}
+				if step == 0 && !got.sourceFresh {
+					t.Fatal("successful watch read changed cached source freshness")
+				}
+				if failed && got.sourceFresh {
+					t.Fatal("failed read retained source freshness")
+				}
+			}
+			m = journeyKey(t, m, "f")
+			if got := m.journeyRecord(); got.effect != "read_only" || got.problemErr != nil || !got.fresh || reads != 4 {
+				t.Fatalf("explicit inspection did not acknowledge current facts: %+v reads=%d", got, reads)
+			}
+		})
 	}
 }
