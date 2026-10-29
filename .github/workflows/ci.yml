@@ -179,7 +179,7 @@ jobs:
           $archivePath = Join-Path $env:WINDOWS_EVIDENCE 'source.zip'
           $manifestPath = Join-Path $fixture 'source.manifest.json'
           if ((Test-Path $sourceArchive) -or (Test-Path $archivePath) -or (Test-Path $manifestPath)) { throw 'Source outputs must be new' }
-          git archive --format=zip --output=$archivePath $revision
+          git -c core.autocrlf=false -c core.eol=lf archive --format=zip --output=$archivePath $revision
           Expand-Archive -LiteralPath $archivePath -DestinationPath $sourceArchive
           $tree = @(git -c core.quotepath=false ls-tree -r $revision)
           $sourceEntries = @(Get-ChildItem -LiteralPath $sourceArchive -Recurse -Force)
