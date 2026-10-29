@@ -159,7 +159,22 @@ func nativeStopWindowsProvider() error {
 	if err := os.WriteFile(marker+".tmp", data, 0600); err != nil {
 		return err
 	}
+	readyName, err := windows.UTF16PtrFromString(nativeStopWindowsEvent(common) + "-birth-ready")
+	if err != nil {
+		return err
+	}
+	ready, err := windows.CreateEvent(nil, 1, 0, readyName)
+	if err != nil {
+		if ready != 0 {
+			_ = windows.CloseHandle(ready)
+		}
+		return err
+	}
+	defer windows.CloseHandle(ready)
 	if err := os.Rename(marker+".tmp", marker); err != nil {
+		return err
+	}
+	if err := windows.SetEvent(ready); err != nil {
 		return err
 	}
 	status, err := windows.WaitForSingleObject(event, windows.INFINITE)
@@ -192,13 +207,32 @@ func nativeStopWindowsImage(t *testing.T) string {
 func nativeStopWindowsTree(t *testing.T, ctx context.Context, a domain.PlanApproval) []windows.Handle {
 	t.Helper()
 	var tree nativeStopWindowsBirths
+	name, err := windows.UTF16PtrFromString(nativeStopWindowsEvent(filepath.Join(a.Identity.Binding.CanonicalRoot, ".git")) + "-birth-ready")
+	if err != nil {
+		t.Fatal(err)
+	}
 	nativeStopAwait(t, ctx, "actual provider birth handles", func() bool {
-		data, err := os.ReadFile(filepath.Join(a.Identity.Binding.CanonicalRoot, ".git", "native-stop-birth.json"))
-		if errors.Is(err, os.ErrNotExist) {
+		ready, err := windows.OpenEvent(windows.SYNCHRONIZE, false, name)
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 			return false
 		}
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal("open actual birth readiness", err)
+		}
+		status, waitErr := windows.WaitForSingleObject(ready, 0)
+		closeErr := windows.CloseHandle(ready)
+		if waitErr != nil || closeErr != nil {
+			t.Fatal("observe actual birth readiness", waitErr, closeErr)
+		}
+		if status == uint32(windows.WAIT_TIMEOUT) {
+			return false
+		}
+		if status != windows.WAIT_OBJECT_0 {
+			t.Fatal("unexpected birth readiness state", status)
+		}
+		data, err := os.ReadFile(filepath.Join(a.Identity.Binding.CanonicalRoot, ".git", "native-stop-birth.json"))
+		if err != nil {
+			t.Fatal("signaled provider birth marker", err)
 		}
 		if err := json.Unmarshal(data, &tree); err != nil {
 			t.Fatal(err)

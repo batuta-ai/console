@@ -655,7 +655,15 @@ func winFlowProvider(provider string, args []string) error {
 	if err := os.WriteFile(marker+".tmp", raw, 0600); err != nil {
 		return err
 	}
+	ready, err := winFlowCreateEvent(winFlowEventName(spec, spec.Phase+"-birth-ready"))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(ready)
 	if err := os.Rename(marker+".tmp", marker); err != nil {
+		return err
+	}
+	if err := windows.SetEvent(ready); err != nil {
 		return err
 	}
 	status, err := windows.WaitForSingleObject(event, windows.INFINITE)
@@ -897,12 +905,13 @@ func (c *winFlowControls) tree(t *testing.T, root, phase string) winFlowTree {
 	defer tick.Stop()
 	for {
 		var err error
-		raw, err = os.ReadFile(path)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrNotExist) {
+		var published bool
+		raw, published, err = winFlowReadBirth(path, winFlowEventName(o.spec, phase+"-birth-ready"))
+		if err != nil {
 			t.Fatal(err)
+		}
+		if published {
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -927,6 +936,26 @@ func (c *winFlowControls) tree(t *testing.T, root, phase string) winFlowTree {
 		}
 	}
 	return tree
+}
+
+func winFlowReadBirth(path, readyName string) ([]byte, bool, error) {
+	ready, err := winFlowOpenEvent(readyName)
+	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	published, waitErr := winFlowEventSignaled(ready)
+	closeErr := windows.CloseHandle(ready)
+	if err := errors.Join(waitErr, closeErr); err != nil {
+		return nil, false, err
+	}
+	if !published {
+		return nil, false, nil
+	}
+	raw, err := os.ReadFile(path)
+	return raw, err == nil, err
 }
 func (c *winFlowControls) observe(t *testing.T, root, phase string, retired bool) {
 	t.Helper()
