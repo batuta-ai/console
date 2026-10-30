@@ -541,6 +541,10 @@ func (j *outerNativeJourney) original(m outerNativeMission) {
 	}
 }
 
+func outerNativeRefreshFrame(s string, m outerNativeMission) bool {
+	return strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) && !strings.Contains(s, "Progress snapshot (Esc, f, w refresh) / retained Stop observations") && !strings.Contains(s, "Confirm:") && !strings.Contains(s, "Mission request pending")
+}
+
 func (j *outerNativeJourney) refresh(m outerNativeMission) {
 	j.t.Helper()
 	ctx, cancel := context.WithTimeout(j.ctx, 10*time.Second)
@@ -552,13 +556,13 @@ func (j *outerNativeJourney) refresh(m outerNativeMission) {
 		j.console.screen(j.t, ctx, "mission ready for inspection "+m.mission.ID, func(s string) bool {
 			return strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) && !strings.Contains(s, "Confirm:")
 		})
-		// Establish a visible stale frame before inspecting; identical final frames
-		// otherwise give no indication that any read completed.
+		// Esc may coalesce with a periodic read that preserves the operation caption.
+		// Wait for normal mode; explicit f below establishes read_only if needed.
 		j.console.key(j.t, "w")
 		j.console.contains(j.t, ctx, "Progress snapshot (Esc, f, w refresh) / retained Stop observations")
 		j.console.key(j.t, "\x1b")
 		stale := j.console.screen(j.t, ctx, "visible invalidation or newer facts "+m.mission.ID, func(s string) bool {
-			return strings.Contains(s, m.mission.ID+"  Workspace: "+m.workspace.ID) && !strings.Contains(s, "Progress snapshot (Esc, f, w refresh) / retained Stop observations") && (strings.Contains(s, "refresh required") || ready(s)) && !strings.Contains(s, "Confirm:")
+			return outerNativeRefreshFrame(s, m)
 		})
 		if ready(stale) {
 			return
