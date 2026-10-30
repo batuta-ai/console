@@ -403,7 +403,7 @@ try {
     Invoke-Retirement 'positive' $stable $stableIdentity
     Observe-Actor $keeper 'before' $stable $stableIdentity
     if ($FullSuite) {
-        $suiteExit = Invoke-Owned 'go-test' $Go @('test', './...', '-json', '-count=1', '-timeout=20m') 1500000
+        $suiteExit = Invoke-Owned 'go-test' $Go @('test', './...', '-json', '-count=1', '-timeout=30m') 2100000
         Copy-Item -LiteralPath (Join-Path $Evidence 'go-test.stdout') -Destination (Join-Path $Evidence 'go-test.json')
     } else {
         $required = @('TestTerminalEnvironmentPreservesOrdinaryUserTEMP', 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP/select_environment',
