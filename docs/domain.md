@@ -166,6 +166,10 @@ facts, freshness, errors and warnings. An initial read with no prior effect keep
 the read-only caption; explicit inspection records its own read-only effect.
 Preserved feedback is historical and grants no active, completion or permission
 claim. Current execution and Stop facts and warnings remain authoritative.
+For an approved opened delivery, TUI inspection and periodic refresh use the
+current execution response's validated watch projection when present, without a
+second mission watch request. Each refresh reads execution again; contexts without
+an execution watch projection retain the existing mission watch fallback.
 
 Read refresh/acknowledgment is not mutation success. A retry control is not evidence
 that redispatch is safe. Reconnect restores observation and never replays input or

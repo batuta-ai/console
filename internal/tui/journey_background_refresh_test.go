@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -174,5 +175,113 @@ func TestJourneyBackgroundRefreshPreservesEffectAndCurrentFacts(t *testing.T) {
 				t.Fatalf("explicit inspection did not acknowledge current facts: %+v reads=%d", got, reads)
 			}
 		})
+	}
+}
+
+func TestJourneyExecutionWatchValidationAndFallback(t *testing.T) {
+	for _, kind := range []string{"inspect", "refresh"} {
+		for _, variant := range []string{"current", "mission", "workspace", "delivery", "missing", "malformed", "state"} {
+			t.Run(kind+"/"+variant, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				handler := m.api.HTTP.Transport.(inspectionAPITransport).handler
+				executions, watches := 0, 0
+				m.api.HTTP.Transport = inspectionAPITransport{http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.Method != http.MethodGet {
+						t.Errorf("read mutation: %s", req.Method)
+					}
+					if strings.HasSuffix(req.URL.Path, "/watch") {
+						watches++
+					}
+					if !strings.HasSuffix(req.URL.Path, "/execution") {
+						handler.ServeHTTP(w, req)
+						return
+					}
+					executions++
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, req)
+					if response.Code != http.StatusOK {
+						t.Errorf("execution status: %d", response.Code)
+					}
+					var state domain.ExecutionState
+					if err := json.Unmarshal(response.Body.Bytes(), &state); err != nil {
+						t.Error(err)
+						return
+					}
+					switch variant {
+					case "mission":
+						state.Watch.MissionID = "foreign"
+					case "workspace":
+						state.Watch.WorkspaceID = "foreign"
+					case "delivery":
+						state.Watch.Delivery = "foreign"
+					case "missing":
+						state.Watch = nil
+					case "malformed":
+						_, _ = w.Write([]byte(`{"watch":[]}`))
+						return
+					case "state":
+						state.ApprovalID = "foreign"
+					}
+					_ = json.NewEncoder(w).Encode(state)
+				})}
+				cached := m.journeyRecord()
+				cached.watch = domain.WatchView{Message: "stale watch"}
+				prior := *cached.state
+				prior.Watch = &domain.WatchView{Message: "stale execution watch"}
+				cached.state = &prior
+				m.putJourney(cached)
+				m = journeyFinish(t, m, m.readJourney(kind))
+				r := m.journeyRecord()
+				valid := variant == "current"
+				wantWatches := 0
+
+				if r.fresh != valid || (r.problemErr == nil) != valid || executions != 1 || watches != wantWatches {
+					t.Fatalf("fresh=%v error=%v execution=%d watch=%d", r.fresh, r.problemErr, executions, watches)
+				}
+				if valid && (!reflect.DeepEqual(r.watch, m.watch) || (variant == "current" && !reflect.DeepEqual(r.watch, *r.state.Watch))) {
+					t.Fatal("current watch projection lost")
+				}
+			})
+		}
+	}
+}
+
+func TestJourneyUnopenedWatchFallback(t *testing.T) {
+	for _, approved := range []bool{false, true} {
+		f := newJourneyWire("codex")
+		m := model{}.selectMission(f.mission)
+		r := m.journeyRecord()
+		if approved {
+			r.receipt = &f.receipt
+		} else {
+			r.mission.Binding = nil
+		}
+		m.putJourney(r)
+		executions, watches := 0, 0
+		m.api = accountFixture(t, func(w http.ResponseWriter, req *http.Request) {
+			if req.Method != http.MethodGet {
+				t.Errorf("read mutation: %s", req.Method)
+			}
+			if strings.HasSuffix(req.URL.Path, "/execution") {
+				executions++
+			}
+			if strings.HasSuffix(req.URL.Path, "/watch") {
+				watches++
+			}
+			f.handler(t)(w, req)
+		})
+		for _, kind := range []string{"inspect", "refresh"} {
+			m = journeyFinish(t, m, m.readJourney(kind))
+			if !m.journeyRecord().fresh || m.journeyRecord().problemErr != nil {
+				t.Fatal("fallback failed", m.journeyRecord().problemErr)
+			}
+		}
+		wantExecutions := 0
+		if approved {
+			wantExecutions = 2
+		}
+		if executions != wantExecutions || watches != 2 {
+			t.Fatal("fallback counts", executions, watches)
+		}
 	}
 }

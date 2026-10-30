@@ -268,6 +268,14 @@ func (m *model) readJourney(kind string) tea.Cmd {
 				if state.OpenedDigest != "" {
 					delivery = state.Delivery
 				}
+				if state.OpenedDigest != "" && state.Watch != nil {
+					if !journeyWatchMatches(*state.Watch, r.mission, delivery) {
+						out.err = domain.ErrInvalidReference
+						return out
+					}
+					out.watch = state.Watch
+					return out
+				}
 			}
 			w, err := api.MissionWatch(ctx, r.mission.ID, r.mission.WorkspaceID, delivery)
 			out.err = err
