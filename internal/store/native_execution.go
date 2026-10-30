@@ -25,7 +25,8 @@ func (s *Store) AttachApprovedExecution(ctx context.Context, receiptID string, i
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE missions SET id=id WHERE id=?`, identity.MissionID); err != nil {
+	// Reserve the writer without touching a row.
+	if _, err := tx.ExecContext(ctx, `UPDATE missions SET id=id WHERE 0`); err != nil {
 		return err
 	}
 	receipt, err := scanPlanApproval(tx.QueryRowContext(ctx, `SELECT id,identity,content,approved_at FROM plan_approvals WHERE id=? AND mission_id=? AND workspace_id=?`, receiptID, identity.MissionID, identity.Binding.WorkspaceID))
