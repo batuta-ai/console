@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/batuta-ai/console/internal/client"
@@ -282,6 +284,90 @@ func TestJourneyUnopenedWatchFallback(t *testing.T) {
 		}
 		if executions != wantExecutions || watches != 2 {
 			t.Fatal("fallback counts", executions, watches)
+		}
+	}
+}
+
+func TestJourneyRefreshPendingBannerWithConfirmedFacts(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, mode := range []string{"", "progress"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				r := m.journeyRecord()
+				r.mode, r.effect, r.confirm = mode, "recorded", "resume"
+				m.putJourney(r)
+				handler := m.api.HTTP.Transport.(inspectionAPITransport).handler
+				executions, watches, mutations := 0, 0, 0
+				m.api.HTTP.Transport = inspectionAPITransport{http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.Method != http.MethodGet {
+						mutations++
+					}
+					if strings.HasSuffix(req.URL.Path, "/execution") {
+						executions++
+					}
+					if strings.HasSuffix(req.URL.Path, "/watch") {
+						watches++
+					}
+					handler.ServeHTTP(w, req)
+				})}
+				control, admitted := m.mutateJourney("resume")
+				if admitted == nil || control.journey.pending == nil || control.journey.pending.kind != "resume" {
+					t.Fatal("real fixture does not admit resume without a pending request")
+				}
+				control.journey.pending.cancel()
+				m.putJourney(r)
+				before := m.View().Content
+				m.tick()()
+				cmd := m.readJourney("refresh")
+				request := m.journey.pending
+				if cmd == nil || request == nil || request.kind != "refresh" {
+					t.Fatal("missing refresh request")
+				}
+				if frame := m.View().Content; strings.Contains(frame, i18n.T("journey_pending")) || frame != before {
+					t.Errorf("routine refresh changed confirmed frame while pending\n%s", frame)
+				}
+				pendingRecord := m.journeyRecord()
+				blocked, mutation := m.mutateJourney("resume")
+				if mutation != nil || blocked.journey.pending != request || !m.journeyBusy() || !reflect.DeepEqual(blocked.journeyRecord(), pendingRecord) {
+					t.Fatal("hidden banner changed mutation admission")
+				}
+				result, ok := cmd().(journeyResult)
+				if !ok || result.err != nil || result.state == nil || result.watch == nil {
+					t.Fatalf("real refresh failed: %+v", result)
+				}
+				if result.state.Watch.Health["journal_age_ns"] != float64(time.Second) {
+					t.Fatal("real API age was not updated")
+				}
+				m = journeyFinish(t, m, func() tea.Msg { return result })
+				got := m.journeyRecord()
+				if strings.Contains(m.View().Content, i18n.T("journey_pending")) || m.journey.pending != nil || !got.fresh || got.effect != "recorded" || !reflect.DeepEqual(got.state, result.state) || !reflect.DeepEqual(got.watch, *result.watch) || !reflect.DeepEqual(m.watch, *result.watch) || executions != 1 || watches != 0 || mutations != 0 {
+					t.Fatalf("refresh lost facts, caption, freshness or request counts: executions=%d watches=%d mutations=%d", executions, watches, mutations)
+				}
+			})
+		})
+	}
+}
+
+func TestJourneyPendingBannerForegroundAndUnfresh(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, mode := range []string{"", "progress"} {
+		for _, kind := range []string{"refresh", "inspect", "stop", "stop_observe", "approve", "start", "resume", "answer", "bind", "source", "sessions", "receipt"} {
+			for _, fresh := range []bool{false, true} {
+				m := backgroundRefreshModel(t)
+				r := m.journeyRecord()
+				r.mode, r.fresh = mode, fresh
+				m.putJourney(r)
+				request := &journeyRequest{kind: kind, key: journeyID(r.mission), mission: r.mission}
+				m.journey.pending = request
+				want := kind != "refresh" || !fresh
+				if got := strings.Contains(m.View().Content, i18n.T("journey_pending")); got != want {
+					t.Errorf("mode=%q kind=%s fresh=%v pending banner=%v, want %v", mode, kind, fresh, got, want)
+				}
+				if m.journey.pending != request || !m.journeyBusy() {
+					t.Fatal("view changed pending coordination")
+				}
+			}
 		}
 	}
 }

@@ -286,6 +286,10 @@ func (m model) journeyInspectionVisible() bool {
 	return r.confirm != "" || r.mode == "source" || r.mode == "receipt" || r.mode == "progress"
 }
 
+func (m model) journeyPendingVisible(r journeyRecord) bool {
+	return m.journeyBusy() && (m.journey.pending.kind != "refresh" || !r.fresh)
+}
+
 func (m model) viewJourney(b *strings.Builder) bool {
 	if !m.journeyVisible() {
 		return false
@@ -297,7 +301,7 @@ func (m model) viewJourney(b *strings.Builder) bool {
 	}
 	fmt.Fprintln(b, i18n.T("journey_keys"))
 	fmt.Fprintln(b, i18n.T("journey_inspection_open"))
-	if m.journeyBusy() {
+	if m.journeyPendingVisible(r) {
 		fmt.Fprintln(b, i18n.T("journey_pending"))
 	}
 	if !r.fresh {
@@ -548,7 +552,7 @@ func (m model) journeyInspectionHeader(r journeyRecord) (string, string) {
 	} else {
 		fmt.Fprintln(&b, i18n.T("journey_inspection_readonly"))
 	}
-	if m.journeyBusy() {
+	if m.journeyPendingVisible(r) {
 		fmt.Fprintln(&b, i18n.T("journey_pending"))
 	}
 	if r.problem != "" {
