@@ -26,7 +26,7 @@ func platformIdentityKey(key string) bool {
 	return false
 }
 func platformIdentityPaths(home string) map[string]string {
-	return map[string]string{"USERPROFILE": home, "APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "AppData", "Local"), "TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp")}
+	return map[string]string{"USERPROFILE": home, "APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "c"), "TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp")}
 }
 func platformHomeMetadata(home string) []string {
 	volume := filepath.VolumeName(home)
@@ -37,10 +37,10 @@ func newSessionHome() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parent := filepath.Join(local, "Batuta", "Console", "session-homes")
+	parent := filepath.Join(local, "Batuta")
 	// GetTempPathW reserves MAX_PATH and can loop during descendant creation
 	// with an overlong TMP. Reserve its trailing separator and terminating NUL.
-	prospective := filepath.Join(parent, "session-"+strings.Repeat("0", 32), "tmp")
+	prospective := filepath.Join(parent, "s-"+strings.Repeat("0", 32), "tmp")
 	if err := windowsTemporaryPathLength(prospective); err != nil {
 		return "", err
 	}
@@ -53,11 +53,11 @@ func newSessionHome() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prospective = filepath.Join(parent, "session-"+strings.Repeat("0", 32), "tmp")
+	prospective = filepath.Join(parent, "s-"+strings.Repeat("0", 32), "tmp")
 	if err := windowsTemporaryPathLength(prospective); err != nil {
 		return "", err
 	}
-	return consoleruntime.NewPrivateTemp(parent, "session-")
+	return consoleruntime.NewPrivateTemp(parent, "s-")
 }
 func createIdentityDirectory(path string) error { return consoleruntime.EnsurePrivateDirectory(path) }
 

@@ -94,7 +94,7 @@ func TestTask43WindowsSessionIdentity(t *testing.T) {
 		key, value, _ := strings.Cut(entry, "=")
 		paths[key] = value
 	}
-	for key, want := range map[string]string{"HOME": home, "USERPROFILE": home, "APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "AppData", "Local"), "TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp"), "HOMEDRIVE": filepath.VolumeName(home), "HOMEPATH": strings.TrimPrefix(home, filepath.VolumeName(home))} {
+	for key, want := range map[string]string{"HOME": home, "USERPROFILE": home, "APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "c"), "TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp"), "HOMEDRIVE": filepath.VolumeName(home), "HOMEPATH": strings.TrimPrefix(home, filepath.VolumeName(home))} {
 		if paths[key] != want {
 			t.Fatalf("%s=%q want=%q", key, paths[key], want)
 		}
@@ -160,13 +160,13 @@ func TestWindowsSessionCanonicalHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent := filepath.Join(local, "batuta", "console", "session-homes")
+	parent := filepath.Join(local, "batuta")
 	if err := consoleruntime.EnsurePrivateDirectory(parent); err != nil {
 		t.Fatal(err)
 	}
 	task43AccountACL(t, local)
 	task43AccountACL(t, parent)
-	constructed := filepath.Join(local, "Batuta", "Console", "session-homes")
+	constructed := filepath.Join(local, "Batuta")
 	canonical, err := filepath.EvalSymlinks(constructed)
 	if err != nil || canonical != parent || canonical == constructed {
 		t.Fatalf("fixture must resolve the case alias: constructed=%q canonical=%q parent=%q err=%v", constructed, canonical, parent, err)
@@ -192,7 +192,7 @@ func TestWindowsSessionCanonicalHome(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"HOME": home, "USERPROFILE": home,
-		"APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "AppData", "Local"),
+		"APPDATA": filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(home, "c"),
 		"TEMP": filepath.Join(home, "tmp"), "TMP": filepath.Join(home, "tmp"), "TMPDIR": filepath.Join(home, "tmp"),
 		"XDG_CONFIG_HOME": filepath.Join(home, ".config"), "XDG_DATA_HOME": filepath.Join(home, ".local", "share"),
 		"XDG_CACHE_HOME": filepath.Join(home, ".cache"), "XDG_STATE_HOME": filepath.Join(home, ".local", "state"),
