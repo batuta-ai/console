@@ -47,7 +47,7 @@ func actualNativeCoreHello() (nativeCoreHello, error) {
 }
 
 func (h nativeCoreHello) qualified() bool {
-	return h.Protocol == 1 && h.CorePath == "github.com/batuta-ai/core" && h.CoreVersion == "v1.1.0-beta.55" && h.CoreSum == "h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y=" && !h.CoreReplaced && h.PID != 0 && h.Created != 0
+	return h.Protocol == 1 && h.CorePath == "github.com/batuta-ai/core" && h.CoreVersion == "v1.1.0-beta.55.2" && h.CoreSum == "h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=" && !h.CoreReplaced && h.PID != 0 && h.Created != 0
 }
 
 func (s nativeCoreStart) validate() error {
@@ -229,7 +229,7 @@ func RunNativeCore(ctx context.Context, input io.Reader, output io.Writer) error
 		Workspace: start.Receipt.Identity.Binding.CanonicalRoot, Skills: start.Skills, Plan: start.Receipt.Identity.Binding.PlanPath,
 		ApprovedSnapshot: &loop.ApprovedPlanSnapshot{Slug: start.Receipt.Identity.Binding.PlanSlug, Path: start.Receipt.Identity.Binding.PlanPath, ReceiptID: start.Receipt.ID, ContentDigest: start.Receipt.Identity.Version, Content: start.Receipt.Content},
 		DeliveryID:       start.Delivery, Parallel: 1, KeepWorktrees: true, Supervision: true,
-		Runner: commands, Environment: []string{"GIT_CONFIG_COUNT=0"}, Transport: transport, VerifierTransport: transport,
+		Runner: nativeCoreGitRunner{commands: commands}, Environment: []string{"GIT_CONFIG_COUNT=0"}, Transport: transport, VerifierTransport: transport,
 		Inventory: func(ctx context.Context) (inventory.InventorySnapshot, error) {
 			return selected.inventory(ctx, start.Receipt.Identity.Binding.CanonicalRoot)
 		},
@@ -299,116 +299,10 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 	var state string
 	var outcome, parentCause, cleanup error
 	completed := false
-	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).Exchange(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(callback context.Context, input io.Reader, output io.WriteCloser) error {
-		stream := &nativeCoreStream{reader: input, writer: output}
-		frame, err := stream.receive()
-		if err != nil {
-			return err
-		}
-		if frame.Type != "hello" || !frame.Hello.qualified() {
-			return domain.ErrExecutionUnavailable
-		}
-		// The diagnostic birth fields never confer process control authority.
-		if err := stream.send(nativeCoreFrame{Type: "start", Start: &start}); err != nil {
-			return err
-		}
-		stopCancel, cancelJoined := make(chan struct{}), make(chan struct{})
-		go func() {
-			defer close(cancelJoined)
-			select {
-			case <-callback.Done():
-				_ = stream.send(nativeCoreFrame{Type: "cancel"})
-			case <-stopCancel:
-			}
-		}()
-		defer func() { close(stopCancel); <-cancelJoined }()
-		var last uint64
-		ready := false
-		for {
-			frame, err := stream.receive()
-			if err != nil {
-				return err
-			}
-			switch frame.Type {
-			case "ready", "guard":
-				if frame.ID != last+1 {
-					return domain.ErrInvalidReference
-				}
-				last = frame.ID
-				var response error
-				if frame.Type == "ready" {
-					if ready {
-						return domain.ErrInvalidReference
-					}
-					if resume == "" {
-						_, response = s.executionApproval(job.ctx, req)
-					} else {
-						response = job.ctx.Err()
-					}
-					if response == nil {
-						active.Store(true)
-						ready = true
-					}
-				} else {
-					if !ready {
-						return domain.ErrInvalidReference
-					}
-					request := frame.Guard
-					if request.Cleanup && job.ctx.Err() == nil {
-						return domain.ErrInvalidReference
-					}
-					checkCtx := job.ctx
-					if request.Cleanup {
-						checkCtx = context.WithoutCancel(job.ctx)
-					}
-					for _, a := range selected.byCLI {
-						if request.Executable == a.executable {
-							command := publication.Command{Executable: request.Executable, Directory: request.Directory, Args: request.Args}
-							if request.Cleanup {
-								response = context.Canceled
-							} else if request.Readonly {
-								response = a.authorizeReadonlyCommand(command)
-							} else {
-								response = a.authorizeCommand(command)
-							}
-						}
-					}
-					if response == nil {
-						response = guard(checkCtx)
-					}
-				}
-				parentCause = errors.Join(parentCause, response)
-				if err := stream.send(nativeCoreFrame{Type: "response", ID: frame.ID, Error: nativeCoreEncodeError(response)}); err != nil {
-					return err
-				}
-			case "done":
-				if !ready && frame.Done.Error == nil {
-					return domain.ErrInvalidReference
-				}
-				if frame.Done.Error == nil {
-					switch frame.Done.State {
-					case loop.StateDone, loop.StateBlocked, loop.StateWaitingInput, loop.StateWaitingPlan, loop.StateCanceled, loop.StateAbandoned, loop.StateReviewBlocked:
-					default:
-						return domain.ErrInvalidReference
-					}
-				}
-				completed = true
-				state, outcome, cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
-				if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
-					return err
-				}
-				if err := output.Close(); err != nil {
-					return err
-				}
-				tail, err := io.ReadAll(input)
-				if len(tail) != 0 {
-					return domain.ErrInvalidReference
-				}
-				return err
-			default:
-				return domain.ErrInvalidReference
-			}
-		}
+	result, exchangeErr := (session.NativeRunner{Manager: s.Session, Environment: env}).ExchangeFinalizing(job.ctx, publication.Command{Executable: helper, Args: []string{"--native-core"}, Directory: receipt.Identity.Binding.CanonicalRoot}, func(finalization session.NativeExchangeFinalization, input io.Reader, output io.WriteCloser) error {
+		report, callbackErr := s.runNativeCoreCallback(finalization, input, output, start, req, resume, selected, active, guard)
+		state, outcome, parentCause, cleanup, completed = report.state, report.outcome, report.parentCause, report.cleanup, report.completed
+		return callbackErr
 	})
 	if result.ExitCode != 0 && exchangeErr == nil {
 		exchangeErr = fmt.Errorf("native Core helper exited %d", result.ExitCode)
@@ -425,7 +319,140 @@ func (s *Service) runNativeWindowsExecution(job *nativeExecution, req domain.Exe
 		}
 	}
 	if cleanup != nil || errors.Is(exchangeErr, session.ErrNativeCleanupUnresolved) {
-		s.recordNativeCleanup(errors.Join(cleanup, exchangeErr))
+		s.recordExecutionCleanup(job, errors.Join(cleanup, exchangeErr))
 	}
 	return true, state, errors.Join(parentCause, outcome, cleanup, exchangeErr)
+}
+
+type nativeCoreCallbackReport struct {
+	state       string
+	outcome     error
+	parentCause error
+	cleanup     error
+	completed   bool
+}
+
+func (s *Service) runNativeCoreCallback(finalization session.NativeExchangeFinalization, input io.Reader, output io.WriteCloser, start nativeCoreStart, req domain.ExecutionRequest, resume string, selected nativeAccounts, active *atomic.Bool, guard func(context.Context) error) (report nativeCoreCallbackReport, callbackErr error) {
+	stream := &nativeCoreStream{reader: input, writer: output}
+	frame, err := stream.receive()
+	if err != nil {
+		return report, err
+	}
+	if frame.Type != "hello" || !frame.Hello.qualified() {
+		return report, domain.ErrExecutionUnavailable
+	}
+	// The diagnostic birth fields never confer process control authority.
+	if err := stream.send(nativeCoreFrame{Type: "start", Start: &start}); err != nil {
+		return report, err
+	}
+	stopCancel, cancelJoined := make(chan struct{}), make(chan struct{})
+	var cancelErr error
+	go func() {
+		defer close(cancelJoined)
+		select {
+		case <-finalization.Control.Done():
+		case <-stopCancel:
+		}
+		// Stopping the writer must not lose an already eligible cancellation.
+		if finalization.Control.Err() != nil {
+			cancelErr = stream.send(nativeCoreFrame{Type: "cancel"})
+		}
+	}()
+	defer func() {
+		if !report.completed {
+			close(stopCancel)
+		}
+		<-cancelJoined
+		callbackErr = errors.Join(callbackErr, cancelErr)
+	}()
+	var last uint64
+	ready := false
+	for {
+		frame, err := stream.receive()
+		if err != nil {
+			return report, err
+		}
+		switch frame.Type {
+		case "ready", "guard":
+			if frame.ID != last+1 {
+				return report, domain.ErrInvalidReference
+			}
+			last = frame.ID
+			var response error
+			if frame.Type == "ready" {
+				if ready {
+					return report, domain.ErrInvalidReference
+				}
+				if resume == "" {
+					_, response = s.executionApproval(finalization.Control, req)
+				} else {
+					response = finalization.Control.Err()
+				}
+				if response == nil {
+					active.Store(true)
+					ready = true
+				}
+			} else {
+				if !ready {
+					return report, domain.ErrInvalidReference
+				}
+				request := frame.Guard
+				if request.Cleanup && finalization.Control.Err() == nil {
+					return report, domain.ErrInvalidReference
+				}
+				checkCtx := finalization.Control
+				if request.Cleanup {
+					checkCtx = finalization.Cleanup
+				}
+				for _, a := range selected.byCLI {
+					if request.Executable == a.executable {
+						command := publication.Command{Executable: request.Executable, Directory: request.Directory, Args: request.Args}
+						if request.Cleanup {
+							response = context.Canceled
+						} else if request.Readonly {
+							response = a.authorizeReadonlyCommand(command)
+						} else {
+							response = a.authorizeCommand(command)
+						}
+					}
+				}
+				if response == nil {
+					response = guard(checkCtx)
+				}
+			}
+			report.parentCause = errors.Join(report.parentCause, response)
+			if err := stream.send(nativeCoreFrame{Type: "response", ID: frame.ID, Error: nativeCoreEncodeError(response)}); err != nil {
+				return report, err
+			}
+		case "done":
+			if !ready && frame.Done.Error == nil {
+				return report, domain.ErrInvalidReference
+			}
+			if frame.Done.Error == nil {
+				switch frame.Done.State {
+				case loop.StateDone, loop.StateBlocked, loop.StateWaitingInput, loop.StateWaitingPlan, loop.StateCanceled, loop.StateAbandoned, loop.StateReviewBlocked:
+				default:
+					return report, domain.ErrInvalidReference
+				}
+			}
+			finalization.ProtocolDone()
+			report.completed = true
+			report.state, report.outcome, report.cleanup = frame.Done.State, frame.Done.Error.cause(), frame.Done.Cleanup.cause()
+			close(stopCancel)
+			<-cancelJoined
+			if err := stream.send(nativeCoreFrame{Type: "ack"}); err != nil {
+				return report, err
+			}
+			if err := output.Close(); err != nil {
+				return report, err
+			}
+			tail, err := io.ReadAll(input)
+			if len(tail) != 0 {
+				return report, domain.ErrInvalidReference
+			}
+			return report, err
+		default:
+			return report, domain.ErrInvalidReference
+		}
+	}
 }

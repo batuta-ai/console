@@ -105,7 +105,7 @@ func TestNativeSkillsRejectUnsafeDestinationsAndMissingRoles(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if err := os.Symlink(sentinel, parent); err != nil {
+					if err := testfixture.DirectoryLink(sentinel, parent); err != nil {
 						t.Fatal(err)
 					}
 				case "missing-role":
@@ -129,7 +129,7 @@ func TestNativeSkillsRejectUnsafeDestinationsAndMissingRoles(t *testing.T) {
 					}
 					switch kind {
 					case "symlink-skills":
-						if err := os.Symlink(sentinel, native); err != nil {
+						if err := testfixture.DirectoryLink(sentinel, native); err != nil {
 							t.Fatal(err)
 						}
 					case "file-skills":
@@ -144,7 +144,7 @@ func TestNativeSkillsRejectUnsafeDestinationsAndMissingRoles(t *testing.T) {
 						if kind == "unrelated" {
 							name = "caller-skill"
 						}
-						if err := os.Symlink(sentinel, filepath.Join(native, name)); err != nil {
+						if err := testfixture.DirectoryLink(sentinel, filepath.Join(native, name)); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -224,7 +224,7 @@ func TestServiceSkillsRejectBeforeSpawn(t *testing.T) {
 					if err := testfixture.MakePrivateDirectoryAll(filepath.Dir(native), 0700); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.Symlink(t.TempDir(), native); err != nil {
+					if err := testfixture.DirectoryLink(t.TempDir(), native); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -441,7 +441,7 @@ func TestServiceInitSkillsRejectBeforeSpawn(t *testing.T) {
 					if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.Symlink(t.TempDir(), native); err != nil {
+					if err := testfixture.DirectoryLink(t.TempDir(), native); err != nil {
 						t.Fatal(err)
 					}
 				}

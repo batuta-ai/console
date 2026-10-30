@@ -68,6 +68,14 @@ fresh `0700` temporary home. Unbound init fallback follows this same path. Its
 config/data/cache/state/temp and Codex/Claude/Cursor homes are below that new
 home. It starts without credentials from an earlier session, account or daemon.
 
+On Windows, fresh anonymous homes use `<selected cache>/Batuta/s-<32 hex>`
+with a unique 128-bit random suffix and `LOCALAPPDATA=<HOME>/c` to keep
+helper paths compact. APPDATA and other config/provider/temp paths retain
+their layout below HOME. Canonical path, current-user ownership, private ACL
+and no-reparse checks still apply. Persistent selected account environments
+and explicitly supplied runtime identities retain their existing paths. Old
+session homes are neither migrated nor deleted by this layout change.
+
 Manager removes only the temporary tree it created, after actual owned process
 collection, exit callbacks, PTY reader and log cleanup. Failed starts remove
 that same owned tree and release admission. Persistent account directories are

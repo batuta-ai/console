@@ -1,6 +1,6 @@
 # Routing — Batuta Console
 
-<!-- inputs: profile.md@sha256:007e2ce0c8b9 -->
+<!-- inputs: profile.md@sha256:5d6f540d4ec1 -->
 
 | Lane | Domain | Executor | Model | Effort |
 | --- | --- | --- | --- | --- |
@@ -14,7 +14,9 @@
 | --- | --- | --- | --- |
 | research | low | opencode | opencode/ling-3.1-flash-free |
 | research | medium | codex | gpt-6.1-sol |
-| review | — | claude | sonnet |
+| review | — | codex | gpt-6-astra |
+
+Review policy updated on 2026-10-28 at the maintainer's request: all project reviews, including deep and final reviews, use Codex with `gpt-6-astra`. This supersedes earlier Claude/Opus review requirements in conducting plans and proposals. Keep historical review evidence unchanged. Reviews remain independent and read-only; do not fall back to Claude unless the maintainer changes this policy. The model ID was confirmed with `codex debug models --bundled`, and Codex is logged in through ChatGPT.
 
 Native model IDs verified in batuta inventory on 2026-10-03. Installed and used: opencode, agy, codex, claude. cursor-agent is missing and is not routed. The inventory also reports compozy with no resolved model set; it is outside the shipped skill adapters and is not proposed. CLI availability/model listing does not qualify product account isolation or authentication.
 

@@ -115,6 +115,34 @@ test('real GoReleaser package contract', async t => {
       rejected(verify(root), windows, /Expected values to be strictly deep-equal:[\s\S]*Buffer\(\d+\) \[Uint8Array\]/);
     });
 
+    await fixture('rejects an incorrect embedded Core module sum despite a matching archive checksum', root => {
+      const target = archive('linux_amd64.tar.gz');
+      const contents = join(root, 'core-sum');
+      extract(root, target, contents);
+      const binary = join(contents, 'consoled');
+      const info = file => JSON.parse(execFileSync('go', ['version', '-m', '-json', file], { encoding: 'utf8' }));
+      const beforeInfo = info(binary);
+      const beforeCore = beforeInfo.Deps.find(module => module.Path === 'github.com/batuta-ai/core');
+      const expected = 'h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=';
+      assert.equal(beforeCore.Sum, expected);
+      const wrong = `h1:${expected[3] === 'a' ? 'b' : 'a'}${expected.slice(4)}`;
+      const bytes = readFileSync(binary);
+      const original = Buffer.from(expected);
+      const offsets = [];
+      for (let offset = bytes.indexOf(original); offset >= 0; offset = bytes.indexOf(original, offset + original.length)) offsets.push(offset);
+      assert.ok(offsets.length > 0, 'Real build info must contain the Core sum');
+      for (const offset of offsets) Buffer.from(wrong).copy(bytes, offset);
+      writeFileSync(binary, bytes);
+      const changedInfo = info(binary);
+      const changedCore = changedInfo.Deps.find(module => module.Path === beforeCore.Path);
+      assert.equal(changedCore.Sum, wrong);
+      assert.deepEqual(changedCore, { ...beforeCore, Sum: wrong });
+      assert.deepEqual(changedInfo, { ...beforeInfo, Deps: beforeInfo.Deps.map(module => module.Path === beforeCore.Path ? changedCore : module) });
+      repack(root, target, contents);
+      checksums(root);
+      rejected(verify(root), target, /Unexpected linked Core module checksum/);
+    });
+
     await fixture('rejects a wrong SHA256 digest for an otherwise unchanged Windows ZIP', root => {
       const actual = digest(join(root, windows));
       const wrong = `${actual[0] === '0' ? '1' : '0'}${actual.slice(1)}`;

@@ -23,7 +23,7 @@ terminal rendering is outside this journey and the warning is not suppressed.
 npm --prefix web run test:journey
 ```
 
-Requires Go 1.27.2, Node 26.10.0, cached Go modules or access to download
+Requires Go 1.27.3, Node 26.10.0, cached Go modules or access to download
 them, and permission to bind loopback sockets. The script builds current
 consoled in a temporary directory and launches it with a disposable
 runtime/catalog, HOME and workspace, an empty PATH and no inherited credentials.
@@ -70,7 +70,7 @@ jest-dom 7.0.1, jsdom 30.1.1, and @types/node 26.6.4.
 
 ## Rendered Chromium catalog journey (partial Task38)
 
-Requires Node 26.10.0, npm 12.2.0, Go 1.27.2 and the exact Playwright SDK
+Requires Node 26.10.0, npm 12.2.0, Go 1.27.3 and the exact Playwright SDK
 `@playwright/test@1.64.1` (including playwright/playwright-core 1.64.1).
 From the repository root, use an owned browser cache, never an installed browser
 or personal profile. Initial browser acquisition requires access to Playwright's
@@ -83,7 +83,7 @@ npm --prefix web ci --ignore-scripts --no-audit --no-fund
 npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e -- --list
 
-# Select the prepared Go 1.27.2 SDK and populated, read-only module cache.
+# Select the prepared Go 1.27.3 SDK and populated, read-only module cache.
 export GOROOT="/absolute/path/to/private/go"
 export GOMODCACHE="/absolute/path/to/prepared/module-cache"
 export GOCACHE="$PWD/.batuta/runs/rendered-browser/go-cache"
@@ -132,7 +132,7 @@ also on failure; Playwright retains test and teardown failures separately.
 Forced daemon cleanup is a failure. If joining or cleanup cannot be established,
 the private runtime is retained instead of being deleted under a live process.
 
-The rendered journey passed on macOS/arm64 with Node 26.10.0, npm 12.2.0,
+The earlier rendered journey passed on macOS/arm64 with Node 26.10.0, npm 12.2.0,
 Go 1.27.2, Playwright 1.64.1 and Chromium 156.0.8078.4 at 1280×720. Both mission
 identities and their immutable snapshots were selected through the UI before
 and after the owned daemon restarted. The unchanged 165 unit tests and
@@ -141,5 +141,7 @@ responsive-layout qualification claim.
 
 This is bounded catalog/navigation/restart coverage, not full Task38, native
 execution, question/answer, resume, execution stop, provider qualification or a
-beta release gate. The known SDK journal defect still blocks qualification of
+beta release gate. At the time of this run, the SDK journal defect still blocked qualification of
 the full execution flow even if this catalog journey passes.
+
+The current compiler requirement is Go 1.27.3. The earlier rendered journey does not qualify the updated compiler or the pending native execution and release gates.

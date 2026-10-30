@@ -39,14 +39,18 @@ function verifyPackages() {
       for (const binary of binaries) {
         const metadata = execFileSync('go', ['version', '-m', join(extracted, binary)], { encoding: 'utf8' });
         const buildInfo = JSON.parse(execFileSync('go', ['version', '-m', '-json', join(extracted, binary)], { encoding: 'utf8' }));
-        assert.equal(buildInfo.GoVersion, 'go1.27.2');
+        assert.equal(buildInfo.GoVersion, 'go1.27.3');
         const settings = new Map(buildInfo.Settings.map(({ Key, Value }) => [Key, Value]));
         assert.equal(settings.get('GOOS'), goos, 'Binary GOOS must match its archive');
         assert.equal(settings.get('GOARCH'), goarch, 'Binary GOARCH must match its archive');
         assert.equal(settings.get('CGO_ENABLED'), '0');
         // The TUI may not link Core; never invent a dependency for diagnostics.
-        if (binary === 'consoled' || binary === 'consoled.exe' || metadata.includes('github.com/batuta-ai/core')) {
-          assert.match(metadata, /github\.com\/batuta-ai\/core\s+v1\.1\.0-beta\.55\s/);
+        const core = (buildInfo.Deps ?? []).filter(module => module.Path === 'github.com/batuta-ai/core');
+        if (binary === 'consoled' || binary === 'consoled.exe' || core.length > 0) {
+          assert.equal(core.length, 1, 'One linked Core module is required');
+          assert.equal(core[0].Version, 'v1.1.0-beta.55.2', 'Unexpected linked Core version');
+          assert.equal(core[0].Sum, 'h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=', 'Unexpected linked Core module checksum');
+          assert.equal(core[0].Replace, undefined, 'module replacement is not release authority');
         }
         assert.ok(metadata.includes(`ReleaseVersion=${version}`));
         assert.ok(metadata.includes(`ReleaseRevision=${revision}`));

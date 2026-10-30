@@ -1,10 +1,10 @@
 module github.com/batuta-ai/console
 
-go 1.27.2
+go 1.27.3
 
 require (
 	charm.land/bubbletea/v2 v2.0.10
-	github.com/batuta-ai/core v1.1.0-beta.55
+	github.com/batuta-ai/core v1.1.0-beta.55.2
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.25-0.20260601142114-9246436fffe8
 	github.com/mattn/go-isatty v0.0.24

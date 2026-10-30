@@ -44,9 +44,9 @@ nunca abre o navegador por conta própria.
 
 ## Compilar e instalar a partir do código-fonte
 
-Use Go 1.27.2 ou mais recente e execute os comandos em um checkout da revisão
-desejada do Console (o SDK qualificado aqui é Go 1.27.2). `go.mod` e `go.sum`
-fixam o grafo de dependências, incluindo Batuta core `v1.1.0-beta.55`.
+Use Go 1.27.3 ou mais recente e execute os comandos em um checkout da revisão
+desejada do Console (o SDK qualificado aqui é Go 1.27.3). `go.mod` e `go.sum`
+fixam o grafo de dependências, incluindo Batuta core `v1.1.0-beta.55.2`.
 Os assets web incorporados e rastreados bastam para compilar ambos os binários
 sem Node.js.
 O Git precisa oferecer `git show-ref --exists` para a revisão nativa de missões;
@@ -149,7 +149,7 @@ estável ainda exige qualificação contra um contrato estável de core/plugin.
 7. **Executar e recuperar.** Inicie explicitamente a execução nativa a partir
    desse recibo. Exige contas selecionadas prontas, habilidades instaladas e
    rotas permitidas. No macOS e Linux, a CLI Core precisa corresponder exatamente
-   a `v1.1.0-beta.55`; inicie `consoled -core /absolute/path/to/batuta` para escolher
+   a `v1.1.0-beta.55.2`; inicie `consoled -core /absolute/path/to/batuta` para escolher
    esse executável privado e explícito; caso contrário, usa `batuta` no PATH.
    O Windows utiliza o SDK Core incluído com a imagem do Console e não exige CLI
    Core externa (a qualificação nativa de Windows segue pendente; veja
@@ -224,7 +224,7 @@ Core vinculada. A primeira versão publicada será `v0.1.0-beta.1`; a semente
 `0.1.0-beta.0` do manifesto é controle interno não publicado. Nenhum release
 do Console foi publicado. O repositório público está em [batuta-ai/console](https://github.com/batuta-ai/console).
 
-Com Go 1.27.2, Node 26.10.0, npm 12.2.0 e govulncheck 1.8.0 no PATH:
+Com Go 1.27.3, Node 26.10.0, npm 12.2.0 e govulncheck 1.8.0 no PATH:
 
 ```sh
 sh scripts/check-release.sh       # non-root source checks; failures stop the run

@@ -123,7 +123,7 @@ Native Start uses Core's approved snapshot support and a deterministic delivery;
 its actual `delivery` and `opened_digest` are separate returned identities. The
 Console validates account/model/effort routes and their selected skills, shared
 capacity and readiness. On macOS and Linux, native execution requires Core CLI
-`v1.1.0-beta.55`; `consoled -core /absolute/path/to/batuta` selects a private explicit
+`v1.1.0-beta.55.2`; `consoled -core /absolute/path/to/batuta` selects a private explicit
 executable, otherwise `batuta` on PATH is used. Windows uses the Core SDK included
 with the Console image, with strict version, public module checksum and no-replacement
 checks; no external Core CLI is required. Native Windows qualification remains
@@ -161,6 +161,16 @@ from an uncertain result after dispatch. Lost replies, malformed/foreign respons
 identities, cancellation and store failures can leave effects that are not yet
 confirmed. Retain confirmed facts and the submitted target/draft; quarantine replay
 and explicitly inspect the actual session, receipt or original native delivery.
+Automatic TUI polling preserves nonempty operation feedback while updating current
+facts, freshness, errors and warnings. An initial read with no prior effect keeps
+the read-only caption; explicit inspection records its own read-only effect.
+Preserved feedback is historical and grants no active, completion or permission
+claim. Current execution and Stop facts and warnings remain authoritative.
+For an approved opened delivery, TUI inspection and periodic refresh use the
+current execution response's validated watch projection when present, without a
+second mission watch request. Each refresh reads execution again; contexts without
+an execution watch projection retain the existing mission watch fallback.
+
 Read refresh/acknowledgment is not mutation success. A retry control is not evidence
 that redispatch is safe. Reconnect restores observation and never replays input or
 a mission mutation automatically.
@@ -170,7 +180,7 @@ release gates include native Windows/process/isolation/provider proof, complete
 web/TUI/provider journeys, reliability findings, stable Core/plugin compatibility
 and official Core binary security. Build/runtime labels do not close those gates.
 Console's first planned publication is `v0.1.0-beta.1`; unpublished `beta.0`
-bookkeeping and linked Core `v1.1.0-beta.55` are independent. No Console publication
+bookkeeping and linked Core `v1.1.0-beta.55.2` are independent. No Console publication
 or successful public CI is established here; see [release authorities](release.md).
 
 ## Isolation and limits

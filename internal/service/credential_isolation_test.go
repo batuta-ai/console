@@ -343,7 +343,7 @@ func TestAccountIsolationRejectsBeforeSpawn(t *testing.T) {
 				if err := os.RemoveAll(home); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(root, home); err != nil {
+				if err := testfixture.DirectoryLink(root, home); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -516,7 +516,7 @@ func TestConnectRejectsInvalidControlledIdentity(t *testing.T) {
 				if err := os.Remove(config); err != nil && !os.IsNotExist(err) {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(root, config); err != nil {
+				if err := testfixture.DirectoryLink(root, config); err != nil {
 					t.Fatal(err)
 				}
 			}

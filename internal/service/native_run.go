@@ -71,8 +71,8 @@ func (s *Service) qualifiedNativeCore(ctx context.Context, runner publication.Co
 		Version  string   `json:"version"`
 		Commands []string `json:"commands"`
 	}
-	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.55" {
-		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.55", domain.ErrExecutionUnavailable)
+	if err != nil || result.ExitCode != 0 || result.StdoutTruncated || json.Unmarshal(result.Stdout, &capabilities) != nil || strings.TrimPrefix(capabilities.Version, "v") != "1.1.0-beta.55.2" {
+		return "", fmt.Errorf("%w: Core CLI must match qualified SDK v1.1.0-beta.55.2", domain.ErrExecutionUnavailable)
 	}
 	for _, required := range []string{"loop", "review", "inventory"} {
 		found := false
@@ -117,7 +117,7 @@ func authorizeNativePreview(runner *loop.Runner, selected nativeAccounts) error 
 }
 
 func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionRequest, receipt domain.PlanApproval, resume string) {
-	defer s.native.finish(job)
+	defer s.finishNativeExecution(job, receipt)
 	result := executionFailure(req, nil)
 	fail := func(err error) { s.signalNativeExecutionFailure(job, receipt, result, false, err) }
 	mission, err := s.Store.GetMission(job.mission)
@@ -134,6 +134,7 @@ func (s *Service) runNativeExecution(job *nativeExecution, req domain.ExecutionR
 }
 
 func (s *Service) signalNativeExecutionFailure(job *nativeExecution, receipt domain.PlanApproval, result domain.ExecutionResult, active bool, err error) {
+	job.recordRun("", err)
 	// Failure evidence can outlive job cancellation, but cannot own drain forever.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(job.ctx), time.Second)
 	defer cancel()
@@ -204,7 +205,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 	}
 	defer func() {
 		if err := os.RemoveAll(home); err != nil {
-			s.recordNativeCleanup(err)
+			s.recordExecutionCleanup(job, err)
 		}
 	}()
 	var linkMu sync.Mutex
@@ -214,6 +215,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 		return s.linkNativeExecution(ctx, job, receipt, &result)
 	}
 	if handled, state, runErr := s.runNativeWindowsExecution(job, req, receipt, resume, selected, skills, privateEnv, &runActive, guard); handled {
+		job.recordRun(state, nil)
 		if runErr == nil {
 			runErr = guard(job.ctx)
 		}
@@ -221,7 +223,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 			fail(runErr)
 		}
 		if _, err := s.Store.AppendEvent("execution.finished", map[string]any{"mission_id": job.mission, "workspace_id": receipt.Identity.Binding.WorkspaceID, "approval_id": receipt.ID, "delivery": job.delivery, "state": state, "failed": runErr != nil}); err != nil {
-			s.recordNativeCleanup(err)
+			s.recordExecutionCleanup(job, err)
 		}
 		return
 	}
@@ -249,7 +251,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 			return selected.inventory(ctx, receipt.Identity.Binding.CanonicalRoot)
 		},
 		Stdout:     &nativeOpeningWriter{ctx: job.ctx, guard: guard, active: &runActive},
-		Supervisor: &loop.SuperviseOptions{Interval: 200 * time.Millisecond, Review: &loop.SupervisionReviewOptions{Executable: core, Skills: skills, Runner: nativeReviewRunner{runner: session.NativeRunner{Manager: s.Session, Environment: reviewEnv, Graceful: true}, accounts: selected, guard: guard, cleanup: s.recordNativeCleanup}}},
+		Supervisor: &loop.SuperviseOptions{Interval: 200 * time.Millisecond, Review: &loop.SupervisionReviewOptions{Executable: core, Skills: skills, Runner: nativeReviewRunner{runner: session.NativeRunner{Manager: s.Session, Environment: reviewEnv, Graceful: true}, accounts: selected, guard: guard, cleanup: func(err error) { s.recordExecutionCleanup(job, err) }}}},
 	}
 	var runner *loop.Runner
 	if resume != "" {
@@ -265,7 +267,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 	}
 	defer func() {
 		if err := runner.Release(); err != nil {
-			s.recordNativeCleanup(err)
+			s.recordExecutionCleanup(job, err)
 		}
 	}()
 	if err := authorizeNativePreview(runner, selected); err != nil {
@@ -280,6 +282,7 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 	}
 	runActive.Store(true)
 	state, runErr := runner.Run(job.ctx)
+	job.recordRun(state, nil)
 	if runErr != nil {
 		fail(runErr)
 	} else {
@@ -288,6 +291,6 @@ func (s *Service) runPreparedNativeExecution(job *nativeExecution, req domain.Ex
 		}
 	}
 	if _, err := s.Store.AppendEvent("execution.finished", map[string]any{"mission_id": job.mission, "workspace_id": receipt.Identity.Binding.WorkspaceID, "approval_id": receipt.ID, "delivery": job.delivery, "state": state, "failed": runErr != nil}); err != nil {
-		s.recordNativeCleanup(err)
+		s.recordExecutionCleanup(job, err)
 	}
 }

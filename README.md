@@ -41,9 +41,9 @@ running daemon, or stop it. `consoled` itself never opens a browser.
 
 ## Build and install from source
 
-Use Go 1.27.2 or newer and run these commands from a checkout of the desired
-Console revision (the qualified SDK here is Go 1.27.2). `go.mod` and `go.sum` pin the dependency graph, including
-Batuta core `v1.1.0-beta.55`. The tracked embedded web assets are sufficient
+Use Go 1.27.3 or newer and run these commands from a checkout of the desired
+Console revision (the qualified SDK here is Go 1.27.3). `go.mod` and `go.sum` pin the dependency graph, including
+Batuta core `v1.1.0-beta.55.2`. The tracked embedded web assets are sufficient
 to build both binaries without Node.js.
 Git must support `git show-ref --exists` for native mission review; the shared
 checks verify this capability before running tests.
@@ -141,7 +141,7 @@ requires qualification against a stable core/plugin contract.
    binding with empty delivery/opening fields.
 7. **Execute and recover.** Start native execution explicitly from that receipt.
    It requires selected ready accounts, installed skills and permitted routes.
-   On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55`; start
+   On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55.2`; start
    `consoled -core /absolute/path/to/batuta` to choose that private explicit executable,
    otherwise `batuta` on PATH is used. Windows uses the Core SDK included with the Console image
    and does not require an external Core CLI (native Windows qualification remains
@@ -158,6 +158,20 @@ requires qualification against a stable core/plugin contract.
    matching evidence and current projection. Process exit, `active=false`,
    catalog counters, attention flags and output volume are not completion proof.
 
+To stop native work in the web mission view, choose **Stop native attempt**, then
+**Confirm Stop** for the displayed exact attempt. **Observe this Stop again**
+explicitly observes that same pending/uncertain reference. Pending means accepted
+but not finalized or durable; uncertain requires inspection; completed confirms
+finalization and qualified durability, with the actual Core state rather than
+an automatic canceled or task-success result. A parked question without an active
+admission has no live native process to stop.
+
+Keep the last verified exact `run_id` when a later progress read fails; it remains
+usable for Stop subject to server validation, without restoring Start, Resume,
+Answer or approval authority. Inspect lost replies without automatic replay;
+caller disconnect does not revoke an accepted Stop. Never substitute a PID or
+latest attempt. See the [exact Stop contract](docs/api.md#stop-one-exact-native-attempt).
+
 ### TUI controls
 
 Use the keys shown by the focused screen. Accounts: `c`, `n` new, Enter details,
@@ -169,7 +183,9 @@ for account recovery. In text fields, letters and pasted text edit the draft.
 In a mission room: `p` planning, `b` bind an existing plan, `o` source detail,
 `k` current receipt, `h` historical receipt, `f` authoritative inspection,
 `e` start, `g` resume, `j` retained answer, `n` confirm a new answer draft,
-`w` full progress/evidence, `l` inspect an exact session ID. In source view,
+`w` full progress/evidence, `l` inspect an exact session ID. Use `z`, then Enter
+to confirm Stop of the selected exact native attempt; `y`, then Enter explicitly
+reobserves that same pending/uncertain Stop. In source view,
 Up/Down pages through escaped exact bytes; after inspecting all pages, `y`
 reviews approval before native binding. Esc exits focused views/forms. In the
 mission room, `h` and `w` are local receipt/progress actions, not global
@@ -177,7 +193,8 @@ home/workspace navigation. An answered or stale draft stays retained under `j`;
 leave the form and use `n` to explicitly confirm replacing it for the current question.
 
 Select a real session with `[` / `]`, `v` attach read-only, `t` take control,
-`i` enter child input, `u` release, `x` stop the selected process. Ownership is
+`i` enter child input, `u` release, `x` stop the selected interactive/planning
+session process, separately from mission-native Stop. Ownership is
 separate from attachment. Ctrl+] detaches from child input; child keystrokes
 are not navigation shortcuts. See [terminal behavior](docs/tui-terminal.md)
 for geometry, Unicode, bounded replay and reconnect limits.
@@ -210,7 +227,7 @@ Core version. The first published version will be `v0.1.0-beta.1`; the manifest
 seed `0.1.0-beta.0` is unpublished bookkeeping. No Console release has been
 published. The repository is public at [batuta-ai/console](https://github.com/batuta-ai/console).
 
-With Go 1.27.2, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
+With Go 1.27.3, Node 26.10.0, npm 12.2.0 and govulncheck 1.8.0 on PATH:
 
 ```sh
 sh scripts/check-release.sh       # non-root source checks; failures stop the run

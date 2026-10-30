@@ -24,6 +24,8 @@ type journeyRecord struct {
 	answerInspected                   bool
 	answered                          *domain.QuestionIdentity
 	state                             *domain.ExecutionState
+	stopSelection                     *domain.ExecutionStopRequest
+	stopOutcome                       *journeyResult
 	watch                             domain.WatchView
 	session                           *domain.Session
 	sessionID                         string
@@ -39,6 +41,8 @@ type journeyRecord struct {
 	question                          *domain.PendingQuestion
 	nextQuestion                      *domain.PendingQuestion
 	focus, page, inspected            int
+	confirmPage                       int
+	confirmData                       []byte
 }
 type journeyFlow struct {
 	epoch   uint64
@@ -46,15 +50,16 @@ type journeyFlow struct {
 	pending *journeyRequest
 }
 type journeyRequest struct {
-	kind, key string
-	epoch     uint64
-	mission   domain.Mission
-	ctx       context.Context
-	cancel    context.CancelFunc
-	lifetime  *terminalLifetime
-	once      sync.Once
-	execute   func(context.Context) journeyResult
-	result    journeyResult
+	kind, key  string
+	stopTarget *domain.ExecutionStopRequest
+	epoch      uint64
+	mission    domain.Mission
+	ctx        context.Context
+	cancel     context.CancelFunc
+	lifetime   *terminalLifetime
+	once       sync.Once
+	execute    func(context.Context) journeyResult
+	result     journeyResult
 }
 type journeyResult struct {
 	request   *journeyRequest
@@ -67,6 +72,7 @@ type journeyResult struct {
 	mission   *domain.Mission
 	approval  domain.PlanApprovalResult
 	execution domain.ExecutionResult
+	stop      *domain.ExecutionStopResult
 	answer    domain.AnswerResult
 	effect    string
 	err       error
@@ -81,6 +87,14 @@ func (m model) journeyRecord() journeyRecord {
 	return journeyRecord{mission: cloneMission(msn)}
 }
 func (m *model) saveJourney(key string, record journeyRecord) {
+	previous := m.journey.records[key]
+	if previous.mode == "progress" && record.mode == "progress" &&
+		(!reflect.DeepEqual(previous.state, record.state) || !reflect.DeepEqual(previous.watch, record.watch) ||
+			len(previous.outcomes) != len(record.outcomes) || previous.fresh != record.fresh ||
+			previous.uncertain != record.uncertain || previous.problem != record.problem ||
+			m.journeyErrorText(previous) != m.journeyErrorText(record)) {
+		record.page = 0
+	}
 	next := make(map[string]journeyRecord, len(m.journey.records)+1)
 	for k, v := range m.journey.records {
 		next[k] = v
@@ -88,8 +102,18 @@ func (m *model) saveJourney(key string, record journeyRecord) {
 	next[key] = record
 	m.journey.records = next
 }
-func (m *model) putJourney(r journeyRecord) { m.saveJourney(journeyID(r.mission), r) }
-func (m model) journeyBusy() bool           { return m.journey.pending != nil }
+func (m *model) putJourney(r journeyRecord) {
+	previous := m.journey.records[journeyID(r.mission)]
+	if r.confirm == "" {
+		r.confirmData = nil
+		r.confirmPage = 0
+	} else if previous.confirm != r.confirm || r.confirmData == nil {
+		r.confirmData = journeyConfirmationBytes(r)
+		r.confirmPage = 0
+	}
+	m.saveJourney(journeyID(r.mission), r)
+}
+func (m model) journeyBusy() bool { return m.journey.pending != nil }
 func (m model) journeyVisible() bool {
 	return (m.screen == scrRoom || m.screen == scrReview) && m.roomMission().ID != ""
 }
@@ -244,6 +268,14 @@ func (m *model) readJourney(kind string) tea.Cmd {
 				if state.OpenedDigest != "" {
 					delivery = state.Delivery
 				}
+				if state.OpenedDigest != "" && state.Watch != nil {
+					if !journeyWatchMatches(*state.Watch, r.mission, delivery) {
+						out.err = domain.ErrInvalidReference
+						return out
+					}
+					out.watch = state.Watch
+					return out
+				}
 			}
 			w, err := api.MissionWatch(ctx, r.mission.ID, r.mission.WorkspaceID, delivery)
 			out.err = err
@@ -330,14 +362,39 @@ func journeyOperationEffect(err error) string {
 	}
 	return "uncertain"
 }
+func (r journeyRecord) stopUnresolved() bool {
+	return r.stopOutcome != nil && r.stopOutcome.stop != nil && (r.stopOutcome.stop.Effect == domain.ExecutionStopPending || r.stopOutcome.stop.Effect == domain.ExecutionStopUncertain)
+}
+
 func (m model) mutateJourney(kind string) (model, tea.Cmd) {
 	r := m.journeyRecord()
-	if m.api == nil || m.exiting || m.journeyBusy() || (r.uncertain != "" && !(kind == "resume" && r.uncertain == "answer" && r.answerInspected)) || m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.workspace.uncertain != nil {
+	stop := kind == "stop" || kind == "stop_observe"
+	if m.api == nil || m.exiting || m.journeyBusy() || (!stop && r.stopUnresolved()) || (!stop && r.uncertain != "" && !(kind == "resume" && r.uncertain == "answer" && r.answerInspected)) || m.catalogBusy() || m.account.pending != nil || m.workspace.pending != nil || m.account.uncertain != nil || m.workspace.uncertain != nil {
 		return m, nil
 	}
 	api, clientID := m.api, m.clientID
 	var execute func(context.Context) journeyResult
 	switch kind {
+	case "stop", "stop_observe":
+		if r.stopSelection == nil || r.stopSelection.Validate() != nil || (kind == "stop" && r.stopUnresolved()) {
+			return m, nil
+		}
+		target := *r.stopSelection
+		r.confirm = ""
+		m.putJourney(r)
+		cmd := m.journeyRequest(kind, func(ctx context.Context) journeyResult {
+			result, err := api.StopExecution(ctx, target)
+			effect := string(result.Effect)
+			var stopErr *client.ExecutionStopError
+			if errors.As(err, &stopErr) && stopErr.Status == 0 && result.Effect == domain.ExecutionStopRejected {
+				effect = "not_sent"
+			}
+			return journeyResult{stop: &result, err: err, effect: effect}
+		})
+		if cmd != nil {
+			m.journey.pending.stopTarget = &target
+		}
+		return m, cmd
 	case "planning":
 		if r.session != nil {
 			return m, nil
@@ -375,7 +432,7 @@ func (m model) mutateJourney(kind string) (model, tea.Cmd) {
 			return out
 		}
 	case "approve":
-		if !r.sourceFresh || r.nativeSnapshot || r.detail == nil || r.mode != "source" || r.inspected < len(journeySourceLines(*r.detail)) || r.detail.Identity.Binding.DeliveryID != "" {
+		if !r.sourceFresh || r.nativeSnapshot || r.detail == nil || r.mode != "source" || r.inspected < len(journeySourceLines(*r.detail, m.width)) || r.detail.Identity.Binding.DeliveryID != "" {
 			return m, nil
 		}
 		target := r.detail.Identity
@@ -463,7 +520,29 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 	if read && !current {
 		return m, nil
 	}
-	r.effect = out.effect
+	if req.stopTarget != nil {
+		if out.stop == nil {
+			result := domain.ExecutionStopResult{ExecutionStopRequest: *req.stopTarget, Effect: domain.ExecutionStopRejected}
+			out.stop = &result
+			out.effect = "not_sent"
+		}
+		r.outcomes = append(append([]journeyResult{}, r.outcomes...), out)
+		r.stopOutcome = &out
+		if current && out.stop.Effect == domain.ExecutionStopCompleted && r.state != nil && r.state.RunID == out.stop.RunID && r.state.Target == out.stop.Target && r.state.ApprovalID == out.stop.ApprovalID && r.state.Delivery == out.stop.Delivery {
+			r.state = out.stop.State
+			r.watch = domain.WatchView{}
+			if r.state.Watch != nil {
+				r.watch = *r.state.Watch
+			}
+			m.watch = r.watch
+			r.fresh, r.sourceFresh = false, false
+		}
+		m.saveJourney(req.key, r)
+		return m, nil
+	}
+	if req.kind != "refresh" || r.effect == "" {
+		r.effect = out.effect
+	}
 	if !read {
 		r.outcomes = append(append([]journeyResult{}, r.outcomes...), out)
 	}
@@ -528,7 +607,8 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 	case "source":
 		r.mode = "source"
 		r.confirm = ""
-		r.inspected = max(r.inspected, min(journeyPageSize, len(journeySourceLines(*r.detail))))
+		r.page = 0
+		r.inspected = min(m.journeyBodyRows(r), len(journeySourceLines(*r.detail, m.width)))
 	case "receipt":
 		r.historical = out.receipt
 		r.mode = "receipt"
@@ -576,7 +656,7 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 		r.fresh = false
 	case "start", "resume":
 		if out.execution.Effect == domain.ExecutionStarted {
-			r.state = &domain.ExecutionState{Target: out.execution.Target, ApprovalID: out.execution.ApprovalID, Delivery: out.execution.Delivery, OpenedDigest: out.execution.OpenedDigest, Active: true}
+			r.state = &domain.ExecutionState{Target: out.execution.Target, ApprovalID: out.execution.ApprovalID, Delivery: out.execution.Delivery, OpenedDigest: out.execution.OpenedDigest, RunID: out.execution.RunID, Active: true}
 		}
 		r.mode = ""
 		r.fresh = false
@@ -588,6 +668,12 @@ func (m model) applyJourney(out journeyResult) (model, tea.Cmd) {
 	}
 	if current && r.uncertain != "" && len(r.outcomes) > 0 {
 		last := r.outcomes[len(r.outcomes)-1]
+		for i := len(r.outcomes) - 1; i >= 0; i-- {
+			if r.outcomes[i].request != nil && r.outcomes[i].request.kind == r.uncertain {
+				last = r.outcomes[i]
+				break
+			}
+		}
 		if r.uncertain == "approve" && req.kind == "source" && out.detail != nil && out.detail.Approval != nil && out.detail.Identity == last.approval.Target {
 			r.uncertain = ""
 		}

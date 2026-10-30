@@ -1080,3 +1080,80 @@ exit. There is no promise that every prior Stop failure is logged or reported by
 daemon shutdown, and pending finalization does not guarantee eventual success.
 Descriptor errors occurring after admission freeze can remain reported by later
 Shutdown, distinct from completed post-stopped-write failures.
+
+## Native delivery Stop: bounded local evidence — 2026-10-16
+
+Native delivery Stop is implemented locally and remains unreleased. The frozen
+source base is `92b8d138879f3cf05d957cd9341916a96f849734` (tree
+`587906d4f1819b2f54da39727508885347c03fde`, 664 tracked files). This supplements
+the historical session StopA evidence above; it does not replace its limits.
+
+Bounded backend Service/Store/Core/process proofs and web/TUI model checks passed:
+69 ordinary Windows backend cases with `-race`, 102 Windows TUI model journey
+cases with `-race`, and 215 web tests plus type checking and build. The root-local
+full TUI run recorded 821 PASS with `-race` on the preceding 663-file source;
+all those blobs are unchanged in this base. The added Windows-only test did not
+execute in that macOS run. Five actual Chromium public test-host journeys used
+synthetic Codex/Claude providers across two missions, questions, resume, Stop
+202/200/503 and restart. These are public-surface test-host proofs, not
+unmodified packaged-daemon or logged-in-provider qualification.
+
+A separate native Windows built-Console ConPTY foundation case and seven original
+regressions passed with the parent test under `-race` against the 664-file source.
+The child Console used Go 1.27.2 with CGO disabled; its build omitted VCS stamping
+and was externally source-hash-bound. An ordinary limited primary token had no
+enabled Administrators, Backup, Restore or CreateSymbolicLink privileges. This
+proved bounded keyboard/catalog/binding/source/explicit-approval/receipt flows
+and a new Console using the same API/Store. It did not prove daemon restart,
+two executing roots, Windows provider/Stop operation or packaged beta behavior.
+Stop introduces no privilege or Developer Mode requirement.
+
+Separately, PR 7 merged as `96e55cf0989692e9b0f7126ee82cbba195080b36`
+(reviewed head `6f40fb34381f02d5d94f265adefb18bc1c30aef2`; merged tree
+`bfd84875c9e04ecb00d5089bad506abded8449fe`). Its ten CI jobs passed, including
+3,812 PASS, zero fail/skip in each full Windows run; root-local macOS recorded
+789 PASS with `-race`. That source does not contain native delivery Stop. A direct
+post-merge Console check at `96e55cf` instead recorded 3,810 PASS and two failures
+in concurrent login initialization/readiness (`check_cancelled`); the concurrent
+release matrix on the same source was green. The cause remains unknown: neither
+current-main nor native-Stop full CI is claimed green.
+
+Current execution-state reads can return 503 `plan_io` rather than verified
+progress/review authority. Two new public HTTP reproductions identified Core 55
+review-ownership guard contention while the caller context remained valid; the
+holder and earlier historical causes remain unknown. This does not explain every
+`plan_io`, which can also represent persistent I/O or corruption. Manual
+reinspection must recover fresh verified facts before other mutations; a retained
+exact Stop candidate remains subject to server receipt/binding/canonical checks.
+No product timeout or error-handling fix is claimed. Council advice requested
+revision of a proposed test contract because of a test-helper deadline bug;
+that is not a product fix or release approval.
+
+Full native Stop Windows ConPTY/web journeys, two executing roots, real logged-in
+providers, unmodified packaged-daemon flows, Linux runtime, full ordinary
+Windows/Linux CI, final deep/integration review, Council advice and maintainer
+release gates remain open. These bounded results do not complete Task 43/44,
+beta qualification, publication or installation.
+
+
+## Historical Core beta.55.1 adoption — 2026-10-29
+
+This earlier adoption used [Core v1.1.0-beta.55.1](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.1), published from `a841b2803b68cbbf9125f3f72797f78379c89fc0` after [PR 186](https://github.com/batuta-ai/core/pull/186). This maintenance release preserves the beta.55 API and adds a clean-worktree snapshot optimization. The Go module checksum is `h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=`; its go.mod checksum remains `h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. The official proxy and checksum database verified this module; its 309 Go files match the reviewed release source. No local replacement is accepted.
+
+At that stage, Unix CLI admission required exactly beta.55.1 and the required capabilities. Windows required the embedded SDK's exact version and checksum, without replacement, alongside its existing protocol and process-identity checks. Earlier beta.55 and other dated qualification results remain historical and do not qualify beta.55.1.
+
+The Core candidate passed 4,126 macOS Go 1.27.2 race test nodes without failure or skip, five causal mutation checks, and independent Codex review. Linux CI passed after one controlled rerun of an intermittent existing ACP cleanup test; its cause remains unknown and no ACP fix is claimed. Windows Console runtime, complete provider journeys, package qualification and Console beta publication remain separate pending gates. These checks do not change the 5-second cancellation or 2-second protocol-completion deadlines.
+
+
+## Go 1.27.3 maintenance update — 2026-10-29
+
+The current exact compiler is Go 1.27.3. The previous Go 1.27.2 CI vulnerability scan reported [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in crypto/x509; the [official release history](https://go.dev/doc/devel/release#go1.27.3) identifies the patched release. That compiler update preserved the then-current module and npm graph; the later Core adoption is recorded below. Tooling, CI and binary qualification require the exact patched compiler. Earlier Go 1.27.2 evidence remains historical and does not qualify Go 1.27.3; native ordinary-user, provider, package and Stop-margin gates remain separate. No default user toolchain is changed by task-local SDK preparation.
+
+
+## Core beta.55.2 maintenance adoption — 2026-10-29
+
+The active graph pins [Core v1.1.0-beta.55.2](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.2), from `850cff9cf2d059f89f190efedbfa6a8c45f6f068`, without replacement. The public Go proxy and checksum database verify `h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=`; the go.mod sum remains `h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. Unix CLI admission requires exactly beta.55.2 and its required capabilities. Windows requires this embedded SDK version and checksum alongside the existing protocol and process-identity guards. Beta.55.1 is rejected.
+
+This release remains on the beta.55 maintenance line. It binds Windows snapshot Git operations to their own repository and supports long supervision snapshot paths with separate Git metadata under the existing excluded review directory. All five official CLI packages were built with Go 1.27.3 and checked for version, target, source revision and checksums. Their build metadata records `vcs.modified=true`: the release build creates an unignored `dist` directory after validating the Git state. A local clean-versus-output-only build reproduced that flag; the final runner Git status was not captured. This does not claim a clean-build metadata flag.
+
+Earlier beta.55.1 evidence remains historical. Qualification of the adopted Console source is recorded separately; the complete ordinary-user Windows suite, real provider flows, the existing Stop margin requirement and Console beta publication remain pending. No global Core CLI or user toolchain is replaced by this adoption.

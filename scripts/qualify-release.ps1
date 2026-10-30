@@ -285,10 +285,10 @@ function Assert-Provenance($Info, [string]$Binary) {
     if ($Info.binary -cne $Binary -or $Info.release.version -cne $ExpectedVersion -or $Info.release.revision -cne $ExpectedRevision -or
         $Info.release.authority -cne 'linker_injected' -or $Info.observed.revision -cne $ExpectedRevision -or
         $Info.observed.modified -isnot [bool] -or $Info.observed.modified -or $Info.observed.authority -cne 'go_build_info' -or
-        $Info.go_version -cne 'go1.27.2' -or $Info.go_authority -cne 'runtime.Version' -or
+        $Info.go_version -cne 'go1.27.3' -or $Info.go_authority -cne 'runtime.Version' -or
         $Info.core.authority -cne 'go_build_info' -or $Info.core.replacement_version -cne 'none') { throw 'Unexpected binary provenance' }
     if ($Binary -ceq 'consoled' -or $Info.core.status -cne 'missing') {
-        if ($Info.core.status -cne 'linked' -or $Info.core.version -cne 'v1.1.0-beta.55') { throw 'Unexpected linked Core provenance' }
+        if ($Info.core.status -cne 'linked' -or $Info.core.version -cne 'v1.1.0-beta.55.2') { throw 'Unexpected linked Core provenance' }
     } elseif ($Info.core.version -cne 'unknown') { throw 'Unexpected absent Core provenance' }
 }
 function Bind-Daemon($Parent) {
@@ -358,7 +358,7 @@ function Probe-Daemon {
     if ($cap.Status -ne 200 -or $cap.Type -notmatch '^application/json') { throw 'Authenticated readiness failed' }
     $info = $cap.Text | ConvertFrom-Json
     if ($info.product -cne 'batuta-console' -or $info.api -cne 'v0' -or -not $info.features.skills_catalog -or
-        $info.runtime.os -cne 'windows' -or $info.runtime.arch -cne 'amd64' -or $info.runtime.go_version -cne 'go1.27.2') { throw 'Unexpected capabilities' }
+        $info.runtime.os -cne 'windows' -or $info.runtime.arch -cne 'amd64' -or $info.runtime.go_version -cne 'go1.27.3') { throw 'Unexpected capabilities' }
     foreach ($provider in $info.providers) {
         if ($provider.installation.status -cne 'missing') { throw 'Provider unexpectedly available on isolated PATH' }
     }

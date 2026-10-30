@@ -53,8 +53,8 @@ func TestNativeCredentialSessionSetupFaultAuthority(t *testing.T) {
 			t.Error("remove recovered owned home", err)
 		}
 	})
-	parent := filepath.Join(cache, "Batuta", "Console", "session-homes")
-	if filepath.Dir(home) != parent || !strings.HasPrefix(filepath.Base(home), "session-") || len(env) == 0 {
+	parent := filepath.Join(cache, "Batuta")
+	if filepath.Dir(home) != parent || !strings.HasPrefix(filepath.Base(home), "s-") || len(env) == 0 {
 		t.Fatal("recovered home used a different native cache authority", home)
 	}
 	info, err = os.Stat(home)

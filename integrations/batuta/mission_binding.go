@@ -23,12 +23,12 @@ var (
 	ErrArtifactIO      = errors.New("artifact could not be read")
 )
 
-// CanonicalWorkspace matches the workspace identity recorded by core's loop.
+// CanonicalWorkspace returns the physical workspace identity supplied to Core.
 func CanonicalWorkspace(workspace string) (string, error) {
 	if !filepath.IsAbs(workspace) {
 		return "", domain.ErrInvalidReference
 	}
-	root, err := filepath.EvalSymlinks(workspace)
+	root, err := canonicalWorkspacePath(workspace)
 	if err != nil {
 		return "", artifactError(err)
 	}

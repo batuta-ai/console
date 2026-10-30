@@ -67,14 +67,22 @@ func TestNativeCredentialPrivateDirectoryPredicate(t *testing.T) {
 				if err := testfixture.MakePrivateDirectory(target, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(target, path); err != nil {
+				if err := testfixture.DirectoryLink(target, path); err != nil {
 					t.Fatal(err)
 				}
 			case "wrong-owner":
-				if err := os.Mkdir(path, 0700); err != nil {
-					t.Fatal(err)
+				if supplied := os.Getenv("BATUTA_TEST_WINDOWS_FOREIGN_OWNER_DIRECTORY"); supplied != "" {
+					if !filepath.IsAbs(supplied) {
+						t.Fatal("foreign-owner fixture must be absolute")
+					}
+					// Prepared separately; ordinary execution only inspects this object.
+					path = supplied
+				} else {
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+					credentialFixtureDACL(t, path, "D:P(A;;FA;;;"+sid+")", windows.PROTECTED_DACL_SECURITY_INFORMATION)
 				}
-				credentialFixtureDACL(t, path, "D:P(A;;FA;;;"+sid+")", windows.PROTECTED_DACL_SECURITY_INFORMATION)
 			default:
 				if err := testfixture.MakePrivateDirectory(path, 0700); err != nil {
 					t.Fatal(err)
@@ -96,9 +104,9 @@ func TestNativeCredentialPrivateDirectoryPredicate(t *testing.T) {
 					t.Fatal("actual regular-file fixture type", info.Mode())
 				}
 			case "reparse":
-				link, err := os.Lstat(path)
-				if err != nil || link.Mode()&os.ModeSymlink == 0 || !info.IsDir() {
-					t.Fatal("actual directory symlink fixture", err)
+				_, native := credentialFixtureDirectoryMetadata(t, path)
+				if native.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 || native.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || !info.IsDir() {
+					t.Fatal("actual directory reparse fixture", native.FileAttributes)
 				}
 			default:
 				sd, native := credentialFixtureDirectoryMetadata(t, path)

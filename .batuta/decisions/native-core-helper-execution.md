@@ -1,0 +1,28 @@
+# Ambiente fixado do loop — auxiliar Core, 18/10/2026
+
+Autoridade: o mantenedor aprovou executar o plano ao pedir “Pode rodar o loop”. CLI, execução sequencial e um codewriter por vez; não iniciar outro loop/supervisor nem outros agentes. Produção somente nos cinco arquivos do plano. Sem push/merge/release/install, sem modificar CoreSDK/Store/Manager/ownedProcess, configurações globais, contas ou privilégios. O diretório de execução inicial é este checkout limpo, criado de8d20963/673. O checkout primário do usuário permanece preservado.
+
+## Ferramentas Mac e dependências
+
+Root original: /Volumes/Home/francisross/Projects/batuta/console.
+Ferramentas já instaladas: .batuta/runs/2026-10-12-console-ci-repair/tools sob esse Root. Go: tools/go/bin/go, versão1.27.2; GOROOT explícito tools/go. Node: tools/node-v26.10.0-darwin-arm64/bin/node. npm12.2: tools/npm/bin/npm. O processo do loop fixa PATH/GOROOT sem trocar HOME nem credenciais. CLIs Codex/Claude usam os logins locais existentes; não copiar segredos para fixtures/provas. Testes usam provedores sintéticos e ambientes isolados.
+
+GOMODCACHE existente e já preenchido: Root/.batuta/worktrees/console-journal-cancellation/.batuta/runs/windows-journal-cancellation/followup/module-cache. GOCACHE: irmão go-cache. Go usa GOENV=off, GOTOOLCHAIN=local, GOWORK=off, GOFLAGS=-mod=readonly, GOPROXY=off, GOSUMDB=off, CGO_ENABLED=1, GOMAXPROCS=4. Não adicionar replace nem trocar versões. O Core55 publicado h1:dAlI07spnNmDeUZzxX3PnStg+NmkvZFs8UI+B6hH44Y= permanece fixado. Install do profile instala somente o grafo já travado, incluindo npm ci no novo worktree. Test do profile executa Go-race completo, web tests e TypeScript.
+
+## Windows comum: ambiente e prova
+
+Host: franc@server.lynx-kelvin.ts.net. SSH administrativo sozinho NÃO qualifica usuário comum. Launcher existente: C:/Users/franc/.local/batuta-console-qa/windows/qa-primary-full-access-20261014.exe, SHA256 f33c7aa4675ceec245828ffad0deb111b6ffa4127a47832cba3a3a8c0550c0f1. Exigir metadata PRIMARY, token não elevado e exatamente5privilégios, sem Admin/Backup/Restore/Symlink habilitados, antes/depois. Em18/10 SSH respondeu mas --metadata retornou “desktop token elevated”; o mantenedor já foi avisado para disponibilizar sessão comum. Isso é bloqueio de qualificação, sem permissão para alterar a sessão, launcher ou política.
+
+Stage já provisionado: C:/Users/franc/AppData/Local/Temp/batuta-console-core55-native-dd2d9bdeb4. GoSDK: C:/Users/franc/AppData/Local/Temp/batuta-console-discovery-20261015-854063b2d7/tools/go, bin/go.exe SHA256 b8cd508a0a7aac883cd750e9e75eb306d219e726bdf1cde29009490729437fbf. LLVM: C:/Users/franc/b43-llvm-20261006-317492c4/llvm-mingw-20261006-ucrt-x86_64/bin/x86_64-w64-mingw32-clang.exe. TMP/TEMP/LOCALAPPDATA protegidos já existentes: C:/Users/franc/cw-core55-git256-repro. Git256 privado no stage. Não mudar ACL/UAC/DeveloperMode/privilegios nem criar logins. Provas nativas requerem CGO/race/GOMAXPROCS4, fonte inteira com manifesto e SHA antes/depois, ator antes/depois e processo Go joined sem force do wrapper. Crosscompile no Mac não é prova nativa.
+
+## Ferramentas de prova existentes e limites do sandbox
+
+Os wrappers Root estão em Root/.batuta/runs/2026-10-14-windows-beta1, com logs/PS/manifestos retidos. Referências: run-native-stop-root-go-mac-alias.py para Mac com o alias /var real; run-native-core-cancel-observation-root-windows.py para Service/Session/TUI comuns, usar SOMENTE modo off e prefixo único; windows-tui-take-retry1-source-stage-run.py e windows-tui-take-retry1-ordinary-race-run.py mostram staging completo, launcher limitado, ferramentas, manifestos e joins. Reusar o mecanismo de execução, não código de diagnóstico. Nenhuma flag NEVER-SHIP entra na entrega. Os wrappers aceitam um basename de worktree diretamente sob Root/.batuta/worktrees e prefixo de prova único; se o worktree do loop estiver aninhado, não apontar para uma cópia diferente ou improvisar dados de fonte. Solicitar ao condutor staging do commit exato.
+
+O executor CLI pode ter sandbox que impede SSH, localhost ou escritas de logs fora do próprio worktree. Não ampliar permissões, trocar transporte, contornar sandbox ou marcar falso PASS. Se o build, listener ou teste externo necessário estiver bloqueado, terminar com BATUTA-QUESTION: descrevendo o ponto exato, commit congelado e comandos/provas necessários. O condutor pode rodar as provas autorizadas fora do executor e responder pelo mecanismo --answer/--recover no mesmo worktree. Não confundir limitação de ambiente com defeito do produto nem alterar testes para passar no sandbox.
+
+## Evidências, revisão e progressão
+
+O contrato aprovado está em .batuta/decisions/native-core-cancellation-contract.md. As cópias da proposta revisada e resumo estão em .batuta/runs/2026-10-14-windows-beta1 deste checkout; o registro completo de ajustes e revisão final Opus está no mesmo diretório do Root original, subdiretório native-core-helper-adjustments-20261018/root-final-receipt.json. A revisão documental final teve4DONE/none em39registros reais Opus5.5 e não provou runtime. Fixtures antigas, helpers privados Service e diagnósticos não são importáveis como autoridade ou substituto do daemon real.
+
+Guardar RED/GREEN, comandos, saídas, fontes exatas e incertezas em .batuta/runs de cada tarefa. Fonte de produto/testes precisa estar congelada antes de prova nativa; WIP privado é permitido, integração só após gates. Não alterar o branch de entrega enquanto o loop estiver ativo. Loop faz seus próprios gates e revisão independente; adverse/incomplete/uncertain não recebem aceitação automática. Gate final Opus5.5 e CI/beta/reais permanecem como no plano. Nunca enviar mensagem a terceiros.

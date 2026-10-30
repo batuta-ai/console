@@ -2,9 +2,15 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/batuta-ai/console/internal/client"
@@ -35,7 +41,7 @@ func TestJourneyBackgroundRefreshPreservesUncertainFailure(t *testing.T) {
 	apply("start", "uncertain", errors.New("transport interrupted"))
 	apply("refresh", "rejected", errors.New("temporary read failure"))
 	apply("refresh", "read_only", nil)
-	if m.journeyRecord().problem != "journey_uncertain" || m.journeyRecord().uncertain != "start" || !strings.Contains(m.View().Content, i18n.T("journey_uncertain")) || !strings.Contains(m.View().Content, "transport interrupted") || strings.Contains(m.View().Content, "temporary read failure") {
+	if m.journeyRecord().effect != "uncertain" || m.journeyRecord().problem != "journey_uncertain" || m.journeyRecord().uncertain != "start" || !strings.Contains(m.View().Content, i18n.T("journey_uncertain")) || !strings.Contains(m.View().Content, "transport interrupted") || strings.Contains(m.View().Content, "temporary read failure") {
 		t.Fatal("read recovery lost the uncertain action notice or displayed the read error")
 	}
 }
@@ -84,7 +90,7 @@ func TestJourneyBackgroundRefreshPreservesMutationFailure(t *testing.T) {
 		m, _ = m.applyJourney(journeyResult{request: req, effect: "read_only"})
 	}
 	apply("refresh")
-	if !strings.Contains(m.View().Content, "credential_missing") || m.journeyRecord().effect != "read_only" || len(m.journeyRecord().outcomes) != 1 {
+	if !strings.Contains(m.View().Content, "credential_missing") || m.journeyRecord().effect != "rejected" || len(m.journeyRecord().outcomes) != 1 {
 		t.Fatal("automatic read erased the mutation refusal or changed its history")
 	}
 	failRefresh := func() {
@@ -109,5 +115,259 @@ func TestJourneyBackgroundRefreshPreservesMutationFailure(t *testing.T) {
 	apply("refresh")
 	if strings.Contains(m.View().Content, "credential_missing") || len(m.journeyRecord().outcomes) != 1 {
 		t.Fatal("automatic read resurrected an acknowledged failure or changed its history")
+	}
+}
+
+func TestJourneyBackgroundRefreshPreservesEffectAndCurrentFacts(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, effect := range []string{"recorded", "rejected", "started", "uncertain", ""} {
+		t.Run(effect, func(t *testing.T) {
+			m := backgroundRefreshModel(t)
+			r := m.journeyRecord()
+			r.mode, r.effect = "", effect
+			r.sourceFresh = true
+			r.detail = &domain.PlanDetail{Title: "cached source"}
+			cached := r.detail
+			m.putJourney(r)
+			fail, reads := false, 0
+			watch := domain.WatchView{MissionID: r.mission.ID, WorkspaceID: r.mission.WorkspaceID, Scope: "mission", Message: "current warning"}
+			m.api = accountFixture(t, func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != "GET" || req.URL.Path != "/v0/missions/"+r.mission.ID+"/watch" {
+					t.Errorf("unexpected request %s %s", req.Method, req.URL)
+					http.Error(w, "unexpected", 500)
+					return
+				}
+				reads++
+				if fail {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporary read failure"})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(watch)
+			})
+			expected := effect
+			if expected == "" {
+				expected = "read_only"
+			}
+			for step, failed := range []bool{false, true, false} {
+				fail = failed
+				if step == 2 {
+					watch.Message = "updated warning"
+				}
+				m = journeyFinish(t, m, m.readJourney("refresh"))
+				got := m.journeyRecord()
+				if got.effect != expected || !strings.Contains(m.View().Content, "Last verified effect: "+expected) {
+					t.Fatalf("automatic refresh caption = %q, want %q", got.effect, expected)
+				}
+				if got.fresh == failed || (got.problemErr != nil) != failed || got.detail != cached || !reflect.DeepEqual(got.watch, watch) || !reflect.DeepEqual(m.watch, watch) || len(got.outcomes) != 0 {
+					t.Fatalf("refresh lost current facts, cached source, errors or history: %+v", got)
+				}
+				if failed && !strings.Contains(m.View().Content, "temporary read failure") {
+					t.Fatal("automatic read failure is not visible")
+				}
+				if step == 0 && !got.sourceFresh {
+					t.Fatal("successful watch read changed cached source freshness")
+				}
+				if failed && got.sourceFresh {
+					t.Fatal("failed read retained source freshness")
+				}
+			}
+			m = journeyKey(t, m, "f")
+			if got := m.journeyRecord(); got.effect != "read_only" || got.problemErr != nil || !got.fresh || reads != 4 {
+				t.Fatalf("explicit inspection did not acknowledge current facts: %+v reads=%d", got, reads)
+			}
+		})
+	}
+}
+
+func TestJourneyExecutionWatchValidationAndFallback(t *testing.T) {
+	for _, kind := range []string{"inspect", "refresh"} {
+		for _, variant := range []string{"current", "mission", "workspace", "delivery", "missing", "malformed", "state"} {
+			t.Run(kind+"/"+variant, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				handler := m.api.HTTP.Transport.(inspectionAPITransport).handler
+				executions, watches := 0, 0
+				m.api.HTTP.Transport = inspectionAPITransport{http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.Method != http.MethodGet {
+						t.Errorf("read mutation: %s", req.Method)
+					}
+					if strings.HasSuffix(req.URL.Path, "/watch") {
+						watches++
+					}
+					if !strings.HasSuffix(req.URL.Path, "/execution") {
+						handler.ServeHTTP(w, req)
+						return
+					}
+					executions++
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, req)
+					if response.Code != http.StatusOK {
+						t.Errorf("execution status: %d", response.Code)
+					}
+					var state domain.ExecutionState
+					if err := json.Unmarshal(response.Body.Bytes(), &state); err != nil {
+						t.Error(err)
+						return
+					}
+					switch variant {
+					case "mission":
+						state.Watch.MissionID = "foreign"
+					case "workspace":
+						state.Watch.WorkspaceID = "foreign"
+					case "delivery":
+						state.Watch.Delivery = "foreign"
+					case "missing":
+						state.Watch = nil
+					case "malformed":
+						_, _ = w.Write([]byte(`{"watch":[]}`))
+						return
+					case "state":
+						state.ApprovalID = "foreign"
+					}
+					_ = json.NewEncoder(w).Encode(state)
+				})}
+				cached := m.journeyRecord()
+				cached.watch = domain.WatchView{Message: "stale watch"}
+				prior := *cached.state
+				prior.Watch = &domain.WatchView{Message: "stale execution watch"}
+				cached.state = &prior
+				m.putJourney(cached)
+				m = journeyFinish(t, m, m.readJourney(kind))
+				r := m.journeyRecord()
+				valid := variant == "current"
+				wantWatches := 0
+
+				if r.fresh != valid || (r.problemErr == nil) != valid || executions != 1 || watches != wantWatches {
+					t.Fatalf("fresh=%v error=%v execution=%d watch=%d", r.fresh, r.problemErr, executions, watches)
+				}
+				if valid && (!reflect.DeepEqual(r.watch, m.watch) || (variant == "current" && !reflect.DeepEqual(r.watch, *r.state.Watch))) {
+					t.Fatal("current watch projection lost")
+				}
+			})
+		}
+	}
+}
+
+func TestJourneyUnopenedWatchFallback(t *testing.T) {
+	for _, approved := range []bool{false, true} {
+		f := newJourneyWire("codex")
+		m := model{}.selectMission(f.mission)
+		r := m.journeyRecord()
+		if approved {
+			r.receipt = &f.receipt
+		} else {
+			r.mission.Binding = nil
+		}
+		m.putJourney(r)
+		executions, watches := 0, 0
+		m.api = accountFixture(t, func(w http.ResponseWriter, req *http.Request) {
+			if req.Method != http.MethodGet {
+				t.Errorf("read mutation: %s", req.Method)
+			}
+			if strings.HasSuffix(req.URL.Path, "/execution") {
+				executions++
+			}
+			if strings.HasSuffix(req.URL.Path, "/watch") {
+				watches++
+			}
+			f.handler(t)(w, req)
+		})
+		for _, kind := range []string{"inspect", "refresh"} {
+			m = journeyFinish(t, m, m.readJourney(kind))
+			if !m.journeyRecord().fresh || m.journeyRecord().problemErr != nil {
+				t.Fatal("fallback failed", m.journeyRecord().problemErr)
+			}
+		}
+		wantExecutions := 0
+		if approved {
+			wantExecutions = 2
+		}
+		if executions != wantExecutions || watches != 2 {
+			t.Fatal("fallback counts", executions, watches)
+		}
+	}
+}
+
+func TestJourneyRefreshPendingBannerWithConfirmedFacts(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, mode := range []string{"", "progress"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := inspectionProjectionFixture(t)
+				r := m.journeyRecord()
+				r.mode, r.effect, r.confirm = mode, "recorded", "resume"
+				m.putJourney(r)
+				handler := m.api.HTTP.Transport.(inspectionAPITransport).handler
+				executions, watches, mutations := 0, 0, 0
+				m.api.HTTP.Transport = inspectionAPITransport{http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.Method != http.MethodGet {
+						mutations++
+					}
+					if strings.HasSuffix(req.URL.Path, "/execution") {
+						executions++
+					}
+					if strings.HasSuffix(req.URL.Path, "/watch") {
+						watches++
+					}
+					handler.ServeHTTP(w, req)
+				})}
+				control, admitted := m.mutateJourney("resume")
+				if admitted == nil || control.journey.pending == nil || control.journey.pending.kind != "resume" {
+					t.Fatal("real fixture does not admit resume without a pending request")
+				}
+				control.journey.pending.cancel()
+				m.putJourney(r)
+				before := m.View().Content
+				m.tick()()
+				cmd := m.readJourney("refresh")
+				request := m.journey.pending
+				if cmd == nil || request == nil || request.kind != "refresh" {
+					t.Fatal("missing refresh request")
+				}
+				if frame := m.View().Content; strings.Contains(frame, i18n.T("journey_pending")) || frame != before {
+					t.Errorf("routine refresh changed confirmed frame while pending\n%s", frame)
+				}
+				pendingRecord := m.journeyRecord()
+				blocked, mutation := m.mutateJourney("resume")
+				if mutation != nil || blocked.journey.pending != request || !m.journeyBusy() || !reflect.DeepEqual(blocked.journeyRecord(), pendingRecord) {
+					t.Fatal("hidden banner changed mutation admission")
+				}
+				result, ok := cmd().(journeyResult)
+				if !ok || result.err != nil || result.state == nil || result.watch == nil {
+					t.Fatalf("real refresh failed: %+v", result)
+				}
+				if result.state.Watch.Health["journal_age_ns"] != float64(time.Second) {
+					t.Fatal("real API age was not updated")
+				}
+				m = journeyFinish(t, m, func() tea.Msg { return result })
+				got := m.journeyRecord()
+				if strings.Contains(m.View().Content, i18n.T("journey_pending")) || m.journey.pending != nil || !got.fresh || got.effect != "recorded" || !reflect.DeepEqual(got.state, result.state) || !reflect.DeepEqual(got.watch, *result.watch) || !reflect.DeepEqual(m.watch, *result.watch) || executions != 1 || watches != 0 || mutations != 0 {
+					t.Fatalf("refresh lost facts, caption, freshness or request counts: executions=%d watches=%d mutations=%d", executions, watches, mutations)
+				}
+			})
+		})
+	}
+}
+
+func TestJourneyPendingBannerForegroundAndUnfresh(t *testing.T) {
+	t.Setenv("BATUTA_LANG", "en")
+	for _, mode := range []string{"", "progress"} {
+		for _, kind := range []string{"refresh", "inspect", "stop", "stop_observe", "approve", "start", "resume", "answer", "bind", "source", "sessions", "receipt"} {
+			for _, fresh := range []bool{false, true} {
+				m := backgroundRefreshModel(t)
+				r := m.journeyRecord()
+				r.mode, r.fresh = mode, fresh
+				m.putJourney(r)
+				request := &journeyRequest{kind: kind, key: journeyID(r.mission), mission: r.mission}
+				m.journey.pending = request
+				want := kind != "refresh" || !fresh
+				if got := strings.Contains(m.View().Content, i18n.T("journey_pending")); got != want {
+					t.Errorf("mode=%q kind=%s fresh=%v pending banner=%v, want %v", mode, kind, fresh, got, want)
+				}
+				if m.journey.pending != request || !m.journeyBusy() {
+					t.Fatal("view changed pending coordination")
+				}
+			}
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ import (
 func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 	t.Setenv("BATUTA_LANG", "en")
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
+	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.2", "-o", core, "github.com/batuta-ai/core/cmd/batuta")
 	if raw, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("frozen public Core build: %s %v", raw, err)
 	}
@@ -120,9 +121,25 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 			}
 			handler := (&api.Server{Svc: svc, Token: "disposable-account-fixture"}).Handler()
 			var mutations []string
+			projectionReads, watchReads := 0, 0
+			projectionOnly := false
 			c := accountFixture(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "POST" || r.Method == "PUT" {
 					mutations = append(mutations, r.URL.Path)
+				}
+				if projectionOnly {
+					if r.Method != http.MethodGet {
+						t.Errorf("refresh mutation: %s %s", r.Method, r.URL)
+					}
+					if strings.HasSuffix(r.URL.Path, "/watch") {
+						watchReads++
+						http.Error(w, "redundant observation unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					if !strings.HasSuffix(r.URL.Path, "/execution") {
+						t.Errorf("unexpected refresh GET: %s", r.URL)
+					}
+					projectionReads++
 				}
 				handler.ServeHTTP(w, r)
 			})
@@ -142,7 +159,7 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 			m = journeyKey(t, m, "e")
 			m = journeyKey(t, m, "enter")
 			original := m.journeyRecord()
-			if original.state == nil || original.state.OpenedDigest == "" {
+			if original.state == nil || original.state.OpenedDigest == "" || original.effect != "started" {
 				t.Fatal("native start failed", m.View().Content)
 			}
 			waitQuestion := func(after int) {
@@ -152,6 +169,9 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 				for {
 					m = journeyFinish(t, m, m.readJourney("refresh"))
 					r := m.journeyRecord()
+					if r.effect != "started" || !strings.Contains(m.View().Content, "Last verified effect: started") {
+						t.Fatalf("automatic native read erased Start feedback: %q", r.effect)
+					}
 					if r.fresh && r.state != nil && !r.state.Active && r.state.Watch != nil && r.state.Watch.PendingQuestion != nil && r.state.Watch.PendingQuestion.Target.Execution > after {
 						return
 					}
@@ -163,7 +183,28 @@ func TestJourneyPublicCoreQuestionResumeAndRestart(t *testing.T) {
 				}
 			}
 			waitQuestion(0)
+			projectionOnly = true
+			before := projectionReads
+			m = journeyFinish(t, m, m.readJourney("refresh"))
+			current := m.journeyRecord()
+			if !current.fresh || current.problemErr != nil || current.effect != "started" || current.state == nil || current.state.Watch == nil || !reflect.DeepEqual(current.watch, *current.state.Watch) || !reflect.DeepEqual(m.watch, current.watch) || projectionReads != before+1 || watchReads != 0 || len(mutations) != 3 {
+				t.Fatalf("same-response refresh: fresh=%v error=%v effect=%s GETs=%d watch=%d mutations=%v", current.fresh, current.problemErr, current.effect, projectionReads-before, watchReads, mutations)
+			}
+			projectionOnly = false
 			firstQuestion := m.journeyRecord().state.Watch.PendingQuestion.Target
+			if r := m.journeyRecord(); r.state.Active || r.state.OpenedDigest != original.state.OpenedDigest || r.state.Delivery != original.state.Delivery || r.watch.PendingQuestion == nil || r.watch.PendingQuestion.Target != firstQuestion || len(mutations) != 3 {
+				t.Fatal("automatic native reads lost authoritative facts or mutated", mutations)
+			}
+			projectionOnly = true
+			beforeReads := projectionReads
+			m = journeyKey(t, m, "f")
+			projectionOnly = false
+			if projectionReads != beforeReads+1 || watchReads != 0 || !reflect.DeepEqual(m.journeyRecord().watch, *m.journeyRecord().state.Watch) {
+				t.Fatal("inspection did not use a new execution response", projectionReads, watchReads)
+			}
+			if r := m.journeyRecord(); r.effect != "read_only" || !r.fresh || r.state.Watch.PendingQuestion.Target != firstQuestion || len(mutations) != 3 {
+				t.Fatal("explicit inspection did not acknowledge native facts", m.View().Content, mutations)
+			}
 			// Preserve the source artifact; external deletion is simulated by moving it.
 			if err := os.Rename(filepath.Join(root, planPath), filepath.Join(home, "preserved-original-plan.md")); err != nil {
 				t.Fatal(err)

@@ -106,7 +106,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Source revision missing' }
     $revision | Set-Content (Join-Path $Evidence 'revision.log')
     $version = & go version
-    if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.2 windows/amd64') { throw 'Pinned Go toolchain required' }
+    if ($LASTEXITCODE -ne 0 -or $version -cne 'go version go1.27.3 windows/amd64') { throw 'Pinned Go toolchain required' }
     $version | Set-Content (Join-Path $Evidence 'go-version.log')
     $helper = Join-Path $source 'internal/testfixture/command_windows.go'
     $frozen = Join-Path $source 'internal/testfixture/ambient_temp_windows_test.go'

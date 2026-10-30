@@ -65,9 +65,17 @@ func (p nativeExchangePipes) Close() error {
 	return errors.Join(p.inputRead.Close(), p.inputWrite.Close(), p.outputRead.Close(), p.outputWrite.Close(), p.stderrRead.Close(), p.stderrWrite.Close())
 }
 
-func (r NativeRunner) runNativeExchange(ctx context.Context, command publication.Command, handler func(context.Context, io.Reader, io.WriteCloser) error) (result publication.CommandResult, runErr error) {
+func newNativeProtocolCompletion() (func(), <-chan time.Time) {
+	protocolClosed := make(chan time.Time, 1)
+	var closeProtocol sync.Once
+	return func() {
+		closeProtocol.Do(func() { protocolClosed <- time.Now().Add(2 * time.Second) })
+	}, protocolClosed
+}
+
+func (r NativeRunner) runNativeExchange(ctx context.Context, command publication.Command, handler func(context.Context, io.Reader, io.WriteCloser) error, finalizing func(NativeExchangeFinalization, io.Reader, io.WriteCloser) error) (result publication.CommandResult, runErr error) {
 	result.ExitCode = -1
-	if r.Manager == nil || handler == nil || !filepath.IsAbs(command.Executable) || r.Graceful || len(command.Stdin) != 0 || command.Observer != nil || command.StdoutLimit != 0 || command.StderrLimit < 0 || command.StderrLimit > 16<<20 {
+	if r.Manager == nil || (handler == nil && finalizing == nil) || !filepath.IsAbs(command.Executable) || r.Graceful || len(command.Stdin) != 0 || command.Observer != nil || command.StdoutLimit != 0 || command.StderrLimit < 0 || command.StderrLimit > 16<<20 {
 		return result, errors.New("invalid native exchange command or manager")
 	}
 	if err := ctx.Err(); err != nil {
@@ -164,7 +172,19 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		requestStop()
 	}
 	callbackDone := make(chan error, 1)
-	go func() { callbackDone <- handler(callbackContext, pipes.outputRead, pipes.inputWrite) }()
+	cleanupContext, cancelCleanup := context.WithCancel(context.WithoutCancel(stopContext))
+	defer cancelCleanup()
+	protocolDone, protocolClosed := newNativeProtocolCompletion()
+	go func() {
+		if finalizing != nil {
+			callbackDone <- finalizing(NativeExchangeFinalization{
+				Control: stopContext, Cleanup: cleanupContext,
+				ProtocolDone: protocolDone,
+			}, pipes.outputRead, pipes.inputWrite)
+		} else {
+			callbackDone <- handler(callbackContext, pipes.outputRead, pipes.inputWrite)
+		}
+	}()
 	stderrDone := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(stderrWriter, pipes.stderrRead)
@@ -181,6 +201,37 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		}
 		processDone <- cleanup
 	}()
+	if finalizing != nil {
+		runErr = m.waitNativeFinalization(stopContext, cancelCleanup, protocolClosed, pipes, owned, callbackDone, processDone, stderrDone)
+		result.Stderr, result.StderrTruncated = append([]byte(nil), stderr.data...), stderr.truncated
+		owned.mu.Lock()
+		forced := owned.forced
+		owned.mu.Unlock()
+		if cmd.ProcessState != nil {
+			code := cmd.ProcessState.ExitCode()
+			if code > 0 && !forced {
+				runErr = errors.Join(runErr, &NativeExchangeExitError{Code: code})
+			}
+			if runErr == nil {
+				result.ExitCode = code
+			}
+		}
+		return result, runErr
+	}
+	return m.waitNativeLegacyExchange(stopContext, cancelCallback, pipes, owned, callbackDone, processDone, stderrDone, cmd, stderr, result)
+}
+
+func (m *Manager) waitNativeLegacyExchange(
+	stopContext context.Context,
+	cancelCallback context.CancelFunc,
+	pipes nativeExchangePipes,
+	owned *ownedProcess,
+	callbackDone, processDone, stderrDone <-chan error,
+	cmd *exec.Cmd,
+	stderr *nativeOutput,
+	result publication.CommandResult,
+) (publication.CommandResult, error) {
+	var runErr error
 	var callbackErr, processErr, stderrErr, stopErr, protocolErr error
 	stopOwned := func() {
 		if err := owned.stop(); err != nil {
@@ -244,4 +295,132 @@ func (r NativeRunner) runNativeExchange(ctx context.Context, command publication
 		result.ExitCode = cmd.ProcessState.ExitCode()
 	}
 	return result, runErr
+}
+
+func (m *Manager) waitNativeFinalization(control context.Context, cancelCleanup context.CancelFunc, closed <-chan time.Time, pipes nativeExchangePipes, owned *ownedProcess, callbackDone, processDone, stderrDone <-chan error) error {
+	return m.waitNativeFinalizationOperations(control, cancelCleanup, closed, nativeFinalizationOperations{
+		stop: owned.stop, closeInput: pipes.inputWrite.Close,
+		closeOutput: pipes.outputRead.Close, closeStderr: pipes.stderrRead.Close,
+	}, callbackDone, processDone, stderrDone)
+}
+
+type nativeFinalizationOperations struct {
+	stop, closeInput, closeOutput, closeStderr func() error
+}
+
+func (m *Manager) waitNativeFinalizationOperations(control context.Context, cancelCleanup context.CancelFunc, closed <-chan time.Time, ops nativeFinalizationOperations, callbackDone, processDone, stderrDone <-chan error) error {
+	var deadline time.Time
+	var timer *time.Timer
+	var expired <-chan time.Time
+	var runErr error
+	cutoffObserved, timedOut := false, false
+	setDeadline := func(at time.Time) {
+		if timedOut || (!deadline.IsZero() && !at.Before(deadline)) {
+			return
+		}
+		deadline = at
+		if timer == nil {
+			timer = time.NewTimer(time.Until(at))
+		} else {
+			timer.Reset(time.Until(at))
+		}
+		expired = timer.C
+	}
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	// Each endpoint and stop operation has one owner and a required join. A
+	// blocked Close or retirement mutex must not block deadline accounting.
+	operations := make(chan error, 4)
+	pending := 0
+	launch := func(operation func() error) {
+		pending++
+		go func() { operations <- operation() }()
+	}
+	inputClosing, outputClosing, terminating := false, false, false
+	closeInput := func() {
+		if !inputClosing {
+			inputClosing = true
+			launch(ops.closeInput)
+		}
+	}
+	closeOutput := func() {
+		if !outputClosing {
+			outputClosing = true
+			launch(ops.closeOutput)
+		}
+	}
+	terminate := func() {
+		if terminating {
+			return
+		}
+		terminating = true
+		cancelCleanup()
+		launch(ops.stop)
+		closeInput()
+		closeOutput()
+		launch(ops.closeStderr)
+	}
+	recordCleanup := func(err error) {
+		if err != nil {
+			runErr = errors.Join(runErr, ErrNativeCleanupUnresolved, err)
+			m.CloseAdmission()
+			m.recordCleanup(err, err)
+		}
+	}
+	stopRequested := control.Done()
+	for {
+		if !cutoffObserved && control.Err() != nil {
+			cutoffObserved = true
+			stopRequested = nil
+			setDeadline(time.Now().Add(5 * time.Second))
+		}
+		// The timestamp belongs to validation, not notification consumption.
+		select {
+		case at := <-closed:
+			closed = nil
+			setDeadline(at)
+		default:
+		}
+		if !timedOut && !deadline.IsZero() && !time.Now().Before(deadline) {
+			timedOut = true
+			expired = nil
+			runErr = errors.Join(runErr, ErrNativeExchangeExpired, context.DeadlineExceeded)
+			terminate()
+		}
+		if callbackDone == nil && processDone == nil && stderrDone == nil && pending == 0 {
+			return errors.Join(runErr, control.Err())
+		}
+		select {
+		case err := <-callbackDone:
+			callbackDone = nil
+			runErr = errors.Join(runErr, err)
+			closeInput()
+			closeOutput()
+			if err != nil {
+				terminate()
+			}
+		case err := <-processDone:
+			processDone = nil
+			runErr = errors.Join(runErr, err)
+		case err := <-stderrDone:
+			stderrDone = nil
+			runErr = errors.Join(runErr, err)
+			if err != nil {
+				terminate()
+			}
+		case err := <-operations:
+			pending--
+			recordCleanup(err)
+		case at := <-closed:
+			closed = nil
+			setDeadline(at)
+		case <-stopRequested:
+			// Observe and fix the cutoff at the top of the loop.
+		case <-expired:
+			// Expiry is accounted before any potentially blocking operation.
+		}
+	}
 }

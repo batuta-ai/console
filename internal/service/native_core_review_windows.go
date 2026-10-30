@@ -155,7 +155,7 @@ func (r nativeCoreReviewRunner) run(ctx context.Context, root string, args []str
 	if err != nil {
 		return err
 	}
-	git := publication.GitClient{Executable: gitPath, Runner: r.commands}
+	git := publication.GitClient{Executable: gitPath, Runner: nativeCoreGitRunner{commands: r.commands}}
 	var rules []review.SpecRule
 	var resolvedSpecPath string
 	if *spec != "" {

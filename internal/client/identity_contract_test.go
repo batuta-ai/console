@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func testIdentityChain(t *testing.T, pure bool) {
 			if r.Method == "POST" {
 				w.WriteHeader(202)
 				decode(domain.ExecutionRequest{Target: id, ApprovalID: receipt.ID})
-				result = domain.ExecutionResult{Target: id, ApprovalID: receipt.ID, Delivery: delivery, OpenedDigest: opened, Effect: domain.ExecutionStarted}
+				result = domain.ExecutionResult{RunID: strings.Repeat("b", 64), Target: id, ApprovalID: receipt.ID, Delivery: delivery, OpenedDigest: opened, Effect: domain.ExecutionStarted}
 			} else {
 				if r.URL.Query().Get("approval_id") != receipt.ID {
 					t.Error("receipt changed")
@@ -74,7 +75,7 @@ func testIdentityChain(t *testing.T, pure bool) {
 		case "/v0/missions/selected-2/execution/resume":
 			w.WriteHeader(202)
 			decode(domain.ResumeRequest{Target: id, ApprovalID: receipt.ID, Delivery: delivery, OpenedDigest: opened})
-			result = domain.ExecutionResult{Target: id, ApprovalID: receipt.ID, Delivery: delivery, OpenedDigest: opened, Effect: domain.ExecutionStarted}
+			result = domain.ExecutionResult{RunID: strings.Repeat("c", 64), Target: id, ApprovalID: receipt.ID, Delivery: delivery, OpenedDigest: opened, Effect: domain.ExecutionStarted}
 		case "/v0/watch/answer":
 			decode(question.Answer("exact answer"))
 			w.WriteHeader(500)

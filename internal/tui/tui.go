@@ -260,7 +260,17 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
+		inspectionResized := m.width != msg.Width || m.height != msg.Height
 		m.width, m.height = msg.Width, msg.Height
+		if inspectionResized {
+			for key, r := range m.journey.records {
+				r.page, r.confirmPage, r.inspected = 0, 0, 0
+				if m.journeyVisible() && key == journeyID(m.roomMission()) && r.mode == "source" && r.confirm == "" && r.detail != nil {
+					r.inspected = min(m.journeyBodyRows(r), len(journeySourceLines(*r.detail, m.width)))
+				}
+				m.saveJourney(key, r)
+			}
+		}
 		if m.termMode {
 			return m, m.sendResize(msg.Width, msg.Height-10)
 		}
@@ -268,7 +278,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyData(msg)
 	case tickMsg:
 		read := m.readAccounts()
-		return m, tea.Batch(m.refresh(), read, m.readCatalog(), m.readJourney("refresh"), m.tick())
+		refresh, catalog := m.refresh(), m.readCatalog()
+		var journeyRefresh tea.Cmd
+		// Keep the progress snapshot stable; explicit reads and operation results still apply.
+		if m.journeyRecord().mode != "progress" {
+			journeyRefresh = m.readJourney("refresh")
+		}
+		return m, tea.Batch(refresh, read, catalog, journeyRefresh, m.tick())
 	case statusMsg:
 		m.validMsg = string(msg)
 	case attachedMsg:
@@ -604,13 +620,16 @@ func (m model) render() string {
 	case scrReview:
 		m.viewReview(&b)
 	}
-	m.viewCatalogNotice(&b)
-	m.viewAccountNotice(&b)
-	m.viewWorkspaceNotice(&b)
+	inspection := m.journeyInspectionVisible()
+	if !inspection {
+		m.viewCatalogNotice(&b)
+		m.viewAccountNotice(&b)
+		m.viewWorkspaceNotice(&b)
+	}
 	panel := asciiFold(b.String())
 	b.Reset()
 	var terminal strings.Builder
-	if m.screen == scrRoom {
+	if m.screen == scrRoom && !inspection {
 		if m.validMsg != "" {
 			fmt.Fprintln(&terminal, m.validMsg)
 		}

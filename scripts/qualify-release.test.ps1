@@ -37,7 +37,7 @@ public static class BundleCaseStreams {
  }
 }
 '@
-if ($original -cne '6f2d94507a2714764fc95035a12e64465a57e5b1ad768b851110e4ef4edc62d5') { throw 'Frozen consumer differs' }
+if ($original -cne '3da9b2f8dfabfa6b1af72b21489e5fb670f17ce908be3a6741fdbbf94c9f6dff') { throw 'Frozen consumer differs' }
 $null = New-Item -ItemType Directory -Path $Evidence
 $cases = @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')
 $results = [Collections.Generic.List[object]]::new()
@@ -117,8 +117,8 @@ try {
                     $mutation.imageBefore=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
                     if ($case -eq 'pe') { $offset=[BitConverter]::ToInt32($bytes,0x3c); $bytes[$offset+4]=0x4c; $bytes[$offset+5]=0x01 }
                     else {
-                        $before='go1.27.2'; $after='go1.27.3'
-                        if ($case -eq 'core') { $before='v1.1.0-beta.55'; $after='v1.1.0-beta.54' }
+                        $before='go1.27.3'; $after='go1.27.4'
+                        if ($case -eq 'core') { $before='v1.1.0-beta.55.2'; $after='v1.1.0-beta.55.1' }
                         $changed=Replace-ImageData $bytes $before $after
                         $bytes=$changed.bytes
                         $mutation.dataMutation=$true; $mutation.replacements=$changed.count
