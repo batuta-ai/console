@@ -269,7 +269,7 @@ func winFlowBuild(t *testing.T, c *winFlowConfig) {
 			args = append(args, "-race")
 		}
 		if entry.out == c.Core {
-			args = append(args, "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.1")
+			args = append(args, "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.2")
 		}
 		run(append(args, "-o", entry.out, entry.pkg)...)
 	}
@@ -282,7 +282,7 @@ func winFlowBuild(t *testing.T, c *winFlowConfig) {
 	raw, err := cmd.CombinedOutput()
 	winFlowCheck(t, err)
 	c.CoreVersion = strings.TrimSpace(string(raw))
-	if !strings.Contains(c.CoreVersion, "1.1.0-beta.55.1") {
+	if !strings.Contains(c.CoreVersion, "1.1.0-beta.55.2") {
 		t.Fatal("actual compiled Core version", c.CoreVersion)
 	}
 	winFlowVerifySource(t, *c)
@@ -325,7 +325,7 @@ func winFlowBuildIdentity(info *debug.BuildInfo, pkg string, race bool) error {
 			return fmt.Errorf("binary replaced module: %s", m.Path)
 		}
 		if m.Path == "github.com/batuta-ai/core" {
-			if pinned || m.Version != "v1.1.0-beta.55.1" || m.Sum != "h1:f2QD56y4MNgW4qGrT+xtZRcK9PpWnR4j44E55uAjjO0=" {
+			if pinned || m.Version != "v1.1.0-beta.55.2" || m.Sum != "h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=" {
 				return errors.New("binary Core55 module/h1 mismatch")
 			}
 			pinned = true

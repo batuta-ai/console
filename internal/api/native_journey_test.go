@@ -28,7 +28,7 @@ func TestNativeApprovedHTTPJourneyUsesOneDeliveryAfterAnswerAndDeletion(t *testi
 		t.Fatal(err)
 	}
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.1", "-o", core, "./cmd/batuta")
+	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.2", "-o", core, "./cmd/batuta")
 	build.Dir = strings.TrimSpace(string(directory))
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatal("public Core build", string(output), err)

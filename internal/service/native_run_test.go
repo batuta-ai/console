@@ -33,7 +33,7 @@ func nativeRunFixture(t *testing.T) (*Service, domain.PlanApproval, string) {
 		t.Fatal(err)
 	}
 	core := filepath.Join(t.TempDir(), "batuta")
-	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.1", "-o", core, "./cmd/batuta")
+	build := exec.Command(goPath, "build", "-ldflags", "-X main.buildVersion=v1.1.0-beta.55.2", "-o", core, "./cmd/batuta")
 	build.Dir = strings.TrimSpace(string(raw))
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("public Core build: %s %v", output, err)
@@ -250,16 +250,16 @@ func (r nativeVersionCapabilities) Run(context.Context, publication.Command) (pu
 	return publication.CommandResult{Stdout: []byte(`{"version":"` + r.version + `","commands":["loop","review","inventory"]}`)}, nil
 }
 
-func TestNativeCoreRequiresPublishedBeta55_1(t *testing.T) {
+func TestNativeCoreRequiresPublishedBeta55_2(t *testing.T) {
 	image, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{CoreExecutable: image}
-	for _, version := range []string{"v1.1.0-beta.55.1", "1.1.0-beta.55.1", "v1.1.0-beta.55", "1.1.0-beta.55", "v1.1.0-beta.49", "v1.1.0-beta.54", "v1.1.0-beta.56", "v1.1.0"} {
+	for _, version := range []string{"v1.1.0-beta.55.2", "1.1.0-beta.55.2", "v1.1.0-beta.55.1", "1.1.0-beta.55.1", "v1.1.0-beta.55", "1.1.0-beta.55", "v1.1.0-beta.49", "v1.1.0-beta.54", "v1.1.0-beta.56", "v1.1.0"} {
 		t.Run(version, func(t *testing.T) {
 			got, err := svc.qualifiedNativeCore(context.Background(), nativeVersionCapabilities{version: version})
-			want := version == "v1.1.0-beta.55.1" || version == "1.1.0-beta.55.1"
+			want := version == "v1.1.0-beta.55.2" || version == "1.1.0-beta.55.2"
 			if want {
 				if err != nil || got != image {
 					t.Fatalf("published CLI rejected: %q %v", got, err)

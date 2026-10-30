@@ -123,7 +123,7 @@ Native Start uses Core's approved snapshot support and a deterministic delivery;
 its actual `delivery` and `opened_digest` are separate returned identities. The
 Console validates account/model/effort routes and their selected skills, shared
 capacity and readiness. On macOS and Linux, native execution requires Core CLI
-`v1.1.0-beta.55.1`; `consoled -core /absolute/path/to/batuta` selects a private explicit
+`v1.1.0-beta.55.2`; `consoled -core /absolute/path/to/batuta` selects a private explicit
 executable, otherwise `batuta` on PATH is used. Windows uses the Core SDK included
 with the Console image, with strict version, public module checksum and no-replacement
 checks; no external Core CLI is required. Native Windows qualification remains
@@ -176,7 +176,7 @@ release gates include native Windows/process/isolation/provider proof, complete
 web/TUI/provider journeys, reliability findings, stable Core/plugin compatibility
 and official Core binary security. Build/runtime labels do not close those gates.
 Console's first planned publication is `v0.1.0-beta.1`; unpublished `beta.0`
-bookkeeping and linked Core `v1.1.0-beta.55.1` are independent. No Console publication
+bookkeeping and linked Core `v1.1.0-beta.55.2` are independent. No Console publication
 or successful public CI is established here; see [release authorities](release.md).
 
 ## Isolation and limits

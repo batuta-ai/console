@@ -37,7 +37,7 @@ public static class BundleCaseStreams {
  }
 }
 '@
-if ($original -cne 'c57bdfc3a7523105fd6ddebd62866f9cdf626309407ff5a106549aadbb8389ef') { throw 'Frozen consumer differs' }
+if ($original -cne '3da9b2f8dfabfa6b1af72b21489e5fb670f17ce908be3a6741fdbbf94c9f6dff') { throw 'Frozen consumer differs' }
 $null = New-Item -ItemType Directory -Path $Evidence
 $cases = @('counterfactual','checksum','missing','duplicate','extra','renamed','traversal','relative','ads','dotdot','pe','version','revision','go','core','positive')
 $results = [Collections.Generic.List[object]]::new()
@@ -118,7 +118,7 @@ try {
                     if ($case -eq 'pe') { $offset=[BitConverter]::ToInt32($bytes,0x3c); $bytes[$offset+4]=0x4c; $bytes[$offset+5]=0x01 }
                     else {
                         $before='go1.27.3'; $after='go1.27.4'
-                        if ($case -eq 'core') { $before='v1.1.0-beta.55.1'; $after='v1.1.0-beta.55.0' }
+                        if ($case -eq 'core') { $before='v1.1.0-beta.55.2'; $after='v1.1.0-beta.55.1' }
                         $changed=Replace-ImageData $bytes $before $after
                         $bytes=$changed.bytes
                         $mutation.dataMutation=$true; $mutation.replacements=$changed.count

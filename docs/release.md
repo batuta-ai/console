@@ -238,8 +238,8 @@ No stable release, complete native support or successful publication is claimed.
 ## Current Core beta55 adoption guidance — 2026-10-15
 
 Current dependency policy and runtime expectations supersede earlier historical pins.
-The active repository graph pins [Core v1.1.0-beta.55.1](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.1) without replacement.
-On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55.1` with the required
+The active repository graph pins [Core v1.1.0-beta.55.2](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.2) without replacement.
+On macOS and Linux, the Core CLI must be exactly `v1.1.0-beta.55.2` with the required
 capabilities. `consoled -core /absolute/path/to/batuta` selects a private explicit
 executable; otherwise `batuta` on PATH is used. Windows uses the Core SDK included
 with the Console image, with strict version, public module checksum and no-replacement
@@ -250,4 +250,13 @@ For full details on the Core beta55 adoption, verified checksums, Core CI proven
 
 ## Go 1.27.3 maintenance update — 2026-10-29
 
-The current exact compiler is Go 1.27.3. The previous Go 1.27.2 CI vulnerability scan reported [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in crypto/x509; the [official release history](https://go.dev/doc/devel/release#go1.27.3) identifies the patched release. Module and npm dependency checksums, including Core beta.55.1, remain unchanged. Tooling, CI and binary qualification require the exact patched compiler. Earlier Go 1.27.2 evidence remains historical and does not qualify Go 1.27.3; native ordinary-user, provider, package and Stop-margin gates remain separate. No default user toolchain is changed by task-local SDK preparation.
+The current exact compiler is Go 1.27.3. The previous Go 1.27.2 CI vulnerability scan reported [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in crypto/x509; the [official release history](https://go.dev/doc/devel/release#go1.27.3) identifies the patched release. The compiler update preserved the then-current module and npm graph; Core adoption is recorded separately below. Tooling, CI and binary qualification require the exact patched compiler. Earlier Go 1.27.2 evidence remains historical and does not qualify Go 1.27.3; native ordinary-user, provider, package and Stop-margin gates remain separate. No default user toolchain is changed by task-local SDK preparation.
+
+
+## Core beta.55.2 maintenance adoption — 2026-10-29
+
+The active graph pins [Core v1.1.0-beta.55.2](https://github.com/batuta-ai/core/releases/tag/v1.1.0-beta.55.2), from `850cff9cf2d059f89f190efedbfa6a8c45f6f068`, without replacement. The public Go proxy and checksum database verify `h1:n8o/2bXJt+4Q0CeNH0vdztoL0Jf6hIoCSH5vStx5EnI=`; the go.mod sum remains `h1:4QhaQCQhu5s44DTpi7JdQrzceq1IqTSTDkb7HQxwPCk=`. Unix CLI admission requires exactly beta.55.2 and its required capabilities. Windows requires this embedded SDK version and checksum alongside the existing protocol and process-identity guards. Beta.55.1 is rejected.
+
+This release remains on the beta.55 maintenance line. It binds Windows snapshot Git operations to their own repository and supports long supervision snapshot paths with separate Git metadata under the existing excluded review directory. All five official CLI packages were built with Go 1.27.3 and checked for version, target, source revision and checksums. Their build metadata records `vcs.modified=true`: the release build creates an unignored `dist` directory after validating the Git state. A local clean-versus-output-only build reproduced that flag; the final runner Git status was not captured. This does not claim a clean-build metadata flag.
+
+Earlier beta.55.1 evidence remains historical. Qualification of the adopted Console source is recorded separately; the complete ordinary-user Windows suite, real provider flows, the existing Stop margin requirement and Console beta publication remain pending. No global Core CLI or user toolchain is replaced by this adoption.
