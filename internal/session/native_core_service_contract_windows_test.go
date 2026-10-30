@@ -111,7 +111,7 @@ func contractEventName(common string) string {
 	return fmt.Sprintf("Local\\BatutaCoreContract-%x", sha256.Sum256([]byte(strings.ToLower(filepath.Clean(common)))))
 }
 
-func contractProvider() error {
+func contractProvider() (resultErr error) {
 	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return errors.New("ambient credential crossed provider boundary")
 	}
@@ -174,7 +174,21 @@ func contractProvider() error {
 	if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
 		return err
 	}
+	readyName, err := windows.UTF16PtrFromString(contractEventName(common) + "-birth-ready")
+	if err != nil {
+		return err
+	}
+	ready, err := windows.CreateEvent(nil, 1, 0, readyName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, windows.CloseHandle(ready))
+	}()
 	if err := os.Rename(path+".tmp", path); err != nil {
+		return err
+	}
+	if err := windows.SetEvent(ready); err != nil {
 		return err
 	}
 	status, err := windows.WaitForSingleObject(gate, windows.INFINITE)
@@ -183,6 +197,79 @@ func contractProvider() error {
 	}
 	fmt.Println("BATUTA-QUESTION: which approved output?")
 	return nil
+}
+
+func TestNativeCoreServiceContractBirthPublicationWaitsForReady(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "core-contract-birth.json")
+	readyName := contractEventName(root) + "-birth-ready"
+	name, err := windows.UTF16PtrFromString(readyName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := windows.CreateEvent(nil, 1, 0, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := windows.CloseHandle(event); err != nil {
+			t.Error(err)
+		}
+	})
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := windows.CreateFile(ptr, windows.GENERIC_WRITE, 0, nil, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if writer != 0 {
+			if err := windows.CloseHandle(writer); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	want := []byte("{\"Provider\":{\"PID\":11,\"Creation\":22},\"Core\":{\"PID\":33,\"Creation\":44},\"Root\":\"publication\"}\n")
+	var written uint32
+	if err := windows.WriteFile(writer, want, &written, nil); err != nil {
+		t.Fatal(err)
+	}
+	if written != uint32(len(want)) {
+		t.Fatal("publication bytes incomplete", written)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("marker must be visible before publication completes", err)
+	}
+	if got, ready, err := contractReadBirth(path, readyName); err != nil || ready || len(got) != 0 {
+		t.Fatalf("read before completed publication: ready=%t bytes=%q sharingViolation=%t err=%v", ready, got, errors.Is(err, windows.ERROR_SHARING_VIOLATION), err)
+	}
+	if err := windows.CloseHandle(writer); err != nil {
+		t.Fatal(err)
+	}
+	writer = 0
+	// Readability alone is not the publisher's completion acknowledgment.
+	if got, ready, err := contractReadBirth(path, readyName); err != nil || ready || len(got) != 0 {
+		t.Fatalf("read before acknowledgment: ready=%t bytes=%q err=%v", ready, got, err)
+	}
+	if err := windows.SetEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	got, ready, err := contractReadBirth(path, readyName)
+	if err != nil || !ready || !bytes.Equal(got, want) {
+		t.Fatalf("completed publication: ready=%t bytes=%q err=%v", ready, got, err)
+	}
+	// A completed publication must not hide a subsequent filesystem error.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got, ready, err := contractReadBirth(path, readyName); err == nil || ready || len(got) != 0 {
+		t.Fatalf("completed publication read error lost: ready=%t bytes=%q err=%v", ready, got, err)
+	}
 }
 
 func contractHome(t *testing.T) string {
@@ -415,6 +502,33 @@ func contractAwait(t *testing.T, ctx context.Context, label string, ready func()
 	}
 }
 
+func contractReadBirth(path, readyName string) ([]byte, bool, error) {
+	name, err := windows.UTF16PtrFromString(readyName)
+	if err != nil {
+		return nil, false, err
+	}
+	ready, err := windows.OpenEvent(windows.SYNCHRONIZE, false, name)
+	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	status, waitErr := windows.WaitForSingleObject(ready, 0)
+	closeErr := windows.CloseHandle(ready)
+	if waitErr == nil && status != windows.WAIT_OBJECT_0 && status != uint32(windows.WAIT_TIMEOUT) {
+		waitErr = fmt.Errorf("birth publication wait=%d", status)
+	}
+	if err := errors.Join(waitErr, closeErr); err != nil {
+		return nil, false, err
+	}
+	if status == uint32(windows.WAIT_TIMEOUT) {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(path)
+	return data, err == nil, err
+}
+
 func (f contractFixture) start(t *testing.T, ctx context.Context) (domain.ExecutionResult, *session.NativeExchangeTestObserver) {
 	t.Helper()
 	result, err := f.svc.StartExecution(ctx, domain.ExecutionRequest{Target: f.approval.Identity, ApprovalID: f.approval.ID})
@@ -423,12 +537,13 @@ func (f contractFixture) start(t *testing.T, ctx context.Context) (domain.Execut
 	}
 	var births contractBirths
 	contractAwait(t, ctx, "provider birth", func() bool {
-		data, err := os.ReadFile(filepath.Join(f.approval.Identity.Binding.CanonicalRoot, ".git", "core-contract-birth.json"))
-		if errors.Is(err, os.ErrNotExist) {
-			return false
-		}
+		common := filepath.Join(f.approval.Identity.Binding.CanonicalRoot, ".git")
+		data, ready, err := contractReadBirth(filepath.Join(common, "core-contract-birth.json"), contractEventName(common)+"-birth-ready")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !ready {
+			return false
 		}
 		if err := json.Unmarshal(data, &births); err != nil {
 			t.Fatal(err)
