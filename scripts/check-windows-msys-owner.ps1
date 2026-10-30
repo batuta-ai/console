@@ -403,8 +403,81 @@ try {
     Invoke-Retirement 'positive' $stable $stableIdentity
     Observe-Actor $keeper 'before' $stable $stableIdentity
     if ($FullSuite) {
-        $suiteExit = Invoke-Owned 'go-test' $Go @('test', './...', '-json', '-count=1', '-timeout=30m') 2100000
-        Copy-Item -LiteralPath (Join-Path $Evidence 'go-test.stdout') -Destination (Join-Path $Evidence 'go-test.json')
+        $suiteExit = 1
+        $suiteWatch = [Diagnostics.Stopwatch]::StartNew()
+        $inventoryCleanupCount = $cleanupErrors.Count
+        $inventoryExit = Invoke-Owned 'go-list' $Go @('list', './...') ([int](2100000 - $suiteWatch.ElapsedMilliseconds))
+        if ($cleanupErrors.Count -gt $inventoryCleanupCount) { throw 'FullSuite package enumeration cleanup failed' }
+        if ($inventoryExit -ne 0) { throw 'FullSuite package enumeration failed' }
+        $inventory = @([IO.File]::ReadAllLines((Join-Path $Evidence 'go-list.stdout')))
+        $sessionPackage = 'github.com/batuta-ai/console/internal/session'
+        $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($package in $inventory) {
+            if ($package -cnotmatch '^github\.com/batuta-ai/console(?:/[A-Za-z0-9_.-]+)*$' -or -not $unique.Add($package)) {
+                throw "Invalid or duplicate FullSuite package: $package"
+            }
+        }
+        if (@($inventory | Where-Object { $_ -ceq $sessionPackage }).Count -ne 1) { throw 'Exactly one Session package required' }
+        $remaining = @($inventory | Where-Object { $_ -cne $sessionPackage })
+        if ($remaining.Count -eq 0) { throw 'FullSuite remaining package inventory is empty' }
+        $groups = @(
+            @{ name = 'go-test-session'; packages = @($sessionPackage) },
+            @{ name = 'go-test-remaining'; packages = $remaining }
+        )
+        Save-Json 'go-test-inventory.json' @{ inventory = $inventory; groups = $groups; enumerationExit = $inventoryExit }
+        $suiteErrors = [Collections.Generic.List[string]]::new()
+        $suiteException = $null
+        foreach ($group in $groups) {
+            $phaseExit = $null
+            $phaseError = $null
+            $budget = 2100000 - $suiteWatch.ElapsedMilliseconds
+            try {
+                if ($budget -le 0) { throw 'FullSuite shared deadline exhausted' }
+                $phaseCleanupCount = $cleanupErrors.Count
+                $phaseExit = Invoke-Owned $group.name $Go (@('test') + $group.packages + @('-json', '-count=1', '-timeout=30m')) ([int]$budget)
+                if ($phaseExit -ne 0) { $suiteErrors.Add("$($group.name) exited $phaseExit") }
+                if ($cleanupErrors.Count -gt $phaseCleanupCount) { throw "$($group.name) cleanup failed" }
+            } catch {
+                $phaseError = [string]$_
+                $suiteException = $_
+                $suiteErrors.Add("$($group.name): $_")
+            }
+            Save-Json "$($group.name)-result.json" @{ exit = $phaseExit; error = $phaseError;
+                budgetMilliseconds = $budget; elapsedSuiteMilliseconds = $suiteWatch.ElapsedMilliseconds }
+            if ($null -ne $phaseError) { break }
+        }
+        $completed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($group in $groups) {
+            $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($package in $group.packages) { $null = $expected.Add($package) }
+            $path = Join-Path $Evidence "$($group.name).stdout"
+            if (-not [IO.File]::Exists($path)) { $suiteErrors.Add("Missing phase stream: $($group.name)"); continue }
+            try {
+                foreach ($line in [IO.File]::ReadLines($path)) {
+                    $event = $line | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -ne $event.PSObject.Properties['Package'] -and
+                        $null -eq $event.PSObject.Properties['Test'] -and $event.Action -cin @('pass', 'fail', 'skip')) {
+                        if (-not $expected.Contains($event.Package) -or -not $completed.Add($event.Package)) {
+                            throw "Unexpected or duplicate package completion: $($event.Package)"
+                        }
+                    }
+                }
+            } catch {
+                $suiteErrors.Add("$($group.name) coverage: $_")
+                $coverageException = $_.Exception.GetBaseException()
+                if ($null -eq $suiteException -and ($coverageException -is [IO.IOException] -or
+                    $coverageException -is [UnauthorizedAccessException])) { $suiteException = $_ }
+            }
+        }
+        $missing = @($inventory | Where-Object { -not $completed.Contains($_) })
+        if ($missing.Count) { $suiteErrors.Add("Missing package completions: $($missing -join ', ')") }
+        if ($suiteWatch.ElapsedMilliseconds -ge 2100000) { $suiteErrors.Add('FullSuite shared deadline exhausted') }
+        Save-Json 'go-test-coverage.json' @{ completed = @($completed); missing = $missing; errors = @($suiteErrors.ToArray());
+            elapsedSuiteMilliseconds = $suiteWatch.ElapsedMilliseconds }
+        if ($null -ne $suiteException) { throw $suiteException }
+        if ($suiteErrors.Count) {
+            foreach ($failure in $suiteErrors) { [Console]::Error.WriteLine("FullSuite: $failure") }
+        } else { $suiteExit = 0 }
     } else {
         $required = @('TestTerminalEnvironmentPreservesOrdinaryUserTEMP', 'TestTerminalEnvironmentPreservesOrdinaryUserTEMP/select_environment',
             'TestTerminalEnvironmentMSYSTempLifetime', 'TestTerminalEnvironmentMSYSTempLifetime/first_scope',
@@ -418,6 +491,24 @@ try {
     Observe-Actor $keeper 'after' $stable $stableIdentity
 } catch { $primary = $_ } finally {
     for ($index = $owned.Count - 1; $index -ge 0; $index--) { Stop-Owned $owned[$index] }
+    if ($FullSuite) {
+        try {
+            foreach ($extension in @('stdout', 'stderr')) {
+                $aggregate = [IO.File]::Create((Join-Path $Evidence "go-test.$extension"))
+                try {
+                    foreach ($name in @('go-test-session', 'go-test-remaining')) {
+                        $path = Join-Path $Evidence "$name.$extension"
+                        if ([IO.File]::Exists($path)) {
+                            $inputStream = [IO.File]::OpenRead($path)
+                            try { $inputStream.CopyTo($aggregate) } finally { $inputStream.Dispose() }
+                        }
+                    }
+                } finally { $aggregate.Dispose() }
+            }
+            Copy-Item -LiteralPath (Join-Path $Evidence 'go-test.stdout') -Destination (Join-Path $Evidence 'go-test.json')
+            if ($null -ne $suiteExit) { $suiteExit | Set-Content -LiteralPath (Join-Path $Evidence 'go-test.exit') }
+        } catch { $cleanupErrors.Add("FullSuite aggregate evidence: $_") }
+    }
     if ($null -ne $keeper) { try { Assert-ActorClosed $keeper } catch { $cleanupErrors.Add("Keeper: $_") } }
     try {
         if ($null -ne $beforeHashes) {
